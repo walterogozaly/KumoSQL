@@ -580,6 +580,8 @@ def set_operation_to_exists(node: exp.Expression) -> exp.Expression | None:
     left, right = _sf_operand(node.this), _sf_operand(node.expression)
     if left is None or right is None or not all(f is not None and _sf_plain(f) for f in (_sf_flatten(left), _sf_flatten(right))):
         return None
+    if left.args.get("kind") or right.args.get("kind"):
+        return None  # ``SELECT AS STRUCT a, b`` is one struct column; the test below would compare and return ``a`` and ``b``
     if is_empty(left) or is_empty(right):  # left to the empty-operand folding
         return None
     a, b = _sf_names(left), _sf_names(right)
