@@ -196,6 +196,7 @@ def run_case(case: dict, use_baseline: bool, timeout_ms: int, trials: int) -> di
                 schema=schema.columns,
                 constraints=constraints_of(schema),
                 timeout_ms=timeout_ms,
+                union_compensation=True,  # the labels allow a replacement that also reads base tables
             )
     except Exception as error:  # noqa: BLE001 - reported as an error, never as a result
         return {"id": case["id"], "status": "error", "reason": f"{type(error).__name__}: {error}", "seconds": time.time() - start}

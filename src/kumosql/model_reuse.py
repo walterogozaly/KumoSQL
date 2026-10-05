@@ -472,6 +472,7 @@ def _combine(parts: list[exp.Expression]) -> exp.Expression | None:
 class _Candidate:
     sql: str
     strategy: str
+    flatten: bool = False  # merge the model's definition into the replacement's branches before proving it
 
 
 def _candidates(query: _Block, model: _Block, names: list[str], model_name: str):
@@ -921,8 +922,14 @@ def rewrite_over_model(
     timeout_ms: int = 5000,
     exact_arithmetic: bool = False,
     identity: bool = False,
+    union_compensation: bool = False,
 ) -> ModelReuse:
-    """Return a verified replacement for ``query_sql`` that reads ``model_name``, or say why not."""
+    """Return a verified replacement for ``query_sql`` that reads ``model_name``, or say why not.
+
+    With ``union_compensation`` a model that covers only part of the query's rows may be completed with the
+    remaining rows read from the base tables (see :mod:`kumosql.union_compensation`); the replacement then
+    reads base tables as well as the model, so callers that need the model to stand alone leave it off.
+    """
 
     try:
         clash = _name_clash((query_sql, model_sql), schema, dialect, model_name)
@@ -973,6 +980,10 @@ def rewrite_over_model(
             whole.reason = f"parse error: {error}"  # type: ignore[attr-defined]
             return out
         out.extend(_candidates(query, model, names, model_name))
+        if union_compensation:
+            from .union_compensation import union_candidates
+
+            out.extend(union_candidates(query, model, names, model_name))
         return out
 
     whole.reason = ""  # type: ignore[attr-defined]
@@ -1016,6 +1027,10 @@ def rewrite_over_model(
         if _captures_model_reads(replacement, model_name, named_model):
             continue  # the model's definition would read the replacement's WITH table instead of its own source
         replacement_sql = _inline(replacement, model_name, named_model)
+        if candidate.flatten:
+            from .union_compensation import flatten_branches
+
+            replacement_sql = flatten_branches(replacement_sql, base_schema)
         result = _prove(plain_query_sql, replacement_sql, base_schema, constraints, types, timeout_ms, dialect, exact_arithmetic)
         if result is None:
             continue
