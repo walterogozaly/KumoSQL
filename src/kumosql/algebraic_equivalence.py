@@ -80,6 +80,7 @@ from .outer_filters import strengthen_derived_outer_join
 from .grouped_sums import drop_grouped_sum_coalesce
 from .sum_of_counts import sum_of_grouped_counts
 from .lone_source import lift_derived_expressions
+from .nested_array_roundtrip import fold_array_roundtrips
 from .partition_rules import recombine_partitions
 from .keyed_rules import drop_keyed_distinct, exists_over_aggregate, remove_keyed_grouping
 from .keyed_set_join import lift_keyed_set_join
@@ -4839,6 +4840,7 @@ def normalize(
     tree = _peel_star_wrappers(tree)
     tree = trim_redundant_row_clauses(tree)
     tree = _bigquery_sugar(tree)
+    tree = fold_array_roundtrips(tree, types, _assumptions)
     tree = using_to_on_unqualified(_using_to_on(tree, schema))
     tree = drop_subsumed_like(tree)
     tree = _semi_joins_to_exists(tree)
