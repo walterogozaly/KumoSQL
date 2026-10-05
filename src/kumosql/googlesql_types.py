@@ -2056,8 +2056,6 @@ def _common_supertypes(types: list[GType]) -> list[GType] | None:
     if kinds <= NUMERIC_KINDS:
         if "UINT64" in kinds and kinds & {"INT32", "INT64"}:
             return None  # documented as having no supertype; leave it unknown
-        if "FLOAT32" in kinds and kinds - {"FLOAT32", "FLOAT64"}:
-            return None
         common = set.intersection(*(_NUMERIC_SUPERTYPES[k] for k in kinds))
         if all(k in _EXACT for k in kinds):
             exact = common & _EXACT
