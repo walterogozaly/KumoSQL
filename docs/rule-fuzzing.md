@@ -73,7 +73,7 @@ branch lost its only aggregate and went from one row to a row per input row) and
 About 8,000 template cases over the aggregate, distinct and set, outer-join, grouping and window, and scalar
 generators fired about 70 rules and found nothing else.
 
-The set-operation sweep ([#518](https://github.com/walterogozaly/KumoSQL/issues/518)) found seven more, all fixed with
+The set-operation sweep ([#518](https://github.com/walterogozaly/KumoSQL/issues/518)) found eight more, all fixed with
 regression tests:
 
 - `merge_same_source` and `set_operation_to_exists` unwrapped the parentheses of an operand and lost an `ORDER BY` /
@@ -93,3 +93,8 @@ regression tests:
   pointed at nothing. A branch that loses a column and has a `DISTINCT`, grouping, ordering or cut is now selected
   from by name instead (`tests/test_by_name_dropped_column.py`). This rewrite runs outside `normalize`, so
   `tools/rule_fuzz.py` does not trace it; it was found by reading.
+- `set_operation_to_exists` read the operands of `SELECT AS STRUCT x, y ... INTERSECT DISTINCT SELECT AS STRUCT k, w ...`
+  as two columns each and returned two columns where the query returns one struct, so the prover called the struct
+  query equal to its fields as plain columns. It now declines an operand with `AS STRUCT` or `AS VALUE`
+  (`tests/test_set_operation_struct_kind.py`). DuckDB cannot run this rewrite, so the harness reports it as unchecked; found by
+  asking whether each shape-changing rule keeps `SELECT AS STRUCT` (`kind`) in mind.
