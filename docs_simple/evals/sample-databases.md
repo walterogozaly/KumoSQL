@@ -23,7 +23,15 @@ A concrete example from Customer Orders: `SELECT DISTINCT order_id, line_item_id
 
 Each Oracle schema has its own two results files, so the numbers of the other databases stay as they were. Everything is checked the same way: every rewrite on the real rows, every proof against the real data, every counterexample replayed on a legal database. The first run counted three Human Resources pairs as wrong, not because a proof was false but because one of the bounded checker's counterexamples put the same date into two rows that must have different dates, which breaks the declared primary key. That bug was fixed in the checker separately (this eval changed no prover); the pairs were rerun unchanged and are refuted correctly, so the recorded Oracle scores have no wrong answers and no list of known failures.
 
-Left out on purpose: Oracle's Sales History (91 MB of CSV, almost a million sales rows, too big to keep in the repository) and IBM's FIBEN (152 tables, an 80 MB archive).
+## Oracle Sales History
+
+Sales History is Oracle's third sample schema and the first big one: a "star" of sales and costs records (918,843 sales) around small tables for days, products, customers, countries, sales channels and promotions. Its rows are six CSV files, 91 MB, too big to keep in the repository, so the eval downloads them when it runs, from the same pinned upstream version, and refuses any file whose fingerprint (SHA-256) is not the recorded one. If GitHub cannot be reached the tests skip rather than fail, and nothing is invented in place of the data. The small SQL scripts and the licence are kept unchanged in the repository, as for the other two Oracle schemas.
+
+A concrete example: summing sales per day and then adding the days up per month gives the same monthly totals as summing the sales per month directly, so the pair is "equal" and the prover should prove it. Averaging the daily averages is not the same (a day with two sales counts as much as a day with one), so that pair is "different" and the eval wants a database where the two answers part, which is replayed in DuckDB. Joining sales to the products table can be dropped only because every sale names a product (a required foreign key) and each product appears once (a primary key); the sibling pairs take either guarantee away, and the prover must not prove them.
+
+The scores are in two results files of their own (`sample-databases-oracle_sh-rewrites` and `-pairs`), so no other database's numbers moved. Its first run had two "different" labels that the real data did not support; they were given a small hand-built database as proof, and the time limit for the one query that joins the two big fact tables was raised, before anything else changed. No rewrite rule or prover was touched. The scores and the held-out results are in the [full reference](../../docs/evals/sample-databases.md#oracle-sales-history-run-time-download).
+
+Left out on purpose: IBM's FIBEN (152 tables, an 80 MB archive).
 
 ## Limits of the evidence
 
@@ -35,11 +43,12 @@ Left out on purpose: Oracle's Sales History (91 MB of CSV, almost a million sale
 - Oracle's UNIQUE and CHECK constraints are not given to the provers (BigQuery cannot declare them), so a pair that depends on one is labelled "different" under the declared keys even though the real rows agree.
 - The held-out queries and pairs (chosen by hash of their id) are run once and reported apart.
 
-The recorded scores, the pinned upstream versions, licences, and every adaptation are in the [full reference](../../docs/evals/sample-databases.md) and the `sample-databases-*` results files (two each for Chinook and Northwind together, Sakila, Pagila, Oracle HR and Oracle Customer Orders).
+The recorded scores, the pinned upstream versions, licences, and every adaptation are in the [full reference](../../docs/evals/sample-databases.md) and the `sample-databases-*` results files (two each for Chinook and Northwind together, Sakila, Pagila, Oracle HR, Oracle Customer Orders and Oracle Sales History).
 
 ```sh
 python tools/sample_db_bench.py --check
 python tools/sample_db_bench.py --part pairs
 python tools/sample_db_bench.py --database sakila --part pairs
 python tools/sample_db_bench.py --database oracle_hr --write-results
+python tools/sample_db_bench.py --database oracle_sh --write-results   # downloads 91 MB once
 ```

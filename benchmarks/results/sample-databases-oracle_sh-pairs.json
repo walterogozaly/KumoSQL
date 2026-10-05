@@ -1,0 +1,28 @@
+{
+  "suite": "Sample databases (Oracle SH): equivalent pairs and siblings",
+  "order": 357,
+  "size": 82,
+  "score": "28/32 equivalent proved, 48/50 different refuted (replayed), 0 wrong",
+  "metric": "Authored pairs on the Oracle SH schema under its declared keys, labelled equivalent or different (each 'different' label has a witness database); 28 siblings drop one key, foreign key or NOT NULL the equivalence needs. Provers: structural, algebraic/SMT with the declared constraints and its counterexample search, then the bounded checker for a counterexample.",
+  "evidence": "proof",
+  "correctness": "0 wrong: every proof also gives the same result on the real data and no proof is of a pair labelled different; every refutation's counterexample, completed with legal values, satisfies the declared constraints and separates the pair when replayed in DuckDB",
+  "coverage": {
+    "proven": 28,
+    "refuted": 48,
+    "unknown": 6,
+    "unsupported": 0
+  },
+  "held_out": "2/4 proved, 12/13 refuted, 0 wrong (a fifth of the pairs by SHA-1 of their id)",
+  "docs": "docs/evals/sample-databases.md",
+  "command": "python tools/sample_db_bench.py --database oracle_sh --write-results",
+  "date": "2026-10-05",
+  "caveats": "Authored pairs (82; dev 65, held out 17), not from upstream. Constraint siblings refuted: 28/28. The algebraic prover's executed counterexample search is time-limited, so on a loaded machine a refutation can fall back to unknown. No prover was changed for this eval. The first run is the baseline: 0 wrong in 303 executed rewrite cases (the unrewritten profits view, a full join of the two fact tables, ran past the 5 s query limit, so that case was unsupported) and 28/32 proved, 48/50 refuted, 0 wrong for the pairs, two of whose labels no witness supported; before anything else changed those two got a small-database witness and the query limit for this database was raised to 60 s, no rule or prover was changed. The 91 MB of CSV data are downloaded at run time from the pinned commit and checked against their SHA-256.",
+  "environment": {
+    "python": "3.11.15",
+    "sqlglot": "30.21.0",
+    "duckdb": "1.5.6",
+    "z3-solver": "5.1.0.0",
+    "sqlfluff": "4.4.0",
+    "commit": "66634a4c+changes"
+  }
+}

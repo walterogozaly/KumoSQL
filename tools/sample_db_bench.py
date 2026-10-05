@@ -1527,7 +1527,11 @@ class OracleSH(OracleSample):
         "sales and costs have no primary key upstream and none is invented. "
         "The six CSV files (91 MB) are not committed: they are downloaded at run time from the pinned commit and checked against their SHA-256"
     )
-    baseline_note = "The first run is the baseline (nothing tuned)"
+    baseline_note = (
+        "The first run is the baseline: 0 wrong in 303 executed rewrite cases (the unrewritten profits view, a full join of the two fact tables, ran past the 5 s query limit, so that case was unsupported) "
+        "and 28/32 proved, 48/50 refuted, 0 wrong for the pairs, two of whose labels no witness supported; before anything else changed those two got a small-database witness and the query limit for this database was raised to 60 s, "
+        "no rule or prover was changed. The 91 MB of CSV data are downloaded at run time from the pinned commit and checked against their SHA-256"
+    )
     ddl_file = "upstream/sh_create.sql"
     data_file = "upstream/sh_populate.sql"
     _REPO, _COMMIT = "oracle-samples/db-sample-schemas", "6660bad68c07bd143430ace58565b3f727e17263"

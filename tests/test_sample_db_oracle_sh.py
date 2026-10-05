@@ -32,17 +32,18 @@ ADAPTER = bench.ADAPTERS["oracle_sh"]
 # a pinned subset of the workload through the rewrite pipeline and lift_subqueries
 SUBSET = [
     "sh-view-cal-month-sales-mv",
-    "sh-view-fweek-pscat-sales-mv",
-    "sh-a10-not-in-with-nulls",
-    "sh-a21-cte-chain-unused-cte",
+    "sh-a22-cte-chain-with-unused",
+    "sh-a23-derived-table-trivial-predicate",
+    "sh-a24-redundant-parentheses",
 ]
-# queries the proof-gated optimizer changes on the declared keys (DISTINCT on a primary key)
-KEYED = ["sh-a05-distinct-on-primary-key"]
+# queries on which the proof-gated optimizer drops a DISTINCT on a declared primary key
+KEYED = ["sh-a05-distinct-product-key", "sh-a06-distinct-time-key"]
 # sibling pairs that drop a key from the declarations, and the DATE-keyed dimension, all refuted on a legal database
 DATE_KEY_PAIRS = {
     "sh-fk-join-elimination-time",
     "sh-fk-join-elimination-time-without-fk",
     "sh-fk-join-elimination-time-without-key",
+    "sh-distinct-on-time-key-without-key",
 }
 # floors only ever go up (recorded run: 28/32 proved, 48/50 refuted)
 FLOORS = {"proven": 28, "refuted": 46}
