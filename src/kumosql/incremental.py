@@ -26,7 +26,7 @@ excluded by name instead of making every run differ.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import datetime as dt
 import random
 import re
@@ -66,7 +66,7 @@ class IncrementalModel:
     full_sql: str
     incremental_sql: str
     unique_key: tuple[str, ...] = ()
-    # Statements from ``pre_operations`` that run only on incremental runs.
+    # Statements from ``pre_operations`` that run on incremental runs (script variables and DML on the table).
     pre_operations: tuple[str, ...] = ()
     # Output columns allowed to differ (audit columns such as a load timestamp).
     ignore_columns: tuple[str, ...] = ()
@@ -79,6 +79,9 @@ class IncrementalModel:
     # strategy, ``post_operations``, a ``uniqueKey`` that is not a literal list, ...). With any of them no
     # proof rule applies and the simulator refuses the model, so the answer is ``unsupported``, never ``safe``.
     unmodelled: tuple[str, ...] = ()
+    # Statements from ``pre_operations`` that run on full builds. Only script variables (``DECLARE``/``SET``)
+    # are modelled there; any other statement makes the model ``unmodelled``.
+    full_pre_operations: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -185,6 +188,144 @@ def _evaluate(expression: str, target: str, incremental: bool) -> str:
     raise IncrementalError(f"unsupported SQLX interpolation: ${{{expression}}}")
 
 
+_SEPARATOR = re.compile(r"(?m)^[ \t]*---[ \t]*$")
+
+
+def split_statements(text: str) -> list[str]:
+    """The SQL statements of a ``pre_operations``/``post_operations`` block.
+
+    Statements are separated by ``;`` or by a line holding only ``---`` (SQLX's
+    separator); quotes, brackets and comments are respected, and a statement
+    that is only a comment is dropped.
+    """
+
+    out: list[str] = []
+    for chunk in _SEPARATOR.split(text):
+        current: list[str] = []
+        depth = 0
+        quote: str | None = None
+        i = 0
+        while i < len(chunk):
+            c = chunk[i]
+            nxt = chunk[i + 1] if i + 1 < len(chunk) else ""
+            if quote:
+                current.append(c)
+                if c == "\\" and nxt:
+                    current.append(nxt)
+                    i += 1
+                elif c == quote:
+                    quote = None
+            elif c == "-" and nxt == "-" or c == "#":
+                end = chunk.find("\n", i)
+                end = len(chunk) if end < 0 else end
+                current.append(chunk[i:end])
+                i = end
+                continue
+            elif c == "/" and nxt == "*":
+                end = chunk.find("*/", i + 2)
+                end = len(chunk) if end < 0 else end + 2
+                current.append(chunk[i:end])
+                i = end
+                continue
+            elif c in "'\"`":
+                quote = c
+                current.append(c)
+            elif c in "([":
+                depth += 1
+                current.append(c)
+            elif c in ")]":
+                depth -= 1
+                current.append(c)
+            elif c == ";" and depth == 0:
+                out.append("".join(current))
+                current = []
+            else:
+                current.append(c)
+            i += 1
+        out.append("".join(current))
+    return [s.strip() for s in out if _without_comments(s).strip()]
+
+
+def _without_comments(statement: str) -> str:
+    return re.sub(r"/\*.*?\*/|--[^\n]*|#[^\n]*", " ", statement, flags=re.DOTALL)
+
+
+_PERMISSIONS = re.compile(r"(?is)^\s*(?:GRANT|REVOKE)\s")
+_SET_OPTIONS = re.compile(
+    r"(?is)^\s*ALTER\s+(?:TABLE|VIEW|MATERIALIZED\s+VIEW|SCHEMA)\s+(?:IF\s+EXISTS\s+)?[^\s(]+\s+"
+    r"(?:ALTER\s+COLUMN\s+(?:IF\s+EXISTS\s+)?[^\s(]+\s+)?SET\s+OPTIONS\s*\((?P<options>.*)\)\s*$"
+)
+
+
+def neutral_statement(statement: str) -> bool:
+    """A statement that cannot change any table's rows: ``GRANT``/``REVOKE``, or ``ALTER ... SET OPTIONS``.
+
+    Only a single ``SET OPTIONS (...)`` action is accepted, so ``ALTER TABLE t SET OPTIONS (...), ALTER
+    COLUMN c SET DATA TYPE ...`` (which can change values) is not neutral.
+    """
+
+    text = _without_comments(statement)
+    if _PERMISSIONS.match(text):
+        return True
+    found = _SET_OPTIONS.match(text)
+    if not found:
+        return False
+    depth = 0
+    quote: str | None = None
+    for c in found.group("options"):
+        if quote:
+            quote = None if c == quote else quote
+        elif c in "'\"`":
+            quote = c
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth < 0:
+                return False  # the options list closed early: another action follows
+    return depth == 0 and quote is None
+
+
+@dataclass(frozen=True)
+class VariableStatement:
+    """``DECLARE a[, b] [type] [DEFAULT expr]`` or ``SET a = expr`` in a BigQuery script."""
+
+    verb: str  # declare | set
+    names: tuple[str, ...]
+    kind: str | None  # declared type (BigQuery spelling)
+    value: exp.Expression | None  # DEFAULT or SET expression; None declares NULL
+
+
+def variable_statement(statement: str, dialect: str = "bigquery") -> VariableStatement | None:
+    """The script-variable statement ``statement`` is, or None when it is something else."""
+
+    if not re.match(r"(?is)^\s*(?:DECLARE|SET)\s", _without_comments(statement)):
+        return None
+    try:
+        tree = sqlglot.parse_one(statement, read=dialect)
+    except sqlglot.errors.SqlglotError:
+        return None
+    if isinstance(tree, exp.Declare) and len(tree.expressions) == 1:
+        item = tree.expressions[0]
+        names = item.this if isinstance(item.this, list) else [item.this]
+        if not names or not all(isinstance(n, exp.Identifier) for n in names):
+            return None
+        kind = item.args.get("kind")
+        default = item.args.get("default")
+        return VariableStatement(
+            "declare",
+            tuple(n.name.lower() for n in names),
+            kind.sql(dialect="bigquery") if isinstance(kind, exp.DataType) else None,
+            default if isinstance(default, exp.Expression) else None,
+        )
+    if isinstance(tree, exp.Set) and len(tree.expressions) == 1:
+        item = tree.expressions[0]
+        eq = item.this if isinstance(item, exp.SetItem) else None
+        if isinstance(eq, exp.EQ) and isinstance(eq.this, exp.Column) and not eq.this.table and isinstance(eq.expression, exp.Expression):
+            return VariableStatement("set", (eq.this.name.lower(),), None, eq.expression)
+    return None
+
+
 def _config_list(config: str, key: str) -> tuple[str, ...]:
     found = re.search(rf"\b{key}\s*:\s*(\[[^\]]*\]|{_STRING})", config)
     if not found:
@@ -205,22 +346,27 @@ def parse_incremental_sqlx(sqlx: str, target: str) -> IncrementalModel:
     body = "".join(t for kind, t in sections if kind == "sql").strip()
     pre_blocks = [t for kind, t in sections if kind == "block" and t.lstrip().startswith("pre_operations")]
     pre: list[str] = []
+    full_pre: list[str] = []
     unmodelled: list[str] = []
     for block in pre_blocks:
         inner = block[block.index("{") + 1 : block.rindex("}")]
-        # ``${when(incremental(), `stmt`)}`` yields a statement only on incremental runs.
-        rendered = _resolve(inner, target, True).strip()
-        on_full = _resolve(inner, target, False).strip()
-        if on_full != rendered:
-            pre.extend(s.strip() for s in rendered.split(";") if s.strip())
-            if on_full:
-                unmodelled.append("pre_operations that run on full builds")
-        elif rendered:
-            raise IncrementalError("pre_operations that run on every run are not simulated")
+        # Dataform runs ``incrementalPreOps`` (rendered with incremental() true) before an incremental run and
+        # ``preOps`` before a full build, in one script with the table statement, so a DECLARE is visible to it.
+        # Statements that cannot change rows (GRANT, ALTER ... SET OPTIONS) are dropped.
+        pre.extend(s for s in split_statements(_resolve(inner, target, True)) if not neutral_statement(s))
+        for statement in split_statements(_resolve(inner, target, False)):
+            if neutral_statement(statement):
+                continue
+            if variable_statement(statement) is None:
+                unmodelled.append("pre_operations that change data on full builds")
+                break
+            full_pre.append(statement)
     for block in (t for kind, t in sections if kind == "block" and t.lstrip().startswith("post_operations")):
         inner = block[block.index("{") + 1 : block.rindex("}")]
-        if _resolve(inner, target, True).strip() or _resolve(inner, target, False).strip():
-            unmodelled.append("post_operations")
+        # After the table statement only a statement that changes rows matters; setting a variable does not.
+        statements = split_statements(_resolve(inner, target, True)) + split_statements(_resolve(inner, target, False))
+        if any(not neutral_statement(s) and variable_statement(s) is None for s in statements):
+            unmodelled.append("post_operations that change data")
             break
     unique_key = _config_list(config, "uniqueKey")
     if not unique_key and re.search(r"\buniqueKey\s*:", config):
@@ -246,7 +392,133 @@ def parse_incremental_sqlx(sqlx: str, target: str) -> IncrementalModel:
         unique_key=unique_key,
         pre_operations=tuple(pre),
         update_partition_filter=partition_filter,
-        unmodelled=tuple(unmodelled),
+        unmodelled=tuple(dict.fromkeys(unmodelled)),
+        full_pre_operations=tuple(full_pre),
+    )
+
+
+_RUN_DEPENDENT = tuple(
+    getattr(exp, name)
+    for name in ("Rand", "CurrentTimestamp", "CurrentDate", "CurrentDatetime", "CurrentTime", "Uuid")
+    if hasattr(exp, name)
+)
+
+
+def _definition_expression(value: exp.Expression) -> exp.Expression:
+    """A variable's value as an expression to put where the variable is read.
+
+    ``(SELECT x)`` becomes ``x``, and ``(SELECT COALESCE(agg, d) FROM t ...)`` becomes ``COALESCE((SELECT agg
+    FROM t ...), d)``: an aggregate query with no ``GROUP BY`` or ``HAVING`` returns exactly one row, so the two
+    are equal.
+    """
+
+    value = value.copy()
+    if isinstance(value, exp.Subquery) and isinstance(value.this, exp.Select) and not any(
+        v for k, v in value.args.items() if k != "this"
+    ):
+        inner = value.this
+        others = {k for k, v in inner.args.items() if v and k not in ("expressions", "from", "from_", "where", "joins")}
+        if len(inner.expressions) == 1 and not others:
+            only = inner.expressions[0].unalias()
+            if not (inner.args.get("from") or inner.args.get("from_")) and not inner.args.get("where"):
+                value = only
+            elif isinstance(only, exp.Coalesce) and isinstance(only.this, exp.AggFunc) and not any(
+                isinstance(n, (exp.Column, exp.Subquery, exp.Select)) for e in only.expressions for n in e.walk()
+            ):
+                one = inner.copy()
+                one.set("expressions", [only.this.copy()])
+                value = exp.Coalesce(this=exp.Subquery(this=one), expressions=[e.copy() for e in only.expressions])
+    return exp.Paren(this=value) if isinstance(value, (exp.Binary, exp.Unary)) else value
+
+
+def _written_tables(tree: exp.Expression) -> set[str]:
+    if isinstance(tree, (exp.Delete, exp.Update, exp.Insert, exp.Merge)):
+        written = tree.this
+        if isinstance(written, exp.Schema):
+            written = written.this
+        if isinstance(written, exp.Table):
+            return {written.name.lower()}
+    return {t.name.lower() for t in tree.find_all(exp.Table)}
+
+
+def _substitute_script(statements: Iterable[str], query: str, dialect: str) -> tuple[str, list[str]] | None:
+    """``query`` with each script variable it reads replaced by the variable's definition, and the
+    remaining (non-variable) statements likewise; None when a read value is not that of its definition at
+    the point of reading (a later statement wrote a table the definition reads, or the definition is
+    run-dependent, such as RAND or the clock)."""
+
+    parsed = [(s, variable_statement(s, dialect)) for s in statements]
+    declared = {n for _, v in parsed if v is not None for n in v.names}
+    env: dict[str, exp.Expression | None] = {}
+    reads: dict[str, set[str]] = {}
+    kinds: dict[str, str | None] = {}
+
+    def substitute(tree: exp.Expression) -> exp.Expression | None:
+        refs = _variable_references(tree, declared)
+        if any(env.get(r) is None for r in refs):
+            return None
+        return tree.transform(
+            lambda n: env[n.name.lower()].copy() if isinstance(n, exp.Column) and not n.table and n.name.lower() in refs else n
+        )
+
+    rest: list[str] = []
+    for statement, variable in parsed:
+        if variable is None:
+            try:
+                tree = sqlglot.parse_one(statement, read=dialect)
+            except sqlglot.errors.SqlglotError:
+                return None
+            bound = substitute(tree)
+            if bound is None:
+                return None
+            rest.append(bound.sql(dialect=dialect))
+            written = _written_tables(tree)
+            for name, tables in reads.items():
+                if tables & written:
+                    env[name] = None
+            continue
+        value = substitute(variable.value) if variable.value is not None else exp.Null()
+        for name in variable.names:
+            if variable.verb == "declare":
+                kinds[name] = variable.kind
+            if value is None or any(isinstance(n, _RUN_DEPENDENT) for n in value.walk()):
+                env[name] = None
+                continue
+            kind = kinds.get(name)
+            definition = _definition_expression(value)
+            env[name] = exp.cast(definition, exp.DataType.build(kind, dialect="bigquery")) if kind else definition
+            reads[name] = {t.name.lower() for t in value.find_all(exp.Table)}
+    try:
+        tree = sqlglot.parse_one(query, read=dialect)
+    except sqlglot.errors.SqlglotError:
+        return None
+    bound = substitute(tree)
+    return None if bound is None else (bound.sql(dialect=dialect), rest)
+
+
+def effective_model(model: IncrementalModel) -> IncrementalModel:
+    """``model`` with script variables replaced by their definitions, which is what the proof rules read.
+
+    A Dataform pre-operation such as ``DECLARE wm DEFAULT (SELECT MAX(ts) FROM ${self()})`` runs in the same
+    script as the query, so ``WHERE ts > wm`` reads the value of that subquery at that point. Replacing the
+    variable by its definition is exact when nothing between the two writes a table the definition reads
+    and the definition is not run-dependent; otherwise the model is returned unchanged (its pre-operations
+    then keep every proof rule from applying). DML pre-operations stay, with variables replaced.
+    """
+
+    variables = [s for s in model.pre_operations if variable_statement(s, model.dialect) is not None]
+    if not variables and not model.full_pre_operations:
+        return model
+    full = _substitute_script(model.full_pre_operations, model.full_sql, model.dialect)
+    incremental = _substitute_script(model.pre_operations, model.incremental_sql, model.dialect)
+    if full is None or incremental is None or full[1]:
+        return model
+    return replace(
+        model,
+        full_sql=full[0],
+        incremental_sql=incremental[0],
+        pre_operations=tuple(incremental[1]),
+        full_pre_operations=(),
     )
 
 
@@ -283,14 +555,63 @@ def _connect():
     return small_database()
 
 
-def _to_duckdb(sql: str, clock: dt.datetime, read: str = "bigquery") -> str:
-    """Model SQL (BigQuery) or source DML (DuckDB/ANSI) to DuckDB, clock pinned."""
+def _to_duckdb(sql: str, clock: dt.datetime, read: str = "bigquery", bound: dict[str, str] | None = None) -> str:
+    """Model SQL (BigQuery) or source DML (DuckDB/ANSI) to DuckDB, clock pinned.
+
+    ``bound`` maps script variables to the one-row tables holding their values.
+    """
 
     try:
         tree = sqlglot.parse_one(sql, read=read)
     except sqlglot.errors.SqlglotError as exc:
         raise IncrementalError(f"cannot parse: {exc}") from exc
+    if bound:
+        tree = _bind_variables(tree, bound)
     return _pin_clock(tree, clock, read).sql(dialect="duckdb")
+
+
+def _variable_references(node: exp.Expression | None, names: set[str] | frozenset[str]) -> set[str]:
+    """Script variables ``node`` reads: unqualified column names that are declared variables."""
+
+    if node is None or not names:
+        return set()
+    return {c.name.lower() for c in node.find_all(exp.Column) if not c.table and c.name.lower() in names}
+
+
+def _bind_variables(tree: exp.Expression, bound: dict[str, str]) -> exp.Expression:
+    def bind(node: exp.Expression) -> exp.Expression:
+        if isinstance(node, exp.Column) and not node.table and node.name.lower() in bound:
+            return exp.Subquery(this=exp.select("v").from_(exp.to_table(bound[node.name.lower()])))
+        return node
+
+    return tree.transform(bind)
+
+
+def _script(statements: Iterable[str], query: str, dialect: str) -> list[tuple[str, VariableStatement | None]]:
+    """The statements of one run that matter for ``query``: every DML statement, and each variable
+    statement whose value is read later (by ``query`` or by a statement that runs). A dead ``DECLARE``
+    is not evaluated, so one that reads the table before its first build is not run here (BigQuery would
+    still evaluate it)."""
+
+    parsed = [(s, variable_statement(s, dialect)) for s in statements]
+    declared = {n for _, v in parsed if v is not None for n in v.names}
+    try:
+        live = _variable_references(sqlglot.parse_one(query, read=dialect), declared)
+    except sqlglot.errors.SqlglotError:
+        live = set(declared)
+    keep: list[tuple[str, VariableStatement | None]] = []
+    for statement, variable in reversed(parsed):
+        if variable is None:
+            keep.append((statement, None))
+            try:
+                live |= _variable_references(sqlglot.parse_one(statement, read=dialect), declared)
+            except sqlglot.errors.SqlglotError:
+                live |= declared
+        elif set(variable.names) & live:
+            keep.append((statement, variable))
+            live -= set(variable.names)
+            live |= _variable_references(variable.value, declared)
+    return keep[::-1]
 
 
 def _pin_clock(tree: exp.Expression, clock: dt.datetime, read: str) -> exp.Expression:
@@ -371,8 +692,45 @@ class Simulation:
             if table.defaults:
                 self.con.execute("CREATE SEQUENCE IF NOT EXISTS _load_seq")
             self.con.execute(f'CREATE TABLE "{name}" ({cols})')
+        self._check_variables()
         for statement in initial:
             self._dml(statement)
+
+    def _check_variables(self) -> None:
+        m = self.model
+        statements = [*m.pre_operations, *m.full_pre_operations]
+        names = {n for s in statements if (v := variable_statement(s, m.dialect)) is not None for n in v.names}
+        columns = {c.lower() for table in self.sources.values() for c in table.columns}
+        if names & columns:
+            raise IncrementalError(f"a script variable shares its name with a column: {sorted(names & columns)[0]}")
+        for _, variable in _script(m.full_pre_operations, m.full_sql, m.dialect):
+            read = {t.name.lower() for t in variable.value.find_all(exp.Table)} if variable and variable.value else set()
+            if m.target.lower() in read:
+                raise IncrementalError("a full-build pre-operation reads the table before it is built")
+
+    def _run_script(self, statements: Iterable[str], query: str, prefix: str) -> str:
+        """Run one run's pre-operations in order and return its query as DuckDB SQL, variables bound."""
+
+        m = self.model
+        bound: dict[str, str] = {}
+        kinds: dict[str, str | None] = {}
+        for statement, variable in _script(statements, query, m.dialect):
+            if variable is None:
+                self.con.execute(_to_duckdb(statement, self.clock, m.dialect, bound))
+                continue
+            value = variable.value if variable.value is not None else exp.Null()
+            for name in variable.names:
+                if variable.verb == "declare":
+                    kinds[name] = variable.kind
+                select = _bind_variables(exp.select(value.copy().as_("v")), bound)
+                duck = _pin_clock(select, self.clock, m.dialect).sql(dialect="duckdb")
+                kind = (kinds.get(name) or "").upper()
+                if kind in _DUCK_TYPES:
+                    duck = f"SELECT CAST(v AS {_DUCK_TYPES[kind]}) AS v FROM ({duck})"
+                table = f"__{prefix}_{name}"
+                self.con.execute(f'CREATE OR REPLACE TEMP TABLE "{table}" AS {duck}')
+                bound[name] = table
+        return _to_duckdb(query, self.clock, m.dialect, bound)
 
     # -- statements -------------------------------------------------------
 
@@ -383,7 +741,9 @@ class Simulation:
             raise IncrementalError(f"source statement failed: {exc}") from exc
 
     def _full_query(self) -> str:
-        return _to_duckdb(self.model.full_sql, self.clock, self.model.dialect)
+        """The full refresh as DuckDB SQL, after the full-build pre-operations (script variables only)."""
+
+        return self._run_script(self.model.full_pre_operations, self.model.full_sql, "fullvar")
 
     # -- the Dataform run cycle ------------------------------------------
 
@@ -397,9 +757,8 @@ class Simulation:
             self.runs += 1
             return
         self.runs += 1
-        for statement in m.pre_operations:
-            self.con.execute(_to_duckdb(statement, self.clock, m.dialect))
-        self.con.execute(f"CREATE OR REPLACE TEMP TABLE __incr AS {_to_duckdb(m.incremental_sql, self.clock, m.dialect)}")
+        incremental = self._run_script(m.pre_operations, m.incremental_sql, "var")
+        self.con.execute(f"CREATE OR REPLACE TEMP TABLE __incr AS {incremental}")
         columns = [r[0] for r in self.con.execute(f'SELECT column_name FROM information_schema.columns WHERE table_name = \'{m.target}\' ORDER BY ordinal_position').fetchall()]
         collist = ", ".join(f'"{c}"' for c in columns)
         if not m.unique_key:
@@ -711,6 +1070,23 @@ def minimize(model, sources, initial, batches) -> tuple[list[str], list[list[str
     return initial, batches
 
 
+def random_sequence(
+    sources: dict[str, SourceTable], kinds: frozenset[str], seed: int, batches: int, tables: tuple[str, ...] | None = None
+) -> tuple[list[str], list[list[str]]]:
+    """A random initial load and ``batches`` batches of source DML allowed by ``kinds``."""
+
+    rng = random.Random(seed)
+    gen = _Generator(sources, kinds, rng, tables)
+    initial: list[str] = []
+    for name in sorted(sources):
+        for _ in range(rng.randint(0, 2)):
+            gen.next_hour = rng.randint(0, 2)
+            row = gen._fresh(name, None)
+            initial.append(_insert(name, sources[name], row))
+            gen.rows[name].append(row)
+    return initial, [gen.batch() for _ in range(batches)]
+
+
 def search_divergence(
     model: IncrementalModel,
     sources: dict[str, SourceTable],
@@ -732,16 +1108,7 @@ def search_divergence(
     for s in range(seeds):
         if deadline is not None and time.monotonic() > deadline:
             raise TimeoutError("counterexample search ran out of time")
-        rng = random.Random(seed * 100003 + s)
-        gen = _Generator(sources, kinds, rng, tables)
-        initial: list[str] = []
-        for name in sorted(sources):
-            for _ in range(rng.randint(0, 2)):
-                gen.next_hour = rng.randint(0, 2)
-                row = gen._fresh(name, None)
-                initial.append(_insert(name, sources[name], row))
-                gen.rows[name].append(row)
-        plan = [gen.batch() for _ in range(batches)]
+        initial, plan = random_sequence(sources, kinds, seed * 100003 + s, batches, tables)
         try:
             result = first_divergence(replay(model, sources, initial, plan))
         except IncrementalError:
@@ -763,7 +1130,7 @@ def search_divergence(
 
 @dataclass(frozen=True)
 class Verdict:
-    outcome: str  # safe | diverges | unknown | unsupported
+    outcome: str  # safe | diverges | nondeterministic | unknown | unsupported | timeout
     rule: str
     detail: str = ""
     counterexample: Counterexample | None = None
@@ -908,6 +1275,24 @@ def _strip(select: exp.Select, drop: exp.Expression) -> exp.Expression:
     return copy
 
 
+def _strip_old_bounds(select: exp.Select, tc: str) -> exp.Select:
+    """``select`` without ``WHERE`` conjuncts ``tc >[=] <literal date no later than 2000>``.
+
+    Such a bound is the full-build branch of a watermark variable (``SELECT TIMESTAMP '1970-01-01'``); under
+    the watermark rules' assumption that the default precedes every event time, it keeps every row.
+    """
+
+    where = select.args.get("where")
+    old = [
+        c
+        for c in _conjuncts(where.this if where else None)
+        if isinstance(c, (exp.GT, exp.GTE)) and isinstance(c.left, exp.Column) and c.left.name.lower() == tc.lower() and _old_date(c.right)
+    ]
+    for conjunct in old:
+        select = _strip(select, conjunct)
+    return select
+
+
 def _projected_as(select: exp.Select, column: str) -> str | None:
     """Output name under which ``column`` is selected unchanged, or None."""
 
@@ -970,6 +1355,7 @@ def prove_watermark(
     if len(marks) != 1:
         return None
     conjunct, op = marks[0]
+    full = _strip_old_bounds(full, tc)
     if _strip(incremental, conjunct).sql() != _strip(full, exp.Null()).sql():
         return None
     if not model.unique_key:
@@ -986,6 +1372,21 @@ def prove_watermark(
     return None
 
 
+def prove(
+    model: IncrementalModel, sources: dict[str, SourceTable], kinds: Iterable[str], tables: tuple[str, ...] | None = None
+) -> Verdict | None:
+    """A ``safe`` verdict from the first proof rule that applies (read on :func:`effective_model`), or None."""
+
+    kinds = frozenset(kinds)
+    proof_model = effective_model(model)
+    proof = prove_watermark(proof_model, sources, kinds)
+    if proof is None:
+        from .incremental_rules import prove_more
+
+        proof = prove_more(proof_model, sources, kinds, tables)
+    return proof
+
+
 def check_incremental(
     model: IncrementalModel,
     sources: dict[str, SourceTable],
@@ -998,21 +1399,30 @@ def check_incremental(
 ) -> Verdict:
     """Decide whether the model equals its full refresh under every change in ``kinds``.
 
-    ``tables`` limits which source tables the changes may touch (default: all).
+    ``tables`` limits which source tables the changes may touch (default: all). A model whose full
+    refresh depends on tie-breaking (shown by a witness, see :mod:`kumosql.incremental_ties`) is
+    ``nondeterministic``: there is no single full refresh for it to equal.
     """
+
+    from .incremental_ties import model_tie_reasons, tie_witness
 
     kinds = frozenset(kinds)
     if model.unmodelled:
         return Verdict("unsupported", "configuration", "not modelled: " + ", ".join(model.unmodelled))
     try:
-        proof = prove_watermark(model, sources, kinds)
-        if proof is None:
-            from .incremental_rules import prove_more
-
-            proof = prove_more(model, sources, kinds, tables)
+        proof = prove(model, sources, kinds, tables)
         if proof is not None:
             return proof
+        reasons = model_tie_reasons(model, sources, kinds, tables)
+        witness = tie_witness(model, sources, kinds, reasons=reasons, seeds=seeds, batches=batches, tables=tables) if reasons else None
+        if witness is not None:
+            return Verdict("nondeterministic", "tie witness", witness.detail, witness)
         found = search_divergence(model, sources, kinds, seeds=seeds, batches=batches, tables=tables, time_limit=time_limit)
+        if found is not None and reasons:
+            # a divergence may only be a different tie-break: look for a witness on its own states
+            witness = tie_witness(model, sources, kinds, reasons=reasons, seeds=0, sequences=[(found.initial, found.batches)])
+            if witness is not None:
+                return Verdict("nondeterministic", "tie witness", witness.detail, witness)
     except TimeoutError as exc:
         return Verdict("timeout", "counterexample search", str(exc))
     except IncrementalError as exc:

@@ -1,0 +1,2403 @@
+{
+ "version": 2,
+ "cases": [
+  {
+   "id": "full-rerun-row-wise-inserts",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")} WHERE v >= 1\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_boundary",
+     "insert_late",
+     "insert_new"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 0)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 03:00:00', 2)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (4, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "every run re-runs the query and merges on the source key; inserts never remove a key and v never changes, so no stale row stays",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-filter-on-updated-column",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")} WHERE v >= 1\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new",
+     "update"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "UPDATE events SET v = 0 WHERE id = 1"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "an update makes a row fail the filter; the merge never deletes, so its old version stays",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-updates-no-filter",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_late",
+     "insert_new",
+     "update",
+     "update_touch"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "UPDATE events SET v = 3 WHERE id = 1"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ],
+     [
+      "UPDATE events SET ts = TIMESTAMP '2024-01-01 05:00:00', v = 2 WHERE id = 2"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "updates keep the source key, so every key stays in the result and the merge rewrites its row",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-source-delete",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "delete",
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "DELETE FROM events WHERE id = 1"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a deleted source row leaves its row in the table; the merge never deletes",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-duplicate-delivery",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "duplicate",
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a re-delivered row gives the merge two source rows for one target row, which BigQuery rejects",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-dedup-duplicates",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\nQUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY ts DESC) = 1\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "duplicate",
+     "empty",
+     "insert_late",
+     "insert_new"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 00:00:00', 1)",
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "one row per source key (copies of a key are exact re-deliveries, so the pick does not matter); keys only gain rows",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-group-nullable-key",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"customer_id\"] }\nSELECT customer_id, COUNT(*) AS n, SUM(v) AS total FROM ${ref(\"events\")}\nGROUP BY customer_id\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, NULL, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     []
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "customer_id is not declared NOT NULL: a NULL group never matches in the merge, so it is inserted again every run",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-group-not-null",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"customer_id\"] }\nSELECT customer_id, COUNT(*) AS n, SUM(v) AS total, MAX(ts) AS last_ts FROM ${ref(\"events\")}\nWHERE customer_id IS NOT NULL\nGROUP BY customer_id\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "duplicate",
+     "empty",
+     "insert_late",
+     "insert_new"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 1, TIMESTAMP '2024-01-01 02:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 03:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (4, 2, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "groups only gain rows under inserts and re-deliveries, so no group disappears; each run recomputes every group",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-group-key-updated",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"customer_id\"] }\nSELECT customer_id, COUNT(*) AS n FROM ${ref(\"events\")}\nWHERE customer_id IS NOT NULL\nGROUP BY customer_id\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new",
+     "update"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "UPDATE events SET customer_id = 1 WHERE id = 1"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "an update moves the only row of group 0 to group 1; group 0's row stays in the table",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-left-join-changing-dimension",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT e.id, e.ts, e.v, c.tier FROM ${ref(\"events\")} e\nLEFT JOIN ${ref(\"customers\")} c ON c.id = e.customer_id\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "customers": {
+     "columns": {
+      "id": "INT64",
+      "tier": "STRING"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": null
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new",
+     "update"
+    ],
+    "tables": [
+     "events",
+     "customers"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO customers (id, tier) VALUES (0, 'a')"
+     ],
+     [
+      "UPDATE customers SET tier = 'b' WHERE id = 0"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 1, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "a LEFT JOIN keeps every event, so event keys never disappear; customers.id is unique, so each event appears once",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-inner-join-dimension-delete",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT e.id, e.ts, c.tier FROM ${ref(\"events\")} e\nJOIN ${ref(\"customers\")} c ON c.id = e.customer_id\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "customers": {
+     "columns": {
+      "id": "INT64",
+      "tier": "STRING"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": null
+    }
+   },
+   "contract": {
+    "kinds": [
+     "delete",
+     "empty"
+    ],
+    "tables": [
+     "customers"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO customers (id, tier) VALUES (0, 'a')"
+    ],
+    "batches": [
+     [
+      "DELETE FROM customers WHERE id = 0"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "deleting the customer removes the event from the full result, but its row stays in the table",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-inner-join-both-grow",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT e.id, e.ts, e.v, c.tier FROM ${ref(\"events\")} e\nJOIN ${ref(\"customers\")} c ON c.id = e.customer_id\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "customers": {
+     "columns": {
+      "id": "INT64",
+      "tier": "STRING"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": null
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_late",
+     "insert_new"
+    ],
+    "tables": [
+     "events",
+     "customers"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO customers (id, tier) VALUES (0, 'b')"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ],
+     [
+      "INSERT INTO customers (id, tier) VALUES (1, 'a')"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "both sides only gain rows, so every joined row survives; customers.id is unique, so each event joins at most once",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-not-exists-growing",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT e.id, e.ts, e.v FROM ${ref(\"events\")} e\nWHERE NOT EXISTS (SELECT 1 FROM ${ref(\"refunds\")} r WHERE r.event_id = e.id)\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "refunds": {
+     "columns": {
+      "id": "INT64",
+      "event_id": "INT64",
+      "ts": "TIMESTAMP"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO refunds (id, event_id, ts) VALUES (10, 1, TIMESTAMP '2024-01-01 02:00:00')"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a new refund removes its event from the full result; the merge keeps the old row",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-not-exists-frozen",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT e.id, e.ts, e.v FROM ${ref(\"events\")} e\nWHERE NOT EXISTS (SELECT 1 FROM ${ref(\"refunds\")} r WHERE r.event_id = e.id)\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "refunds": {
+     "columns": {
+      "id": "INT64",
+      "event_id": "INT64",
+      "ts": "TIMESTAMP"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_late",
+     "insert_new"
+    ],
+    "tables": [
+     "events"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)",
+     "INSERT INTO refunds (id, event_id, ts) VALUES (10, 2, TIMESTAMP '2024-01-01 02:00:00')"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 03:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (4, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "refunds never change under this contract, so NOT EXISTS keeps or drops each event the same way every run",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-in-subquery-growing",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT e.id, e.ts, e.v FROM ${ref(\"events\")} e\nWHERE e.customer_id IN (SELECT id FROM ${ref(\"customers\")} WHERE tier = 'a')\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "customers": {
+     "columns": {
+      "id": "INT64",
+      "tier": "STRING"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": null
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new"
+    ],
+    "tables": [
+     "events",
+     "customers"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO customers (id, tier) VALUES (0, 'a')"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 1, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ],
+     [
+      "INSERT INTO customers (id, tier) VALUES (1, 'b')"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "IN over a growing set only admits more events; nothing admitted is ever dropped",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-in-subquery-updated",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT e.id, e.ts, e.v FROM ${ref(\"events\")} e\nWHERE e.customer_id IN (SELECT id FROM ${ref(\"customers\")} WHERE tier = 'a')\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "customers": {
+     "columns": {
+      "id": "INT64",
+      "tier": "STRING"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": null
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new",
+     "update"
+    ],
+    "tables": [
+     "events",
+     "customers"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO customers (id, tier) VALUES (0, 'a')"
+    ],
+    "batches": [
+     [
+      "UPDATE customers SET tier = 'b' WHERE id = 0"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "the customer's tier changes, so its events leave the full result but stay in the table",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-having-drops-group",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"customer_id\"] }\nSELECT customer_id, SUM(v) AS total FROM ${ref(\"events\")}\nWHERE customer_id IS NOT NULL\nGROUP BY customer_id\nHAVING SUM(v) < 3\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 3)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a new row pushes the group's total to 4, so the group leaves the full result but stays in the table",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-having-count-grows",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"customer_id\"] }\nSELECT customer_id, COUNT(*) AS n, SUM(v) AS total FROM ${ref(\"events\")}\nWHERE customer_id IS NOT NULL\nGROUP BY customer_id\nHAVING COUNT(*) >= 2\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_late",
+     "insert_new"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 1, TIMESTAMP '2024-01-01 02:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (4, 1, TIMESTAMP '2024-01-01 03:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (5, 2, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "counts only grow under inserts, so a group that passed HAVING COUNT(*) >= 2 keeps passing",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-limit",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, ts, v FROM ${ref(\"events\")}\nORDER BY ts DESC, id DESC\nLIMIT 2\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 03:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a new row pushes the oldest out of the top 2; its row stays in the table",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-union-colliding-keys",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, ts, v FROM ${ref(\"web\")}\nUNION ALL\nSELECT id, ts, v FROM ${ref(\"app\")}\n",
+   "sources": {
+    "web": {
+     "columns": {
+      "id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "app": {
+     "columns": {
+      "id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO web (id, ts, v) VALUES (1, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO app (id, ts, v) VALUES (1, TIMESTAMP '2024-01-01 02:00:00', 1)"
+    ],
+    "batches": [
+     []
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "both sources number their rows from the same keys, so one id appears twice and the merge fails",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-union-tagged-keys",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"src\", \"id\"] }\nSELECT 'web' AS src, id, ts, v FROM ${ref(\"web\")}\nUNION ALL\nSELECT 'app' AS src, id, ts, v FROM ${ref(\"app\")}\n",
+   "sources": {
+    "web": {
+     "columns": {
+      "id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "app": {
+     "columns": {
+      "id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_late",
+     "insert_new",
+     "update"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO web (id, ts, v) VALUES (1, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO app (id, ts, v) VALUES (1, TIMESTAMP '2024-01-01 02:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO web (id, ts, v) VALUES (2, TIMESTAMP '2024-01-01 03:00:00', 1)"
+     ],
+     [
+      "UPDATE app SET v = 3 WHERE id = 1"
+     ],
+     [
+      "INSERT INTO app (id, ts, v) VALUES (2, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "(src, id) is unique because each branch has its own src literal and id is each source's key; keys only grow",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-trivial-incremental-filter",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE 1 = 1`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_late",
+     "insert_new",
+     "update"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ],
+     [
+      "UPDATE events SET v = 2 WHERE id = 2"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "the incremental filter is always true, so this is a merge of a full re-run on the source key",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-wrapped-subquery",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nselect * from (\nSELECT e.id, e.ts, COALESCE(e.v, 0) AS v, c.tier\nFROM ${ref(\"events\")} e LEFT JOIN ${ref(\"customers\")} c ON e.customer_id = c.id\nWHERE e.ts >= '2020-01-01'\n)\n${when(incremental(), `where 1 = 1`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "customers": {
+     "columns": {
+      "id": "INT64",
+      "tier": "STRING"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": null
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_late",
+     "insert_new",
+     "update"
+    ],
+    "tables": [
+     "events",
+     "customers"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO customers (id, tier) VALUES (0, 'a')"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 1, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ],
+     [
+      "UPDATE customers SET tier = 'c' WHERE id = 0"
+     ],
+     [
+      "INSERT INTO customers (id, tier) VALUES (1, 'b')"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "the generated-fixture shape: a full re-run wrapped in SELECT * ... WHERE 1 = 1, merged on the event key",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-append-no-key",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     []
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "without uniqueKey a full re-run is appended, so every row is inserted again",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-merge-on-non-unique-column",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"customer_id\"] }\nSELECT customer_id, ts, v FROM ${ref(\"events\")}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+    ],
+    "batches": [
+     []
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "two events share customer 0, so each target row matches two source rows and the merge fails",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-window-column",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, ts, v, SUM(v) OVER (PARTITION BY customer_id) AS customer_total FROM ${ref(\"events\")}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_late",
+     "insert_new"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 2)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 1, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "the window column changes, but every key stays and the merge rewrites each row",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-left-join-fan-out",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT c.id, c.tier, o.v FROM ${ref(\"customers\")} c\nLEFT JOIN ${ref(\"orders\")} o ON o.customer_id = c.id\n",
+   "sources": {
+    "customers": {
+     "columns": {
+      "id": "INT64",
+      "tier": "STRING"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": null
+    },
+    "orders": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO customers (id, tier) VALUES (0, 'a')",
+     "INSERT INTO orders (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO orders (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+    ],
+    "batches": [
+     []
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a customer with two orders appears twice, so the merge has two source rows for one target row",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-distinct-not-null",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"customer_id\"] }\nSELECT DISTINCT customer_id FROM ${ref(\"events\")}\nWHERE customer_id IS NOT NULL\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "duplicate",
+     "empty",
+     "insert_late",
+     "insert_new"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 1, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "the set of customers only grows under inserts",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-except-frozen",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id FROM ${ref(\"events\")}\nEXCEPT DISTINCT\nSELECT event_id FROM ${ref(\"refunds\")}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "refunds": {
+     "columns": {
+      "id": "INT64",
+      "event_id": "INT64",
+      "ts": "TIMESTAMP"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_late",
+     "insert_new"
+    ],
+    "tables": [
+     "events"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)",
+     "INSERT INTO refunds (id, event_id, ts) VALUES (10, 2, TIMESTAMP '2024-01-01 02:00:00')"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 03:00:00', 1)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "the subtracted table never changes, so an id once in the result stays",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-except-growing",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id FROM ${ref(\"events\")}\nEXCEPT DISTINCT\nSELECT event_id FROM ${ref(\"refunds\")}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "refunds": {
+     "columns": {
+      "id": "INT64",
+      "event_id": "INT64",
+      "ts": "TIMESTAMP"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO refunds (id, event_id, ts) VALUES (10, 1, TIMESTAMP '2024-01-01 02:00:00')"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a new refund removes its event id from the full result",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-scalar-subquery-column",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, ts, v, (SELECT MAX(v) FROM ${ref(\"events\")}) AS top_v FROM ${ref(\"events\")}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_late",
+     "insert_new"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 3)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 00:00:00', 0)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "top_v changes for every row, but the merge rewrites every key and no key leaves",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-filter-on-scalar-subquery",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, ts, v FROM ${ref(\"events\")}\nWHERE v = (SELECT MAX(v) FROM ${ref(\"events\")})\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 3)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a larger v arrives, so the old maximum row leaves the full result but stays in the table",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-null-key",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new",
+     "null_key"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (NULL, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ],
+     []
+    ],
+    "diverges_at": 2
+   },
+   "ignore_columns": [],
+   "note": "a NULL key never matches, so the row is inserted again every run",
+   "cases_version": 2
+  },
+  {
+   "id": "full-rerun-coalesced-key",
+   "family": "full_rerun",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"customer_id\"] }\nSELECT COALESCE(customer_id, -1) AS customer_id, COUNT(*) AS n FROM ${ref(\"events\")}\nGROUP BY 1\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_late",
+     "insert_new"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, NULL, TIMESTAMP '2024-01-01 02:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, NULL, TIMESTAMP '2024-01-01 03:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (4, 1, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "the group key is COALESCEd to a constant, so it is never NULL; groups only grow under inserts",
+   "cases_version": 2
+  },
+  {
+   "id": "script-variable-docs-pattern-empty-start",
+   "family": "script_variable",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npre_operations {\n  DECLARE wm DEFAULT (\n    ${when(incremental(),\n    `SELECT MAX(ts) FROM ${self()}`,\n    `SELECT TIMESTAMP '1970-01-01'`)}\n  )\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\nWHERE ts > wm\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "an empty first build makes MAX(ts) NULL, and ts > NULL never loads anything again",
+   "cases_version": 2
+  },
+  {
+   "id": "script-variable-docs-pattern-non-empty",
+   "family": "script_variable",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npre_operations {\n  DECLARE wm DEFAULT (\n    ${when(incremental(),\n    `SELECT MAX(ts) FROM ${self()}`,\n    `SELECT TIMESTAMP '1970-01-01'`)}\n  )\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\nWHERE ts > wm\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_late",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a late row falls before the variable's watermark and is never loaded",
+   "cases_version": 2
+  },
+  {
+   "id": "script-variable-coalesce-append",
+   "family": "script_variable",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npre_operations {\n  DECLARE wm DEFAULT (\n    ${when(incremental(),\n    `SELECT COALESCE(MAX(ts), TIMESTAMP '1970-01-01') FROM ${self()}`,\n    `SELECT TIMESTAMP '1970-01-01'`)}\n  )\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\nWHERE ts > wm\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ],
+     [],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)",
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 03:00:00', 1)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "the variable is the table's newest time (or an old default when it is empty), set before the query runs: R1 through a variable",
+   "cases_version": 2
+  },
+  {
+   "id": "script-variable-coalesce-merge-boundary",
+   "family": "script_variable",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\npre_operations {\n  DECLARE wm DEFAULT (\n    ${when(incremental(),\n    `SELECT COALESCE(MAX(ts), TIMESTAMP '1970-01-01') FROM ${self()}`,\n    `SELECT TIMESTAMP '1970-01-01'`)}\n  )\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\nWHERE ts >= wm\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_boundary",
+     "insert_new",
+     "update_touch"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ],
+     [
+      "UPDATE events SET ts = TIMESTAMP '2024-01-01 04:00:00', v = 2 WHERE id = 1"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 04:00:00', 1)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "R2 through a variable: >= on the table's newest time, merge on the source key, no filter beyond the watermark",
+   "cases_version": 2
+  },
+  {
+   "id": "script-variable-unused",
+   "family": "script_variable",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npre_operations {\n  DECLARE run_started DEFAULT CURRENT_TIMESTAMP();\n  ---\n  SET run_started = CURRENT_TIMESTAMP()\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "the pre-operations only set a variable the query never reads; the model is the R1 watermark",
+   "cases_version": 2
+  },
+  {
+   "id": "script-variable-set-from-source",
+   "family": "script_variable",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npre_operations {\n  DECLARE wm TIMESTAMP;\n  SET wm = (SELECT MAX(ts) FROM ${ref(\"events\")});\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts >= wm`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)",
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 03:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "the variable is the source's newest time, so a run loads only the newest row and loses the others",
+   "cases_version": 2
+  },
+  {
+   "id": "pre-operation-reload-own-window",
+   "family": "pre_operation_window",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npre_operations {\n  ${when(incremental(), `DELETE FROM ${self()} WHERE ts >= TIMESTAMP_SUB((SELECT MAX(ts) FROM ${self()}), INTERVAL 2 HOUR)`)}\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_boundary",
+     "insert_new"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 03:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 03:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (4, 0, TIMESTAMP '2024-01-01 09:00:00', 1)",
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (5, 0, TIMESTAMP '2024-01-01 09:00:00', 1)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "the run deletes the table's last 2 hours and reloads every source row after what is left; new rows are never older than the table's newest",
+   "cases_version": 2
+  },
+  {
+   "id": "pre-operation-reload-late-beyond-window",
+   "family": "pre_operation_window",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npre_operations {\n  ${when(incremental(), `DELETE FROM ${self()} WHERE ts >= TIMESTAMP_SUB((SELECT MAX(ts) FROM ${self()}), INTERVAL 2 HOUR)`)}\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_late",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 06:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (4, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "a row 6 hours late is older than the reloaded window and is never loaded",
+   "cases_version": 2
+  },
+  {
+   "id": "pre-operation-reload-duplicate-old-row",
+   "family": "pre_operation_window",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npre_operations {\n  ${when(incremental(), `DELETE FROM ${self()} WHERE ts >= TIMESTAMP_SUB((SELECT MAX(ts) FROM ${self()}), INTERVAL 2 HOUR)`)}\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "duplicate",
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 06:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "re-delivering a row older than the window adds a copy the table never gets",
+   "cases_version": 2
+  },
+  {
+   "id": "pre-operation-reload-update-touch",
+   "family": "pre_operation_window",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npre_operations {\n  ${when(incremental(), `DELETE FROM ${self()} WHERE ts >= TIMESTAMP_SUB((SELECT MAX(ts) FROM ${self()}), INTERVAL 2 HOUR)`)}\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new",
+     "update_touch"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 06:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "UPDATE events SET ts = TIMESTAMP '2024-01-01 07:00:00', v = 2 WHERE id = 1"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "appending without a key: the moved row's old version (outside the window) stays beside the reloaded one",
+   "cases_version": 2
+  },
+  {
+   "id": "post-operation-grant-watermark",
+   "family": "post_operations",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npost_operations {\n  GRANT `roles/bigquery.dataViewer` ON TABLE ${self()} TO \"group:analysts@example.com\"\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "a GRANT changes who can read the table, not its rows; the model is the R1 watermark",
+   "cases_version": 2
+  },
+  {
+   "id": "post-operation-grant-full-rerun-append",
+   "family": "post_operations",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npost_operations {\n  GRANT `roles/bigquery.dataViewer` ON TABLE ${self()} TO \"group:analysts@example.com\"\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_new"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     []
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "the GRANT does not change rows; appending a full re-run duplicates every row",
+   "cases_version": 2
+  },
+  {
+   "id": "post-operation-set-options-full-rerun",
+   "family": "post_operations",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\npost_operations {\n  ALTER TABLE ${self()} SET OPTIONS (description = 'events by id')\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_late",
+     "insert_new",
+     "update"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ],
+     [
+      "UPDATE events SET v = 3 WHERE id = 1"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "setting table options changes metadata only; the model is a merge of a full re-run on the source key",
+   "cases_version": 2
+  },
+  {
+   "id": "ties-dedup-by-customer-boundary",
+   "family": "ties",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"customer_id\"] }\nSELECT customer_id, id, ts, v FROM ${ref(\"events\")}\nWHERE customer_id IS NOT NULL\nQUALIFY ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY ts DESC) = 1\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_boundary",
+     "insert_new"
+    ]
+   },
+   "label": "nondeterministic",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 2)"
+    ],
+    "batches": [
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "two rows of customer 0 share the newest ts, so which one ROW_NUMBER keeps is up to the engine",
+   "cases_version": 2
+  },
+  {
+   "id": "ties-dedup-by-customer-total-order",
+   "family": "ties",
+   "origin": "authored",
+   "split": "dev",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"customer_id\"] }\nSELECT customer_id, id, ts, v FROM ${ref(\"events\")}\nWHERE customer_id IS NOT NULL\nQUALIFY ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY ts DESC, id DESC) = 1\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "empty",
+     "insert_boundary",
+     "insert_late",
+     "insert_new"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 2)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (4, 1, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "ties on ts are broken by the unique id, so the kept row is determined; customers only gain rows",
+   "cases_version": 2
+  }
+ ]
+}
