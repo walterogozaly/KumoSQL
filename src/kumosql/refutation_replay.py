@@ -13,8 +13,8 @@ and runs both queries. It says the pair *differs* only when
 * each query returns the same bag when every table's rows are stored reversed, rotated and
   shuffled, so the difference never rests on a tie broken by position or an arbitrary pick.
 
-BigQuery SQL runs through :mod:`kumosql.bigquery_on_duckdb` (BigQuery's NULL order, guards that
-fail where BigQuery fails, results read as BigQuery returns them); a query with no faithful DuckDB
+BigQuery SQL runs through :mod:`kumosql.bigquery_on_duckdb` (sqlglot spells out BigQuery's NULL order, ``NULLS FIRST`` ascending, against DuckDB's default; guards that
+fail where BigQuery fails; results read as BigQuery returns them); a query with no faithful DuckDB
 reading cannot be judged, so nothing is confirmed for it. DuckDB SQL runs as written. MySQL SQL
 (the VeriEQL and Calcite-family evals) runs through :func:`kumosql.counterexample.to_duckdb`, the
 translation those evals already use as their oracle.
@@ -61,28 +61,6 @@ def duckdb_type(declared: str, dialect: str) -> str:
     from .bounded_equivalence import BColumn, _duck_type as bounded_type
 
     return bounded_type(BColumn("c", declared), bigquery=dialect == "bigquery")
-
-
-_SESSION_DIALECT = None
-
-
-def _session_dialect():
-    """DuckDB SQL written for a connection set up by :func:`kumosql.bigquery_on_duckdb.configure`.
-
-    sqlglot leaves out a ``NULLS FIRST``/``NULLS LAST`` that matches DuckDB's default (NULLs last), but
-    that connection sorts NULLs first ascending, so an explicit ``ASC NULLS LAST`` written in BigQuery
-    would be lost. This DuckDB dialect assumes the session's order instead and keeps it.
-    """
-
-    global _SESSION_DIALECT
-    if _SESSION_DIALECT is None:
-        from sqlglot.dialects.duckdb import DuckDB
-
-        class KumoBigQueryOrderDuckDB(DuckDB):
-            NULL_ORDERING = "nulls_are_small"
-
-        _SESSION_DIALECT = KumoBigQueryOrderDuckDB
-    return _SESSION_DIALECT
 
 
 def _normal(value: Any, digits: int | None) -> Any:
@@ -161,7 +139,7 @@ class Judge:
         if self.dialect == "bigquery":
             from .bigquery_on_duckdb import faithful
 
-            return faithful(self._renamed(sqlglot.parse_one(sql, read="bigquery"))).sql(dialect=_session_dialect())
+            return faithful(self._renamed(sqlglot.parse_one(sql, read="bigquery"))).sql(dialect="duckdb")
         from .counterexample import to_duckdb
 
         if renamed:
