@@ -824,7 +824,35 @@ def exists_formula(term, ctx: Ctx):
     return result
 
 
+def _flatten_exists(t: Term, ctx: Ctx) -> list | None:
+    """``∃(Σx. [∃(Σy. φ)]·ψ) = ∃(Σx,y. φ·ψ)``: existence quantifiers commute and merge.
+
+    Only inside an existence test, where a product is positive exactly when every factor is.
+    Returns the simplified terms, or ``None`` when no factor is an existence test over a single term.
+    """
+
+    from .ir import rename_bound
+
+    vars_, factors, changed = list(t.vars), [], False
+    for f in t.factors:
+        if isinstance(f, NInd) and isinstance(f.f, Exists) and isinstance(f.f.term, NSum):
+            inner = rename_bound(f.f.term)
+            parts = list(inner.body.args) if isinstance(inner.body, NMul) else [inner.body]
+            if all(isinstance(g, (NRel, NInd)) for g in parts):
+                vars_.extend(inner.vars)
+                factors.extend(parts)
+                changed = True
+                continue
+        factors.append(f)
+    if not changed:
+        return None
+    return simplify_term(Term(tuple(vars_), t.coef, tuple(factors)), ctx)
+
+
 def _exists_term(t: Term, ctx: Ctx):
+    flat = _flatten_exists(t, ctx)
+    if flat is not None:
+        return disj(*[_exists_term(u, ctx) for u in flat])
     positive = []
     for f in t.factors:
         if isinstance(f, NRel):

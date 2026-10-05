@@ -63,3 +63,15 @@ def test_having_on_a_group_key_is_the_same_as_filtering_before_grouping():
         "SELECT name FROM dept WHERE name > 'b' GROUP BY name HAVING name > 'c' AND (COUNT(*) > 3 OR name < 'z')",
         "SELECT t.name FROM (SELECT name FROM dept WHERE name > 'b') AS t WHERE t.name > 'd' GROUP BY t.name HAVING COUNT(*) > 3 OR t.name < 'z'",
     )
+
+
+def test_existence_inside_existence_merges():
+    # a group of a group exists exactly when a row does
+    assert proves(
+        "SELECT deptno FROM emp GROUP BY deptno",
+        "SELECT t.deptno FROM (SELECT ename, deptno FROM emp GROUP BY ename, deptno) AS t GROUP BY t.deptno",
+    )
+    assert not proves(
+        "SELECT deptno FROM emp GROUP BY deptno",
+        "SELECT t.deptno FROM (SELECT ename, deptno FROM emp WHERE sal > 1 GROUP BY ename, deptno) AS t GROUP BY t.deptno",
+    )
