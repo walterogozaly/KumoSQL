@@ -35,6 +35,7 @@ from sqlglot.optimizer.qualify import qualify
 
 from .ast_utils import captured_names, grouping_elements, inside as _inside
 from .smt_equivalence import SmtStatus, TableConstraints
+from .comparison_implication import implied_by_any
 from .floor_unit_rules import floor_from_finer
 from .identity_cast_reads import cast_source
 from .single_group_reads import fixed_single_group, read_single_group
@@ -625,7 +626,7 @@ def _candidates_for(query: _Block, model: _Block, names: list[str], model_name: 
         query_having = _conjunct_keys(query.having)
         if model_having:
             # the model dropped groups: the query must drop at least those, and nothing finer can be rebuilt
-            if not same_grain or not set(model_having) <= {_key(h) for h in query_having}:
+            if not same_grain or not implied_by_any(_conjunct_keys(model_renamed.having), query_having, _key):
                 continue
             query_having = [h for h in query_having if _key(h) not in set(model_having)]
         regroup: list = []
