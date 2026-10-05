@@ -1,0 +1,35 @@
+{
+  "job": "setup-validation",
+  "kind": "setup",
+  "ref": "master",
+  "sha": "04af1a9edc9f276a016b8b993847303352c85665",
+  "leg": "pure",
+  "mode": "quick",
+  "status": "crashed",
+  "exit": 3,
+  "seconds": 219.5,
+  "workers": 6,
+  "notes": [
+    "Native Windows setup diagnostic from the earlier quick run; incomplete coverage, not a full matrix leg."
+  ],
+  "finished": "2026-10-05T02:23:09Z",
+  "machine": {
+    "system": "Windows",
+    "release": "10",
+    "cpus": 12,
+    "python": "3.11.9"
+  },
+  "tests": 4100,
+  "skipped": 5,
+  "passed": 4091,
+  "failed": [],
+  "errors": [
+    "pytest::internal"
+  ],
+  "known_failed": [
+    "tests/test_dataform_loading_identity.py::test_a_crlf_operations_separator_splits_the_statements",
+    "tests/test_dataform_loading_identity.py::test_config_the_compiler_rejects_is_reported",
+    "tests/test_lineage_benchmarks.py"
+  ],
+  "tail": "Windows baseline: resource module unavailable during collection; CRLF and slash expectation failures; pytest crashed after test_long_paths.py simulated os.name=posix."
+}
