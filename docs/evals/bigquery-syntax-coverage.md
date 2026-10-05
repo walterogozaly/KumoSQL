@@ -65,6 +65,7 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 - `SELECT WITH DIFFERENTIAL_PRIVACY` stays unparsed on purpose: read as a plain query, its noisy aggregates would look exact to every prover. Its table reads still come from the token fallback.
 - `DROP TABLE FUNCTION` did not parse; `bigquery_syntax.py` now reads it as a drop of kind `TABLE FUNCTION`. Script cleanup gaps closed by [the script reader](../scripts.md) are no longer listed.
 - Raw bytes literals (`br'a\d'`, `rb".."`) did not parse; they are read as the `b'..'` literal with the same bytes. Pipe `|> WITH y AS (...)` did not parse; it is read as a `WITH` at the front of its query, but only when nothing before it spells a name it defines and the query has no `WITH` of its own (otherwise moving it could change what a name means).
+- Procedural blocks sqlglot rejects (`CREATE PROCEDURE p(IN a INT64, OUT b INT64, INOUT c STRING)`, `label: LOOP ... END LOOP label`, `REPEAT ... UNTIL c END REPEAT`, the `CASE n WHEN 1 THEN stmt; ... END CASE` statement) raised a `ParseError`, so a caller saw broken SQL where [the script reader](../scripts.md) could read the script. `kumosql.bigquery_scripts` now cuts such a script at its top-level statements (with the scripts lexer, so a `;` or `END` inside a label, a `CASE` or a `REPEAT` never ends a block early): statements sqlglot reads keep their trees, and each block becomes one opaque `Command` that prints back as written, so no rule rewrites it and no prover compares it. A broken statement next to a block, or text without a block, keeps its `ParseError`. The five new `script/label_*`, `script/labels_nested`, `script/while_label_iterate`, `script/case_nested` and `ddl/create_procedure_struct_params` cases follow the documented scripting grammar only: the dry-run check is limited to a single `SELECT`, so they are recorded as not run. Covered by `tests/test_bigquery_procedures.py`; the reader's side (labels, `RETURN`/`RAISE`/`LEAVE` context, Spark procedures, `ASSERT` and `RAISE` reads) is in [scripts.md](../scripts.md).
 - An outside GoogleSQL feature checklist (287 entries from the BigQuery reference and release notes, 2026-10-02) was checked against BigQuery: 31 of its 154 single-statement query examples were not valid GoogleSQL. The 119 distinct valid queries are kept in `tests/fixtures/googlesql_checklist.json` (source noted there), and `tests/test_googlesql_checklist.py` checks on every sqlglot build that each parses and prints back to SQL that reads the same. Three are recorded as not read yet: `MATCH_RECOGNIZE` (sqlglot's BigQuery tokenizer lacks the keyword, and reading it needs column lineage for `MEASURES` first), a parenthesized join that starts with `UNNEST`, and pipe `RENAME` (on purpose, above). The same check found two false proofs, now fixed ([provers.md](../provers.md)): bytes literals that differ only in backslash escapes, and `CAST` to a parameterized type.
 - Five constructs from the GoogleSQL compliance tests ([#520](https://github.com/walterogozaly/KumoSQL/issues/520)) were not read, or were misread, and are now handled in `bigquery_syntax.py` the same way on sqlglot 26.0.0, 30.20, 30.21 and compiled 30.21 (each was first checked with a BigQuery dry run):
   - `x LIKE ALL UNNEST(array)` did not parse (`LIKE ANY UNNEST` did). It is read as `All` over an `Unnest` and prints back as written; `LIKE SOME` is read as `LIKE ANY`, which prints that way.
@@ -93,12 +94,12 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 |---|---:|---|---|---|---|---|---|---|---|
 | data | 8 | 5 ✅ 3 ⚪ | 8 ✅ | 8 ✅ | n/a | 5 ✅ 3 ⚪ | 7 ✅ 1 ⚪ | n/a | 1 ✅ 7 ⚠ |
 | dcl | 5 | 4 ✅ 1 ⚪ | 5 ✅ | 5 ✅ | n/a | 5 ✅ | 0 ✅ 5 ⚪ | n/a | 0 ✅ 5 – |
-| ddl | 74 | 45 ✅ 29 ⚪ | 74 ✅ | 74 ✅ | n/a | 73 ✅ 1 ⚪ | 65 ✅ 9 ⚪ | n/a | 48 ✅ 20 ⚠ 6 – |
+| ddl | 75 | 45 ✅ 30 ⚪ | 75 ✅ | 75 ✅ | n/a | 74 ✅ 1 ⚪ | 66 ✅ 9 ⚪ | n/a | 48 ✅ 20 ⚠ 7 – |
 | dml | 16 | 16 ✅ | 16 ✅ | 16 ✅ | n/a | 16 ✅ | 16 ✅ | n/a | 16 ✅ |
 | query | 138 | 136 ✅ 2 ⚪ | 138 ✅ | 138 ✅ | 135 ✅ | 136 ✅ 2 ⚪ | 132 ✅ 6 ⚪ | 112 ✅ 23 ⚪ | 119 ✅ 16 ⚠ 3 – |
-| script | 22 | 6 ✅ 16 ⚪ | 22 ✅ | 21 ✅ 1 ⚪ | n/a | 22 ✅ | 21 ✅ 1 ⚪ | n/a | 20 ✅ 2 ⚠ |
+| script | 26 | 6 ✅ 20 ⚪ | 26 ✅ | 26 ✅ | n/a | 26 ✅ | 24 ✅ 2 ⚪ | n/a | 20 ✅ 2 ⚠ 4 – |
 | transaction | 2 | 1 ✅ 1 ⚪ | 2 ✅ | 2 ✅ | n/a | 2 ✅ | 2 ✅ | n/a | 2 ✅ |
-| **all GoogleSQL** | 265 | 213 ✅ 52 ⚪ | 265 ✅ | 264 ✅ 1 ⚪ | 135 ✅ | 259 ✅ 6 ⚪ | 243 ✅ 22 ⚪ | 112 ✅ 23 ⚪ | 206 ✅ 45 ⚠ 14 – |
+| **all GoogleSQL** | 270 | 213 ✅ 57 ⚪ | 270 ✅ | 270 ✅ | 135 ✅ | 264 ✅ 6 ⚪ | 247 ✅ 23 ⚪ | 112 ✅ 23 ⚪ | 206 ✅ 45 ⚠ 19 – |
 
 | Dataform | Cases | parse | load | refs | graph | cleanup | format | dry run |
 |---|---:|---|---|---|---|---|---|---|
@@ -108,8 +109,8 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 
 | Stage | Owner | Reason | Cases | Examples |
 |---|---|---|---:|---|
-| parse | sqlglot | ParseError: Invalid expression / Unexpected token. | 26 | `data/export_data`, `data/export_data_connection`, `data/export_data_pubsub` |
-| parse | sqlglot | sqlglot keeps CREATE as an opaque command | 11 | `ddl/create_aggregate_function`, `ddl/create_assignment`, `ddl/create_capacity_reservation` |
+| parse | sqlglot | ParseError: Invalid expression / Unexpected token. | 24 | `data/export_data`, `data/export_data_connection`, `data/export_data_pubsub` |
+| parse | sqlglot | sqlglot keeps CREATE as an opaque command | 13 | `ddl/create_aggregate_function`, `ddl/create_assignment`, `ddl/create_capacity_reservation` |
 | parse | sqlglot | sqlglot keeps ALTER as an opaque command | 10 | `ddl/alter_materialized_view`, `ddl/alter_model`, `ddl/alter_organization` |
 | parse | sqlglot | sqlglot keeps DROP as an opaque command | 6 | `ddl/drop_all_row_access_policies`, `ddl/drop_external_table`, `ddl/drop_index` |
 | parse | sqlglot | sqlglot keeps BEGIN as an opaque command | 5 | `script/begin_end_block`, `script/begin_exception`, `script/raise` |
@@ -117,24 +118,27 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 | parse | sqlglot | sqlglot keeps EXECUTE as an opaque command | 3 | `script/execute_immediate`, `script/execute_immediate_concat`, `script/execute_immediate_using_positional` |
 | parse | sqlglot | AttributeError: 'NoneType' object has no attribute 'name' | 2 | `data/load_data`, `data/load_data_temp_table` |
 | parse | sqlglot | sqlglot keeps END as an opaque command | 2 | `ddl/create_procedure_options`, `script/for_in` |
-| parse | sqlglot | ParseError: Expecting ). | 2 | `ddl/create_procedure_sql`, `query/object_table_function` |
 | parse | sqlglot | sqlglot keeps CALL as an opaque command | 2 | `script/call_procedure`, `script/call_with_dml` |
+| parse | sqlglot | sqlglot keeps CASE as an opaque command | 2 | `script/case_nested`, `script/case_when` |
+| parse | sqlglot | sqlglot keeps outer_loop: as an opaque command | 2 | `script/labels`, `script/labels_nested` |
 | parse | sqlglot | ParseError: Required keyword: 'options' missing for <class 'sqlglot.expressions.dml.Export | 1 | `data/export_model` |
 | parse | sqlglot | sqlglot keeps GRANT as an opaque command | 1 | `dcl/grant_project` |
+| parse | sqlglot | ParseError: Expecting ). | 1 | `query/object_table_function` |
 | parse | sqlglot | ParseError: Unsupported pipe syntax operator: 'SET'.. | 1 | `query/pipe_extend_set_drop` |
 | parse | sqlglot | ParseError: Required keyword: 'expression' missing for <class 'sqlglot.expressions.Union'> | 1 | `query/set_corresponding` |
-| parse | sqlglot | ParseError: Required keyword: 'true' missing for <class 'sqlglot.expressions.functions.If' | 1 | `script/case_when` |
 | parse | sqlglot | sqlglot keeps IF as an opaque command | 1 | `script/if_elseif_else` |
+| parse | sqlglot | sqlglot keeps blk: as an opaque command | 1 | `script/label_begin_leave` |
 | parse | sqlglot | sqlglot keeps LOOP as an opaque command | 1 | `script/loop_leave_iterate` |
+| parse | sqlglot | sqlglot keeps REPEAT as an opaque command | 1 | `script/repeat_until` |
+| parse | sqlglot | sqlglot keeps w: as an opaque command | 1 | `script/while_label_iterate` |
 | parse | sqlglot | sqlglot keeps WHILE as an opaque command | 1 | `script/while_loop` |
 | load | kumosql | ref() with a computed argument is not resolved | 1 | `dataform/table_dynamic_dependencies` |
-| graph | kumosql | reads of this DML, script or non-query statement are not extracted | 1 | `script/assert` |
 | cleanup | kumosql | recovered_parse | 4 | `data/export_model`, `data/load_data_overwrite`, `ddl/undrop_schema` |
 | cleanup | kumosql | parse_error | 4 | `data/load_data`, `data/load_data_partition_columns`, `data/load_data_temp_table` |
 | cleanup | kumosql | recovered_parse; output_parse_error; recovered_parse; output_parse_error; recovered_parse; | 1 | `dataform/operations_export` |
 | cleanup | kumosql | equivalence could not be proven for every changed statement | 1 | `dataform/table_with_qualify_cte` |
 | cleanup | kumosql | recovered_parse; pipe_syntax_kept; recovered_parse; pipe_syntax_kept; recovered_parse; pip | 1 | `query/pipe_extend_set_drop` |
-| format | sqlfluff | parse_error | 22 | `data/export_model`, `dcl/grant_project`, `dcl/grant_schema` |
+| format | sqlfluff | parse_error | 23 | `data/export_model`, `dcl/grant_project`, `dcl/grant_schema` |
 | prover | prover | unsupported: LIMIT is not modeled | 9 | `query/backtick_dashed_project`, `query/backtick_dataset_only`, `query/backtick_whole_path` |
 | prover | prover | unsupported: WINDOW is not modeled | 7 | `query/ml_feature_functions`, `query/pipe_select_window_qualify`, `query/pseudo_columns_row_number` |
 | prover | prover | unsupported: nondeterministic: TABLESAMPLE SYSTEM (10 PERCENT) | 2 | `query/pipe_call_tablesample`, `query/tablesample` |

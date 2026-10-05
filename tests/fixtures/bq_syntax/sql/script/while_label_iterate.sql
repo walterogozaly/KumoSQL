@@ -1,0 +1,8 @@
+DECLARE i INT64 DEFAULT 0;
+w: WHILE i < 3 DO
+  SET i = i + 1;
+  IF i = 2 THEN
+    ITERATE w;
+  END IF;
+  SELECT i;
+END WHILE w

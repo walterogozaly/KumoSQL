@@ -199,6 +199,10 @@
   "owner": "sqlglot",
   "reason": "sqlglot keeps CREATE as an opaque command"
  },
+ "ddl/create_procedure_struct_params::parse": {
+  "owner": "sqlglot",
+  "reason": "sqlglot keeps CREATE as an opaque command"
+ },
  "ddl/create_property_graph::format": {
   "owner": "sqlfluff",
   "reason": "parse_error"
@@ -483,6 +487,10 @@
   "owner": "sqlglot",
   "reason": "sqlglot keeps CALL as an opaque command"
  },
+ "script/case_nested::parse": {
+  "owner": "sqlglot",
+  "reason": "sqlglot keeps CASE as an opaque command"
+ },
  "script/case_when::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps CASE as an opaque command"
@@ -515,11 +523,23 @@
   "owner": "sqlglot",
   "reason": "sqlglot keeps IF as an opaque command"
  },
+ "script/label_begin_leave::parse": {
+  "owner": "sqlglot",
+  "reason": "sqlglot keeps blk: as an opaque command"
+ },
  "script/labels::format": {
   "owner": "sqlfluff",
   "reason": "parse_error"
  },
  "script/labels::parse": {
+  "owner": "sqlglot",
+  "reason": "sqlglot keeps outer_loop: as an opaque command"
+ },
+ "script/labels_nested::format": {
+  "owner": "sqlfluff",
+  "reason": "parse_error"
+ },
+ "script/labels_nested::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps outer_loop: as an opaque command"
  },
@@ -542,6 +562,10 @@
  "script/set_from_subquery::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps DECLARE as an opaque command"
+ },
+ "script/while_label_iterate::parse": {
+  "owner": "sqlglot",
+  "reason": "sqlglot keeps w: as an opaque command"
  },
  "script/while_loop::parse": {
   "owner": "sqlglot",

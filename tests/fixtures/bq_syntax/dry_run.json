@@ -461,6 +461,10 @@
   "status": "ok",
   "bytes": 0
  },
+ "ddl/create_procedure_struct_params": {
+  "status": "not_run",
+  "message": "a script or procedure definition: the dry-run check is limited to a single SELECT, so this fixture follows the documented scripting grammar only"
+ },
  "ddl/create_property_graph": {
   "status": "ok",
   "bytes": 0
@@ -1272,6 +1276,10 @@
   "message": "Procedure is not found: `kumosql.kumosql_messy.bq_syntax_p2` at [1:6]",
   "category": "needs_objects"
  },
+ "script/case_nested": {
+  "status": "not_run",
+  "message": "a script or procedure definition: the dry-run check is limited to a single SELECT, so this fixture follows the documented scripting grammar only"
+ },
  "script/case_when": {
   "status": "ok",
   "bytes": 0
@@ -1302,9 +1310,17 @@
   "status": "ok",
   "bytes": 0
  },
+ "script/label_begin_leave": {
+  "status": "not_run",
+  "message": "a script or procedure definition: the dry-run check is limited to a single SELECT, so this fixture follows the documented scripting grammar only"
+ },
  "script/labels": {
   "status": "ok",
   "bytes": 0
+ },
+ "script/labels_nested": {
+  "status": "not_run",
+  "message": "a script or procedure definition: the dry-run check is limited to a single SELECT, so this fixture follows the documented scripting grammar only"
  },
  "script/loop_leave_iterate": {
   "status": "ok",
@@ -1329,6 +1345,10 @@
  "script/set_from_subquery": {
   "status": "ok",
   "bytes": 0
+ },
+ "script/while_label_iterate": {
+  "status": "not_run",
+  "message": "a script or procedure definition: the dry-run check is limited to a single SELECT, so this fixture follows the documented scripting grammar only"
  },
  "script/while_loop": {
   "status": "ok",

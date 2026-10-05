@@ -140,6 +140,34 @@
    "reads": [],
    "writes": [],
    "unknown": 0
+  },
+  "label_begin_leave": {
+   "statements": 3,
+   "reads": [
+    "raw_users"
+   ],
+   "writes": [],
+   "unknown": 0
+  },
+  "labels_nested": {
+   "statements": 2,
+   "reads": [],
+   "writes": [],
+   "unknown": 0
+  },
+  "while_label_iterate": {
+   "statements": 4,
+   "reads": [],
+   "writes": [],
+   "unknown": 0
+  },
+  "case_nested": {
+   "statements": 4,
+   "reads": [
+    "raw_users"
+   ],
+   "writes": [],
+   "unknown": 0
   }
  }
 }

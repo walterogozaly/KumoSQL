@@ -3111,6 +3111,56 @@
     "query",
     "function"
    ]
+  },
+  {
+   "id": "script/label_begin_leave",
+   "kind": "sql",
+   "file": "sql/script/label_begin_leave.sql",
+   "tags": [
+    "script",
+    "control-flow",
+    "label"
+   ]
+  },
+  {
+   "id": "script/labels_nested",
+   "kind": "sql",
+   "file": "sql/script/labels_nested.sql",
+   "tags": [
+    "script",
+    "control-flow",
+    "loop",
+    "label"
+   ]
+  },
+  {
+   "id": "script/while_label_iterate",
+   "kind": "sql",
+   "file": "sql/script/while_label_iterate.sql",
+   "tags": [
+    "script",
+    "control-flow",
+    "loop",
+    "label"
+   ]
+  },
+  {
+   "id": "script/case_nested",
+   "kind": "sql",
+   "file": "sql/script/case_nested.sql",
+   "tags": [
+    "script",
+    "control-flow"
+   ]
+  },
+  {
+   "id": "ddl/create_procedure_struct_params",
+   "kind": "sql",
+   "file": "sql/ddl/create_procedure_struct_params.sql",
+   "tags": [
+    "ddl",
+    "procedure"
+   ]
   }
  ]
 }

@@ -50,4 +50,4 @@ def test_job_history_scripts_leave_no_temporary_tables():
 def test_public_scripting_examples_match_hand_written_labels():
     result = script_bench.run_public()
     assert result["wrong"] == 0, result["details"]
-    assert result["exact"] == result["cases"] == 22
+    assert result["exact"] == result["cases"] == 26

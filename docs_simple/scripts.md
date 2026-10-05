@@ -20,6 +20,10 @@ KumoSQL remembers the query that created `recent`, so it can trace `report.amoun
 
 Its splitter understands strings, comments, and nested blocks. A semicolon inside a string or an IF block is not treated as a top-level statement boundary. Loops are followed once for dependency analysis; that does not simulate all iterations.
 
+Procedural parts are read with the same care. A label such as `outer: LOOP ... END LOOP outer`, a `REPEAT ... UNTIL` loop, a `CASE` statement and a procedure with `IN`, `OUT` and `INOUT` parameters are each kept as one block, so the semicolons inside never cut a statement in half. A statement that may be skipped (it comes after an `IF ... THEN RETURN; END IF;`, or after a `LEAVE` of its loop) is reported as something that may happen, never as certain. A procedure's parameters are not mistaken for tables, a `CALL` passes the tables behind its arguments into the body, and a Spark procedure (Python, Java or Scala) is listed but not read, so calling it is reported unknown. An `ASSERT` or `RAISE` moves no data, but the tables it looks at are still counted as read.
+
+The limits: a block that sqlglot cannot read is kept as written and is never rewritten or compared, and loops are still followed once rather than simulated.
+
 ## How MERGE is read
 
 For a supported MERGE, KumoSQL follows values assigned by each WHEN clause into the target's columns. It considers the source, join condition, and clause filters.

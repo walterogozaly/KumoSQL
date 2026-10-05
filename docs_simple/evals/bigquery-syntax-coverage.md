@@ -18,7 +18,7 @@ Unsupported cases are recorded in `tests/fixtures/bq_syntax/known_gaps.json`. A 
 
 A tool can parse some SQL yet misunderstand a reference inside Dataform JavaScript, change a quoted function name, or lose a dependency in an operation block. Testing several stages catches problems that a parsing-only score misses.
 
-Some procedural and newer BigQuery forms are kept as opaque text. Preserving them with a clear diagnostic is different from fully analyzing them.
+Some procedural and newer BigQuery forms are kept as opaque text. Preserving them with a clear diagnostic is different from fully analyzing them. A procedure with parameter modes, a labelled loop, `REPEAT ... UNTIL` and the `CASE` statement are now kept whole as one such block rather than failing to parse; the script reader still reads the statements inside them.
 
 The fixture folder holds a manifest, examples, dry-run records, and known gaps. A dry-run failure can also mean an example names an object absent from the test project. The full guide explains which gaps belong to KumoSQL, its parser, or the external environment.
 
