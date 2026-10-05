@@ -294,27 +294,30 @@ class Column:
 class Catalog:
     """Table schemas, found under each spelling of their name (``project.dataset.table``, ``dataset.table``,
     ``table``); a spelling two tables share finds neither. ``functions`` are user-defined functions: a call to one has
-    an unknown type even if its name matches a built-in function."""
+    an unknown type even if its name matches a built-in function. A table the catalog does not list is an
+    ``unknown_table`` finding only when ``complete`` says the catalog lists every table; otherwise it is just unknown."""
 
-    def __init__(self, functions: Iterable[str] = ()):
+    def __init__(self, functions: Iterable[str] = (), complete: bool = False):
         self._tables: dict[str, tuple[Column, ...]] = {}
         self.functions = {f.lower() for f in functions}
+        # True only when the catalog lists every table the query can read: only then is a missing table an error.
+        self.complete = complete
 
     @classmethod
-    def from_types(cls, tables: Mapping[str, object], functions: Iterable[str] = ()) -> "Catalog":
+    def from_types(cls, tables: Mapping[str, object], functions: Iterable[str] = (), complete: bool = False) -> "Catalog":
         """``{table: {column: type text or GType}}``; a list of ``(column, type)`` pairs keeps the column order."""
 
-        catalog = cls(functions)
+        catalog = cls(functions, complete)
         for name, columns in tables.items():
             items = columns.items() if isinstance(columns, Mapping) else columns
             catalog.add(name, [Column(c, t if isinstance(t, GType) else parse_type(t)) for c, t in items])
         return catalog
 
     @classmethod
-    def from_fields(cls, tables: Mapping[str, Iterable], functions: Iterable[str] = ()) -> "Catalog":
+    def from_fields(cls, tables: Mapping[str, Iterable], functions: Iterable[str] = (), complete: bool = False) -> "Catalog":
         """``{table: [dryrun.Field, ...]}``: REPEATED fields are arrays, RECORD fields structs, REQUIRED kept."""
 
-        catalog = cls(functions)
+        catalog = cls(functions, complete)
         for name, fields in tables.items():
             catalog.add(name, [Column(f.name, field_type(f), (f.mode or "").upper() == "REQUIRED") for f in fields])
         return catalog
@@ -406,6 +409,8 @@ def infer(sql_or_tree, catalog: Catalog | None = None, dialect: str = "bigquery"
         tree = sql_or_tree
     if not isinstance(tree, exp.Query):
         return TypedQuery(tree, None, (), {}, {}, "not a query")
+    if any(_TEMPLATE_MASK.search(i.name) for i in tree.find_all(exp.Identifier)):
+        return TypedQuery(tree, None, (), {}, {}, "Dataform placeholder in the query")  # a mask can stand for anything
     typer = _Typer(catalog, text if text is not None else tree.sql(dialect))
     try:
         rel = typer.query(tree, None, {})
@@ -417,6 +422,9 @@ def infer(sql_or_tree, catalog: Catalog | None = None, dialect: str = "bigquery"
     if rel is not None and rel.columns is not None:
         columns = tuple(Column(c.name, _materialize(c.t), c.required) for c in rel.columns)
     return TypedQuery(tree, columns, typer.findings, typer.types, typer.relations)
+
+
+_TEMPLATE_MASK = re.compile(r"__sqlx_token_\d+__")
 
 
 def _without_strings(sql: str) -> str:
@@ -543,6 +551,7 @@ class _Typer:
         self.types: dict[int, tuple[exp.Expression, GType | None]] = {}
         self.relations: dict[int, tuple[exp.Expression, tuple[Column, ...] | None]] = {}
         self.findings: list[Finding] = []
+        self.select_aliases: frozenset[str] = frozenset()  # select-list aliases HAVING or QUALIFY may name
         clean = _without_strings(text).upper()
         ambiguous = set()
         if re.search(r"\bINT32\b", clean):
@@ -754,14 +763,26 @@ class _Typer:
     def check_clauses(self, node: exp.Select, scope: _Scope, ctes: dict) -> None:
         """Type the other clauses for their findings and node types (they do not change the output types)."""
 
+        aliases = {a.lower() for a in (self._select_alias(i) for i in node.expressions) if a}
         for key in ("where", "having", "qualify"):
             clause = node.args.get(key)
             if isinstance(clause, exp.Expression) and clause.this is not None:
-                self.expr(clause.this, scope, ctes)
+                # HAVING and QUALIFY (not WHERE) may name a select-list alias; a name that is one is never reported.
+                before = self.select_aliases
+                if key != "where":
+                    self.select_aliases = before | aliases
+                try:
+                    self.expr(clause.this, scope, ctes)
+                finally:
+                    self.select_aliases = before
         for join in node.args.get("joins") or []:
             on = join.args.get("on")
             if isinstance(on, exp.Expression):
                 self.expr(on, scope, ctes)
+
+    @staticmethod
+    def _select_alias(item: exp.Expression) -> str | None:
+        return item.alias if isinstance(item, exp.Alias) else implicit_alias(item) if isinstance(item, exp.Column) else None
 
     # ---- FROM
 
@@ -1007,7 +1028,8 @@ class _Typer:
             return _Range(name, [_Col(c.name, _plain(c.t), c.required) for c in rel.columns], node=item)
         columns = self.catalog.lookup(".".join(parts))
         if columns is None:
-            self.finding("unknown_table", f"table {'.'.join(parts)} is not in the catalog", item)
+            if self.catalog.complete:
+                self.finding("unknown_table", f"table {'.'.join(parts)} is not in the catalog", item)
             return _Range(name, None, node=item)
         return _Range(name, [_Col(c.name, known(c.type), c.required) for c in columns], node=item)
 
@@ -1141,7 +1163,7 @@ class _Typer:
                     return UNKNOWN
                 return self.fields(_plain(matches[0].t), rest[1:], node)
             return self.fields(_plain(target.t), parts[1:], node)
-        if scope is not None and self._complete_chain(scope):
+        if scope is not None and self._complete_chain(scope) and parts[0].lower() not in self.select_aliases:
             self.finding("unknown_column", f"unrecognized name {parts[0]}", node)
         return UNKNOWN
 
