@@ -44,10 +44,10 @@ What was checked, and what was not:
 
 | file | content |
 | --- | --- |
-| `qed_cockroach_pairs.jsonl` | one case per line: `name` (`memo/1`, `norm/12`, `xform/3`), `schema_id`, `sql_a`, `sql_b`, `ddl` (CREATE TABLE text), `schemas` (structured: table, columns with type/nullable, keys) |
+| `qed_cockroach_pairs.jsonl` | one case per line: `name` (`memo/1`, `norm/12`, `xform/3`), `schema_id`, `sql_a`, `sql_b`, `ddl` (CREATE TABLE text), `schemas` (structured: table, columns with type/nullable, keys), and `dropped` when the plan dump lists a CHECK constraint or computed column that QED's JSON does not carry |
 | `qed_cockroach_schemas.json` | each distinct DDL set by `schema_id` |
 | `qed_cockroach_skipped.jsonl` | skipped cases with the reason |
-| `summary.json` | counts, with the skip reasons tallied |
+| `summary.json` | counts, with the skip reasons tallied; `not_independently_checkable` counts the skips that are QED's uninterpreted calls and unordered `LIMIT`s, `converted_with_dropped_schema_facts` the pairs with a `dropped` note |
 | `qed_verdicts.json` | QED's own verdict for each of the 1,287 cases (`provable`, `notprovable` or `error`), from a build of its repository at the pinned commit; the other side of the head-to-head table |
 
 Every case is one CockroachDB rewrite, so the two sides are meant to be equivalent; the corpus
@@ -66,10 +66,31 @@ CockroachDB needs. Never guess: anything not modelled exactly is a skip with a r
 * Columns of a type with no exact SQL encoding (OID, JSONB, geometry, arrays, UUID, ...) stay in
   the table as opaque BIGINT placeholders and may pass through filters, sorts and joins; a pair
   that reads one in an expression, groups, deduplicates or returns it is skipped.
-* Skipped, never guessed: `FUNCTION`/`UDF`/`CONST AGG` (QED's IR keeps no function name),
-  `LIMIT`/`OFFSET` without `ORDER BY`, plans that rely on a `CHECK` or computed column the JSON
-  schema drops, zero-column relations, `DIV`/`MOD`/`CONCAT`/`SIMILAR TO`, and casts or literals of
-  types DuckDB cannot reproduce exactly.
+* Zero-column relations (a `project` with no targets, a `VALUES` with no columns, in any number of
+  rows) are a row count only. They are carried as a bag of one constant column (`1 AS z`, one row per
+  row), so two of them are bag-equal exactly when their row counts agree and no ordinal can name the
+  column.
+* A `VALUES` with no rows may have columns of any type (the relation is empty whatever they are);
+  with rows, a type without an exact encoding is a skip.
+* Exact readings added for types and operators: `UUID` is held as its canonical lower-case hyphenated text
+  (CockroachDB compares the 16 bytes, which orders like that text; a literal in any other spelling is a
+  skip); `TIMESTAMPTZ` is held as the UTC instant in a `TIMESTAMP` column and a literal is converted from its
+  own offset, and it only meets another `TIMESTAMPTZ`; `CONCAT` of two strings (NULL in, NULL out in both
+  engines); `INT` cast to `STRING`; `x % n` on integers for a literal `n` other than zero (both engines
+  keep the dividend's sign); `x / d` for a literal `d` that is a positive power of two (the quotient is
+  then the same exact number in CockroachDB's decimal division and DuckDB's double division).
+* `dropped` pairs: the plan dump lists a `CHECK` constraint or computed column that QED's JSON schema
+  does not carry. The pair is still QED's pair, whose algebra never mentions the constraint, so it is
+  converted as is. A proof holds on every database, constraint or not; a counterexample found on a
+  database that breaks the constraint would not refute CockroachDB's own rewrite.
+* Skipped, never guessed: `FUNCTION`/`UDF`/`CONST AGG` (QED's IR keeps no function name) and
+  `LIMIT`/`OFFSET` without `ORDER BY` (QED treats both as uninterpreted, so its proofs there cannot be
+  checked: `not_independently_checkable` in `summary.json`), query parameters (`$1` has no value),
+  `/` by anything but a power-of-two literal (CockroachDB rounds the decimal quotient and raises an
+  error on zero; DuckDB divides doubles and returns NULL), `%` by zero or a column, `SIMILAR TO` (whether `.`
+  is a wildcard in CockroachDB's pattern translation was not verified), `COLLATE`, `CORR`, `CHAR(n)`
+  (padding semantics), JSONB, arrays, `TIME`, `TIMETZ`, `VARBIT`, geometry, and casts or literals whose result depends on the
+  session time zone, on a decimal's scale or on a date parser.
 * Ordinals inside a subquery or the right side of an apply join count the enclosing relation's
   columns first. (An earlier version of the converter forgot this for opaque columns: it read an
   ordinal as the inner relation's own column, and converted `norm/337` and ten other pairs

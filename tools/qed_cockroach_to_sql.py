@@ -43,37 +43,67 @@ import re
 import subprocess
 import sys
 from collections import Counter
+from fractions import Fraction
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from qed_to_sql import Skip, qident, sql_string  # noqa: E402
 
 # ----------------------------------------------------------------------- types
+# UUID is held as its canonical lower-case hyphenated text: CockroachDB compares UUIDs as 16 bytes, which
+# orders exactly like that text, and a literal is accepted only in that spelling. TIMESTAMPTZ is held as
+# the UTC instant in a TIMESTAMP column (both are microsecond instants); a literal carries its own UTC
+# offset and is converted, and it only meets another TIMESTAMPTZ (a DATE or string would take the session
+# time zone).
 FAMILY = {
     "INT": "num", "FLOAT": "num", "DECIMAL": "num",
     "STRING": "str", "VARCHAR": "str",
     "BOOL": "bool", "BOOLEAN": "bool",
     "DATE": "time", "TIMESTAMP": "time",
+    "UUID": "uuid", "TIMESTAMPTZ": "instant",
 }
 DDL_TYPES = {
     "INT": "BIGINT", "FLOAT": "DOUBLE", "DECIMAL": "DECIMAL(19, 2)", "STRING": "VARCHAR(255)",
     "VARCHAR": "VARCHAR(255)", "BOOL": "BOOLEAN", "DATE": "DATE", "TIMESTAMP": "TIMESTAMP",
+    "UUID": "VARCHAR(255)", "TIMESTAMPTZ": "TIMESTAMP",
 }
 CAST_TYPES = {"INT": "BIGINT", "FLOAT": "DOUBLE", "DECIMAL": "DECIMAL(19, 2)", "STRING": "VARCHAR",
-              "BOOL": "BOOLEAN", "DATE": "DATE", "TIMESTAMP": "TIMESTAMP"}
+              "BOOL": "BOOLEAN", "DATE": "DATE", "TIMESTAMP": "TIMESTAMP",
+              "UUID": "VARCHAR", "TIMESTAMPTZ": "TIMESTAMP"}
 CMP = {"EQ": "=", "NE": "<>", "LT": "<", "GT": ">", "LE": "<=", "GE": ">=", "<": "<", "<=": "<="}
 ARITH = {"PLUS": "+", "MINUS": "-", "MULT": "*"}
 LIKES = {"LIKE": "LIKE", "NOT LIKE": "NOT LIKE"}
 INT_RE = re.compile(r"^-?\d+$")
 NUM_RE = re.compile(r"^-?\d+(\.\d+)?$")
+EXP_RE = re.compile(r"^-?\d+(\.\d+)?[eE][+-]?\d+$")
 STR_RE = re.compile(r"^'((?:[^']|'')*)'$", re.S)
 DATE_RE = re.compile(r"^'(\d{4}-\d\d-\d\d)'$")
 TS_RE = re.compile(r"^'(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)'$")
+TSTZ_RE = re.compile(r"^'(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)(\.\d{1,6})?([+-])(\d\d)(?::?(\d\d))?'$")
+UUID_RE = re.compile(r"^'([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'$")
 
-HELP_SKIPS = [
-    (re.compile(r"check constraint expressions"), "plan relies on a CHECK constraint that QED's JSON schema drops"),
-    (re.compile(r"computed column expressions"), "plan relies on a computed column definition that QED's JSON schema drops"),
+CAST_SKIPS = {
+    ("DECIMAL", "STRING"): "CAST from DECIMAL to STRING (the text keeps the decimal's scale, 0.00 against 0.0, which a DOUBLE stand-in does not)",
+    ("DATE", "TIMESTAMPTZ"): "CAST from DATE to TIMESTAMPTZ (midnight in the session time zone)",
+    ("STRING", "TIMESTAMPTZ"): "CAST from STRING to TIMESTAMPTZ (parsed in the session time zone)",
+    ("TIMESTAMPTZ", "STRING"): "CAST from TIMESTAMPTZ to STRING (printed in the session time zone)",
+    ("STRING", "DATE"): "CAST from STRING to DATE (CockroachDB's date parser accepts more spellings than DuckDB's)",
+    ("STRING", "JSONB"): "CAST from STRING to JSONB (no exact JSONB encoding)",
+    ("STRING", "TIME"): "CAST from STRING to TIME (no exact TIME encoding)",
+}
+
+# The plan dump lists constraints that QED's JSON schema does not carry. The pair is still QED's pair
+# (its algebra never mentions the constraint), so it converts as is; a proof then holds on every database,
+# constraint or not, while a counterexample found on a database that breaks the constraint would not refute
+# CockroachDB's own rewrite. Such cases carry a `dropped` note in the fixture.
+HELP_NOTES = [
+    (re.compile(r"check constraint expressions"), "CHECK constraint"),
+    (re.compile(r"computed column expressions"), "computed column"),
 ]
+
+
+# Skip reasons for which QED's own proof cannot be checked here (see docs/evals/qed-cockroach.md)
+UNCHECKABLE = re.compile(r"unsupported operator (FUNCTION|U D F|SCALAR LIST)|LIMIT/OFFSET without ORDER BY")
 
 
 def family(typ: str | None) -> str:
@@ -81,6 +111,13 @@ def family(typ: str | None) -> str:
     if f is None:
         raise Skip(f"operand of unsupported type {typ}")
     return f
+
+
+# SQL cannot select no columns, so a relation with zero columns (QED's `project` with no targets,
+# `values` with an empty schema) is carried as a bag of one constant column: one row per row of the
+# zero-column relation, which makes bag equality of two such relations exactly equality of their row
+# counts, and no ordinal can name the column (the converter still counts the relation as 0 wide).
+ZERO = "1 AS z"
 
 
 class Dead(str):
@@ -126,6 +163,8 @@ class Converter:
             return f"({op})" if op.startswith("-") else op
         if typ in ("FLOAT", "DECIMAL") and NUM_RE.fullmatch(op):
             return f"({op})" if op.startswith("-") else op
+        if typ == "FLOAT" and EXP_RE.fullmatch(op):  # a double written with an exponent, still one double
+            return f"({op})" if op.startswith("-") else op
         if typ in ("STRING", "VARCHAR"):
             m = STR_RE.match(op)
             if m is None:
@@ -143,6 +182,18 @@ class Converter:
             if m:
                 dt.datetime.fromisoformat(f"{m.group(1)} {m.group(2)}")
                 return f"TIMESTAMP '{m.group(1)} {m.group(2)}'"
+        if typ == "UUID":
+            m = UUID_RE.match(op)
+            if m:
+                return sql_string(m.group(1))
+        if typ == "TIMESTAMPTZ":
+            m = TSTZ_RE.match(op)
+            if m:
+                day, clock, frac, sign, hh, mm = m.groups()
+                instant = dt.datetime.fromisoformat(f"{day} {clock}{frac or ''}")
+                offset = dt.timedelta(hours=int(hh), minutes=int(mm or 0))
+                instant = instant - offset if sign == "+" else instant + offset
+                return f"TIMESTAMP '{instant.isoformat(sep=' ')}'"
         raise Skip(f"literal of type {typ}")
 
     def expr(self, e: dict, ctx: list[str]) -> str:
@@ -167,7 +218,14 @@ class Converter:
             return self.literal(op, typ)
         if op in ("FUNCTION", "U D F", "PLACEHOLDER", "SCALAR LIST"):
             raise Skip(f"unsupported operator {op} (function name or arguments not kept by QED's IR)")
-        a = [self.expr(o, ctx) for o in ops]
+        a = []
+        for o in ops:
+            try:
+                a.append(self.expr(o, ctx))
+            except Skip as e:
+                if "column" in o and str(e).startswith("reads a column of type"):
+                    raise Skip(f"{op} {e}") from None  # name the operator that has no exact reading
+                raise
         if op in CMP and len(a) == 2:
             if family(ops[0].get("type")) != family(ops[1].get("type")):
                 raise Skip("implicit cross-type comparison")
@@ -184,6 +242,16 @@ class Converter:
             if any(family(o.get("type")) != "num" for o in ops) or family(typ) != "num":
                 raise Skip(f"{op} on a non-numeric type")
             return f"({a[0]} {ARITH[op]} {a[1]})"
+        if op == "DIV" and len(a) == 2:
+            self.check_div(ops, typ)
+            return f"({a[0]} / {a[1]})"
+        if op == "MOD" and len(a) == 2:
+            self.check_mod(ops, typ)
+            return f"({a[0]} % {a[1]})"
+        if op == "CONCAT" and len(a) == 2:
+            if any(family(o.get("type")) != "str" for o in ops) or family(typ) != "str":
+                raise Skip("CONCAT on a non-string type")
+            return f"CONCAT({a[0]}, {a[1]})"
         if op == "UNARY MINUS" and len(a) == 1:
             if family(ops[0].get("type")) != "num":
                 raise Skip("UNARY MINUS on a non-numeric type")
@@ -208,8 +276,49 @@ class Converter:
                 return a[0]
             if src == "INT" and dst in ("FLOAT", "DECIMAL"):
                 return f"CAST({a[0]} AS {CAST_TYPES[dst]})"
-            raise Skip(f"CAST from {src} to {dst}")
+            if src == "INT" and dst == "STRING":
+                return f"CAST({a[0]} AS CHAR)"  # decimal digits with a leading minus, in both engines
+            raise Skip(CAST_SKIPS.get((src, dst), f"CAST from {src} to {dst}"))
         raise Skip(f"unsupported operator {op}")
+
+    @staticmethod
+    def literal_value(e: dict) -> Fraction | None:
+        """The value of a plain numeric literal operand, else None."""
+        if "column" in e or "query" in e or e.get("operand"):
+            return None
+        op = e["operator"]
+        return Fraction(op) if NUM_RE.fullmatch(op) else None
+
+    def check_div(self, ops: list[dict], typ: str | None) -> None:
+        """``/`` is exact only for a divisor that is a positive power of two.
+
+        CockroachDB's ``/`` is decimal division (INT / INT is a DECIMAL rounded to about 20 digits, and a
+        zero divisor is an error); DuckDB's is double division (NULL or infinity on zero). A literal
+        divisor 2^m makes both exact, so the quotient is the same real number in both engines, and
+        rules out the division by zero that one raises and the other swallows.
+        """
+
+        if any(family(o.get("type")) != "num" for o in ops) or family(typ) != "num":
+            raise Skip("DIV on a non-numeric type")
+        d = self.literal_value(ops[1])
+        if d is None:
+            raise Skip("DIV by a non-literal divisor (CockroachDB errors on zero, DuckDB gives NULL)")
+        if d == 0:
+            raise Skip("DIV by zero (CockroachDB raises an error; DuckDB gives NULL or infinity)")
+        pow2 = lambda n: n > 0 and n & (n - 1) == 0  # noqa: E731
+        if not (d > 0 and pow2(d.numerator) and pow2(d.denominator)):
+            raise Skip("DIV by a divisor that is not a power of two (CockroachDB rounds the decimal quotient, DuckDB divides doubles)")
+
+    def check_mod(self, ops: list[dict], typ: str | None) -> None:
+        """``%`` on integers: both engines take the sign of the dividend; only a zero divisor differs."""
+
+        if any(o.get("type") != "INT" for o in ops) or typ != "INT":
+            raise Skip("MOD on a non-integer type")
+        d = self.literal_value(ops[1])
+        if d is None or d.denominator != 1:
+            raise Skip("MOD by a non-literal divisor (CockroachDB errors on zero, DuckDB gives NULL)")
+        if d == 0:
+            raise Skip("MOD by zero (CockroachDB raises an error; DuckDB gives NULL)")
 
     def subquery_expr(self, e: dict, ctx: list[str]) -> str:
         op = e["operator"]
@@ -253,7 +362,7 @@ class Converter:
     @staticmethod
     def select_list(exprs: list[str]) -> str:
         if not exprs:
-            raise Skip("zero-column relation")
+            return ZERO  # a zero-column relation is only a row count: one constant column keeps it
         return ", ".join(f"{e} AS c{i}" for i, e in enumerate(exprs))
 
     def live(self, alias: str, n: int, dead) -> list[str]:
@@ -284,8 +393,6 @@ class Converter:
 
     def rel_project(self, b, outer):
         src, n, dead = self.rel(b["source"], outer)
-        if not b["target"]:
-            raise Skip("projection with no columns")
         a = self.alias()
         ctx = outer + self.cols(a, n, dead)
         exprs, out_dead = [], {}
@@ -296,11 +403,7 @@ class Converter:
                 out_dead[j] = dead[c]
             else:
                 exprs.append(self.expr(t, ctx))
-        if n == 0:
-            from_ = "(SELECT 1 AS z)"  # the one empty row of `VALUES ()`
-        else:
-            from_ = f"({src})"
-        return f"SELECT {self.select_list(exprs)} FROM {from_} AS {a}", len(exprs), out_dead
+        return f"SELECT {self.select_list(exprs)} FROM ({src}) AS {a}", len(exprs), out_dead
 
     def rel_filter(self, b, outer):
         src, n, dead = self.rel(b["source"], outer)
@@ -364,8 +467,7 @@ class Converter:
             raise Skip("aggregate with no keys and no functions")
         sel = self.select_list(keys + aggs)
         gb = f" GROUP BY {', '.join(keys)}" if keys else ""
-        from_ = "(SELECT 1 AS z)" if n == 0 else f"({src})"
-        return f"SELECT {sel} FROM {from_} AS {a}{gb}", len(keys) + len(aggs), out_dead
+        return f"SELECT {sel} FROM ({src}) AS {a}{gb}", len(keys) + len(aggs), out_dead
 
     def rel_sort(self, b, outer):
         src, n, dead = self.rel(b["source"], outer)
@@ -422,17 +524,24 @@ class Converter:
     def rel_values(self, b, outer):
         types = b["schema"]
         n = len(types)
-        for t in types:
-            if t not in DDL_TYPES:
-                raise Skip(f"VALUES column type {t}")
         rows = b["content"]
+        # a column of a type with no exact encoding is fine in a VALUES with no rows: the relation is empty
+        # whatever the type, and the column travels as an opaque placeholder like a table's
+        dead = {j: t for j, t in enumerate(types) if t not in DDL_TYPES}
+        if dead and rows:
+            raise Skip(f"VALUES column type {next(iter(dead.values()))}")
         if n == 0:
-            if len(rows) != 1:
-                raise Skip("zero-column VALUES with other than one row")
-            return "SELECT 1 AS z", 0, {}
+            if any(r for r in rows):
+                raise Skip("zero-column VALUES row with cells")
+            if not rows:
+                return f"SELECT {ZERO} WHERE 1 = 0", 0, {}
+            if len(rows) == 1:
+                return f"SELECT {ZERO}", 0, {}
+            a = self.alias()
+            return f"SELECT {ZERO} FROM ({' UNION ALL '.join(f'SELECT {ZERO}' for _ in rows)}) AS {a}", 0, {}
         if not rows:
-            exprs = [f"CAST(NULL AS {CAST_TYPES[t]})" for t in types]
-            return f"SELECT {self.select_list(exprs)} WHERE 1 = 0", n, {}
+            exprs = [f"CAST(NULL AS {CAST_TYPES.get(t, 'BIGINT')})" for t in types]
+            return f"SELECT {self.select_list(exprs)} WHERE 1 = 0", n, dead
         sels = []
         for r in rows:
             if len(r) != n:
@@ -493,9 +602,7 @@ def used_scans(node, acc: set[int]) -> set[int]:
 def convert_case(doc: dict) -> dict:
     schemas = doc["schemas"]
     help_text = "".join(doc.get("help", []))
-    for pat, why in HELP_SKIPS:
-        if pat.search(help_text):
-            raise Skip(why)
+    dropped = [what for pat, what in HELP_NOTES if pat.search(help_text)]
     if len(doc["queries"]) != 2:
         raise Skip("not exactly two queries")
     # only tables a query reads are declared (the others are never referenced)
@@ -507,7 +614,10 @@ def convert_case(doc: dict) -> dict:
         Converter.need_equality(dead, "returning (a bag comparison)")
         out.append(sql)
     structs = schemas_struct(schemas)
-    return {"sql_a": out[0], "sql_b": out[1], "ddl": ddl, "schemas": [structs[i] for i in used]}
+    case = {"sql_a": out[0], "sql_b": out[1], "ddl": ddl, "schemas": [structs[i] for i in used]}
+    if dropped:
+        case["dropped"] = dropped
+    return case
 
 
 def main() -> int:
@@ -553,7 +663,12 @@ def main() -> int:
     except Exception:
         pass
     summary = {"source_commit": commit, "files": len(files), "converted": len(cases),
-               "skipped": len(skipped), "skip_reasons": dict(reasons.most_common())}
+               "skipped": len(skipped),
+               # QED proves some of these by treating a call or a row choice as uninterpreted; DuckDB can
+               # neither confirm nor refute such a proof, so they are skipped on purpose, not for want of a reading
+               "not_independently_checkable": sum(1 for k in skipped if UNCHECKABLE.match(k["reason"])),
+               "converted_with_dropped_schema_facts": sum(1 for c in cases if "dropped" in c),
+               "skip_reasons": dict(reasons.most_common())}
     (args.out / "summary.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False) + "\n")
     print(json.dumps(summary, indent=1, ensure_ascii=False))
     return 0

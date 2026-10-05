@@ -5,82 +5,51 @@
 {"name": "memo/79", "reason": "unsupported operator SIMILAR TO"}
 {"name": "memo/80", "reason": "unsupported operator SIMILAR TO"}
 {"name": "memo/81", "reason": "unsupported operator SIMILAR TO"}
-{"name": "memo/87", "reason": "reads a column of type JSONB (no exact encoding)"}
+{"name": "memo/87", "reason": "CONTAINS reads a column of type JSONB (no exact encoding)"}
 {"name": "memo/96", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "memo/97", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "memo/100", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "memo/101", "reason": "unsupported aggregate CONST AGG over INT"}
 {"name": "memo/116", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "memo/158", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "memo/159", "reason": "projection with no columns"}
 {"name": "memo/168", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "memo/169", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "memo/193", "reason": "reads a column of type TIMETZ (no exact encoding)"}
+{"name": "memo/193", "reason": "LT reads a column of type TIMETZ (no exact encoding)"}
 {"name": "memo/210", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "memo/213", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "memo/217", "reason": "returning (a bag comparison) over a column of type GEOMETRY (no exact encoding)"}
 {"name": "memo/218", "reason": "GROUP BY over a column of type GEOGRAPHY (no exact encoding)"}
-{"name": "memo/296", "reason": "zero-column relation"}
-{"name": "memo/297", "reason": "zero-column relation"}
-{"name": "memo/298", "reason": "zero-column relation"}
-{"name": "memo/299", "reason": "zero-column relation"}
-{"name": "memo/300", "reason": "zero-column relation"}
-{"name": "memo/301", "reason": "zero-column relation"}
-{"name": "memo/302", "reason": "zero-column relation"}
-{"name": "memo/303", "reason": "zero-column relation"}
-{"name": "memo/348", "reason": "unsupported operator MOD"}
 {"name": "memo/392", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "memo/393", "reason": "unsupported aggregate CONST AGG over INT"}
 {"name": "memo/412", "reason": "integer literal outside BIGINT"}
 {"name": "memo/420", "reason": "literal of type TIMESTAMP"}
-{"name": "memo/421", "reason": "reads a column of type TIMESTAMPTZ (no exact encoding)"}
+{"name": "memo/421", "reason": "CAST from STRING to TIMESTAMPTZ (parsed in the session time zone)"}
 {"name": "memo/427", "reason": "CAST from BOOL to STRING"}
-{"name": "memo/428", "reason": "reads a column of type UUID (no exact encoding)"}
-{"name": "memo/429", "reason": "reads a column of type UUID (no exact encoding)"}
-{"name": "memo/430", "reason": "reads a column of type UUID (no exact encoding)"}
-{"name": "memo/431", "reason": "reads a column of type UUID (no exact encoding)"}
-{"name": "memo/434", "reason": "reads a column of type UUID (no exact encoding)"}
-{"name": "memo/437", "reason": "reads a column of type UUID (no exact encoding)"}
-{"name": "memo/440", "reason": "reads a column of type UUID (no exact encoding)"}
-{"name": "memo/441", "reason": "reads a column of type UUID (no exact encoding)"}
-{"name": "memo/442", "reason": "reads a column of type UUID (no exact encoding)"}
-{"name": "memo/443", "reason": "reads a column of type UUID (no exact encoding)"}
 {"name": "memo/449", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "memo/450", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "memo/468", "reason": "unsupported operator MOD"}
-{"name": "memo/474", "reason": "CAST from DATE to TIMESTAMPTZ"}
-{"name": "memo/481", "reason": "reads a column of type JSONB (no exact encoding)"}
-{"name": "memo/482", "reason": "reads a column of type JSONB (no exact encoding)"}
-{"name": "memo/498", "reason": "reads a column of type CHAR (no exact encoding)"}
-{"name": "memo/499", "reason": "reads a column of type CHAR (no exact encoding)"}
-{"name": "memo/505", "reason": "reads a column of type UUID (no exact encoding)"}
-{"name": "memo/507", "reason": "reads a column of type TIMESTAMPTZ (no exact encoding)"}
+{"name": "memo/474", "reason": "CAST from DATE to TIMESTAMPTZ (midnight in the session time zone)"}
+{"name": "memo/481", "reason": "CONTAINS reads a column of type JSONB (no exact encoding)"}
+{"name": "memo/482", "reason": "CONTAINS reads a column of type JSONB (no exact encoding)"}
+{"name": "memo/498", "reason": "EQ reads a column of type CHAR (no exact encoding)"}
+{"name": "memo/499", "reason": "EQ reads a column of type CHAR (no exact encoding)"}
 {"name": "memo/513", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "memo/516", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "memo/517", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "norm/12", "reason": "projection with no columns"}
-{"name": "norm/13", "reason": "projection with no columns"}
-{"name": "norm/14", "reason": "projection with no columns"}
-{"name": "norm/15", "reason": "projection with no columns"}
-{"name": "norm/16", "reason": "projection with no columns"}
-{"name": "norm/17", "reason": "projection with no columns"}
-{"name": "norm/21", "reason": "VALUES column type JSONB"}
 {"name": "norm/31", "reason": "unsupported operator I LIKE"}
 {"name": "norm/32", "reason": "unsupported operator SIMILAR TO"}
 {"name": "norm/33", "reason": "unsupported operator REG MATCH"}
-{"name": "norm/58", "reason": "unsupported operator DIV"}
-{"name": "norm/59", "reason": "unsupported operator DIV"}
+{"name": "norm/59", "reason": "DIV by a divisor that is not a power of two (CockroachDB rounds the decimal quotient, DuckDB divides doubles)"}
 {"name": "norm/60", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/61", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
-{"name": "norm/63", "reason": "CAST from STRING to DATE"}
+{"name": "norm/63", "reason": "CAST from STRING to DATE (CockroachDB's date parser accepts more spellings than DuckDB's)"}
 {"name": "norm/66", "reason": "literal of type TIMETZ"}
-{"name": "norm/69", "reason": "CAST from STRING to JSONB"}
+{"name": "norm/69", "reason": "CAST from STRING to JSONB (no exact JSONB encoding)"}
 {"name": "norm/70", "reason": "CAST from STRING to TIMETZ"}
 {"name": "norm/72", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/73", "reason": "literal of type JSONB"}
-{"name": "norm/74", "reason": "CAST from STRING to TIME"}
+{"name": "norm/74", "reason": "CAST from STRING to TIME (no exact TIME encoding)"}
 {"name": "norm/114", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
-{"name": "norm/115", "reason": "literal of type TIMESTAMPTZ"}
+{"name": "norm/115", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/116", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/117", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/118", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
@@ -120,20 +89,16 @@
 {"name": "norm/222", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "norm/230", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "norm/231", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "norm/306", "reason": "CAST from INT to STRING"}
 {"name": "norm/324", "reason": "unsupported aggregate CORR"}
 {"name": "norm/325", "reason": "unsupported aggregate CORR"}
 {"name": "norm/338", "reason": "unsupported aggregate CORR"}
-{"name": "norm/340", "reason": "projection with no columns"}
-{"name": "norm/342", "reason": "projection with no columns"}
-{"name": "norm/366", "reason": "unsupported operator DIV"}
-{"name": "norm/367", "reason": "unsupported operator DIV"}
+{"name": "norm/367", "reason": "DIV by zero (CockroachDB raises an error; DuckDB gives NULL or infinity)"}
 {"name": "norm/368", "reason": "literal of type VARBIT"}
 {"name": "norm/369", "reason": "literal of type VARBIT"}
 {"name": "norm/370", "reason": "literal of type VARBIT"}
 {"name": "norm/371", "reason": "literal of type VARBIT"}
 {"name": "norm/372", "reason": "MINUS on a non-numeric type"}
-{"name": "norm/373", "reason": "literal of type TIMESTAMPTZ"}
+{"name": "norm/373", "reason": "MINUS on a non-numeric type"}
 {"name": "norm/377", "reason": "literal of type JSONB"}
 {"name": "norm/378", "reason": "unsupported operator FLOOR DIV"}
 {"name": "norm/379", "reason": "unsupported operator FLOOR DIV"}
@@ -152,10 +117,10 @@
 {"name": "norm/407", "reason": "unsupported operator NOT REG I MATCH"}
 {"name": "norm/408", "reason": "literal of type JSONB"}
 {"name": "norm/410", "reason": "CAST from DECIMAL to INT"}
-{"name": "norm/411", "reason": "CAST from STRING to TIMESTAMPTZ"}
-{"name": "norm/412", "reason": "CAST from STRING to TIMESTAMPTZ"}
-{"name": "norm/413", "reason": "CAST from STRING to TIMESTAMPTZ"}
-{"name": "norm/414", "reason": "CAST from STRING to TIMESTAMPTZ"}
+{"name": "norm/411", "reason": "CAST from STRING to TIMESTAMPTZ (parsed in the session time zone)"}
+{"name": "norm/412", "reason": "CAST from STRING to TIMESTAMPTZ (parsed in the session time zone)"}
+{"name": "norm/413", "reason": "CAST from STRING to TIMESTAMPTZ (parsed in the session time zone)"}
+{"name": "norm/414", "reason": "CAST from STRING to TIMESTAMPTZ (parsed in the session time zone)"}
 {"name": "norm/427", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/428", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/429", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
@@ -164,11 +129,11 @@
 {"name": "norm/432", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/433", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/434", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
-{"name": "norm/441", "reason": "reads a column of type INT[] (no exact encoding)"}
+{"name": "norm/441", "reason": "INDIRECTION reads a column of type INT[] (no exact encoding)"}
 {"name": "norm/442", "reason": "literal of type JSONB"}
-{"name": "norm/443", "reason": "reads a column of type JSONB (no exact encoding)"}
+{"name": "norm/443", "reason": "INDIRECTION reads a column of type JSONB (no exact encoding)"}
 {"name": "norm/485", "reason": "unsupported aggregate CONST AGG over FLOAT"}
-{"name": "norm/486", "reason": "projection with no columns"}
+{"name": "norm/486", "reason": "unsupported aggregate CONST AGG over FLOAT"}
 {"name": "norm/488", "reason": "unsupported aggregate CONST AGG over INT"}
 {"name": "norm/502", "reason": "unsupported aggregate STD DEV over INT"}
 {"name": "norm/505", "reason": "aggregate QED's IR cannot represent: ?unknown-agg-call (agg-filter)?"}
@@ -180,25 +145,20 @@
 {"name": "norm/575", "reason": "unsupported aggregate REGRESSION COUNT"}
 {"name": "norm/576", "reason": "unsupported aggregate REGRESSION COUNT"}
 {"name": "norm/598", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
-{"name": "norm/602", "reason": "CAST from DECIMAL to STRING"}
+{"name": "norm/602", "reason": "CAST from DECIMAL to STRING (the text keeps the decimal's scale, 0.00 against 0.0, which a DOUBLE stand-in does not)"}
 {"name": "norm/606", "reason": "PLACEHOLDER (a query parameter has no value)"}
-{"name": "norm/610", "reason": "projection with no columns"}
 {"name": "norm/611", "reason": "PLACEHOLDER (a query parameter has no value)"}
-{"name": "norm/636", "reason": "unsupported operator CONCAT"}
 {"name": "norm/641", "reason": "unsupported operator U D F (function name or arguments not kept by QED's IR)"}
 {"name": "norm/642", "reason": "unsupported operator U D F (function name or arguments not kept by QED's IR)"}
 {"name": "norm/653", "reason": "unsupported operator U D F (function name or arguments not kept by QED's IR)"}
 {"name": "norm/654", "reason": "unsupported operator U D F (function name or arguments not kept by QED's IR)"}
 {"name": "norm/656", "reason": "unsupported operator U D F (function name or arguments not kept by QED's IR)"}
 {"name": "norm/657", "reason": "unsupported operator U D F (function name or arguments not kept by QED's IR)"}
-{"name": "norm/672", "reason": "VALUES column type JSONB"}
-{"name": "norm/686", "reason": "CAST from INT to STRING"}
-{"name": "norm/697", "reason": "CAST from DECIMAL to STRING"}
-{"name": "norm/702", "reason": "reads a column of type TIMESTAMPTZ (no exact encoding)"}
+{"name": "norm/697", "reason": "CAST from DECIMAL to STRING (the text keeps the decimal's scale, 0.00 against 0.0, which a DOUBLE stand-in does not)"}
+{"name": "norm/702", "reason": "implicit cross-type comparison"}
 {"name": "norm/720", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/750", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "norm/751", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "norm/753", "reason": "VALUES column type JSONB"}
 {"name": "norm/782", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/809", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "norm/813", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
@@ -226,14 +186,8 @@
 {"name": "norm/865", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "norm/868", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "norm/886", "reason": "literal of type JSONB"}
-{"name": "norm/890", "reason": "unsupported operator DIV"}
-{"name": "norm/891", "reason": "unsupported operator DIV"}
 {"name": "norm/893", "reason": "unsupported operator FLOOR DIV"}
-{"name": "norm/894", "reason": "reads a column of type TIME (no exact encoding)"}
-{"name": "norm/915", "reason": "projection with no columns"}
-{"name": "norm/916", "reason": "projection with no columns"}
-{"name": "norm/930", "reason": "unsupported operator CONCAT"}
-{"name": "norm/933", "reason": "projection with no columns"}
+{"name": "norm/894", "reason": "MINUS reads a column of type TIME (no exact encoding)"}
 {"name": "norm/938", "reason": "PLACEHOLDER (a query parameter has no value)"}
 {"name": "norm/973", "reason": "VALUES column type JSONB"}
 {"name": "norm/974", "reason": "VALUES column type JSONB"}
@@ -241,33 +195,22 @@
 {"name": "norm/976", "reason": "VALUES column type JSONB"}
 {"name": "norm/977", "reason": "VALUES column type JSONB"}
 {"name": "norm/978", "reason": "VALUES column type JSONB"}
-{"name": "norm/1010", "reason": "unsupported operator CONCAT"}
+{"name": "norm/1010", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/1011", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/1012", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
-{"name": "norm/1016", "reason": "projection with no columns"}
 {"name": "norm/1019", "reason": "PLACEHOLDER (a query parameter has no value)"}
-{"name": "norm/1020", "reason": "unsupported operator CONCAT"}
-{"name": "norm/1021", "reason": "unsupported operator DIV"}
 {"name": "norm/1022", "reason": "unsupported aggregate CONST AGG over FLOAT"}
 {"name": "norm/1023", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "norm/1028", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "norm/1039", "reason": "projection with no columns"}
-{"name": "norm/1048", "reason": "projection with no columns"}
-{"name": "norm/1051", "reason": "projection with no columns"}
-{"name": "norm/1054", "reason": "unsupported operator CONCAT"}
-{"name": "norm/1060", "reason": "unsupported operator CONCAT"}
 {"name": "norm/1061", "reason": "CAST from STRING to INT"}
 {"name": "norm/1063", "reason": "unsupported aggregate AVG over INT"}
-{"name": "norm/1069", "reason": "zero-column VALUES with other than one row"}
-{"name": "norm/1156", "reason": "projection with no columns"}
-{"name": "norm/1158", "reason": "projection with no columns"}
 {"name": "norm/1170", "reason": "operand of unsupported type ANYELEMENT"}
 {"name": "norm/1173", "reason": "operand of unsupported type ANYELEMENT"}
 {"name": "norm/1177", "reason": "unsupported aggregate STRING AGG"}
-{"name": "norm/1178", "reason": "unsupported operator CONCAT"}
+{"name": "norm/1178", "reason": "unsupported aggregate STRING AGG"}
 {"name": "norm/1196", "reason": "operand of unsupported type ANYELEMENT"}
 {"name": "norm/1197", "reason": "unsupported operator BITAND"}
-{"name": "norm/1198", "reason": "unsupported operator DIV"}
+{"name": "norm/1198", "reason": "DIV by a non-literal divisor (CockroachDB errors on zero, DuckDB gives NULL)"}
 {"name": "norm/1200", "reason": "operand of unsupported type ANYELEMENT"}
 {"name": "norm/1202", "reason": "unsupported operator SCALAR LIST (function name or arguments not kept by QED's IR)"}
 {"name": "norm/1205", "reason": "unsupported operator POW"}
@@ -278,37 +221,27 @@
 {"name": "norm/1246", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "norm/1247", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "norm/1248", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "norm/1274", "reason": "reads a column of type TIMESTAMPTZ (no exact encoding)"}
-{"name": "norm/1275", "reason": "reads a column of type TIMESTAMPTZ (no exact encoding)"}
+{"name": "norm/1274", "reason": "implicit cross-type comparison"}
+{"name": "norm/1275", "reason": "implicit cross-type comparison"}
 {"name": "norm/1276", "reason": "literal of type INTERVAL"}
 {"name": "norm/1277", "reason": "literal of type INTERVAL"}
 {"name": "norm/1293", "reason": "unsupported operator COLLATE"}
 {"name": "norm/1294", "reason": "unsupported operator COLLATE"}
 {"name": "norm/1295", "reason": "unsupported operator COLLATE"}
 {"name": "norm/1296", "reason": "unsupported operator COLLATE"}
-{"name": "norm/1308", "reason": "projection with no columns"}
-{"name": "norm/1309", "reason": "projection with no columns"}
-{"name": "norm/1310", "reason": "projection with no columns"}
-{"name": "norm/1315", "reason": "projection with no columns"}
-{"name": "norm/1316", "reason": "projection with no columns"}
-{"name": "norm/1317", "reason": "projection with no columns"}
 {"name": "norm/1319", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/1320", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/1321", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
-{"name": "norm/1322", "reason": "reads a column of type JSONB (no exact encoding)"}
-{"name": "norm/1323", "reason": "reads a column of type JSONB (no exact encoding)"}
-{"name": "norm/1324", "reason": "reads a column of type JSONB (no exact encoding)"}
-{"name": "norm/1325", "reason": "reads a column of type JSONB (no exact encoding)"}
-{"name": "norm/1326", "reason": "reads a column of type STRING[] (no exact encoding)"}
-{"name": "norm/1327", "reason": "reads a column of type STRING[] (no exact encoding)"}
-{"name": "norm/1336", "reason": "unsupported operator DIV"}
+{"name": "norm/1322", "reason": "INDIRECTION reads a column of type JSONB (no exact encoding)"}
+{"name": "norm/1323", "reason": "INDIRECTION reads a column of type JSONB (no exact encoding)"}
+{"name": "norm/1324", "reason": "INDIRECTION reads a column of type JSONB (no exact encoding)"}
+{"name": "norm/1325", "reason": "INDIRECTION reads a column of type JSONB (no exact encoding)"}
+{"name": "norm/1326", "reason": "INDIRECTION reads a column of type STRING[] (no exact encoding)"}
+{"name": "norm/1327", "reason": "INDIRECTION reads a column of type STRING[] (no exact encoding)"}
+{"name": "norm/1336", "reason": "DIV by a non-literal divisor (CockroachDB errors on zero, DuckDB gives NULL)"}
 {"name": "norm/1345", "reason": "unsupported operator SIMILAR TO"}
 {"name": "norm/1346", "reason": "literal of type INTERVAL"}
-{"name": "norm/1354", "reason": "VALUES column type JSONB"}
-{"name": "norm/1358", "reason": "unsupported operator DIV"}
-{"name": "norm/1359", "reason": "unsupported operator DIV"}
 {"name": "norm/1366", "reason": "PLACEHOLDER (a query parameter has no value)"}
-{"name": "norm/1375", "reason": "VALUES column type JSONB"}
 {"name": "norm/1380", "reason": "PLACEHOLDER (a query parameter has no value)"}
 {"name": "norm/1381", "reason": "unsupported aggregate CONST AGG over INT"}
 {"name": "norm/1382", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
@@ -320,26 +253,17 @@
 {"name": "norm/1453", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/1460", "reason": "unsupported operator U D F (function name or arguments not kept by QED's IR)"}
 {"name": "norm/1562", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "norm/1563", "reason": "VALUES column type JSONB"}
-{"name": "norm/1564", "reason": "VALUES column type JSONB"}
 {"name": "norm/1565", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "norm/1566", "reason": "VALUES column type JSONB"}
-{"name": "norm/1567", "reason": "VALUES column type JSONB"}
-{"name": "norm/1568", "reason": "VALUES column type JSONB"}
-{"name": "norm/1569", "reason": "unsupported operator DIV"}
+{"name": "norm/1569", "reason": "DIV by zero (CockroachDB raises an error; DuckDB gives NULL or infinity)"}
 {"name": "xform/5", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/7", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/8", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "xform/9", "reason": "reads a column of type UUID (no exact encoding)"}
+{"name": "xform/9", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "xform/15", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "xform/17", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/18", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/19", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "xform/21", "reason": "reads a column of type UUID (no exact encoding)"}
-{"name": "xform/28", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "xform/37", "reason": "unsupported operator CONCAT"}
-{"name": "xform/45", "reason": "unsupported operator MOD"}
-{"name": "xform/46", "reason": "unsupported operator MOD"}
+{"name": "xform/28", "reason": "EQ reads a column of type OID (no exact encoding)"}
 {"name": "xform/56", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "xform/73", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "xform/74", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
@@ -360,10 +284,9 @@
 {"name": "xform/205", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/208", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/211", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "xform/266", "reason": "reads a column of type REGNAMESPACE (no exact encoding)"}
+{"name": "xform/266", "reason": "EQ reads a column of type REGNAMESPACE (no exact encoding)"}
 {"name": "xform/274", "reason": "unsupported aggregate CONST AGG over INT"}
 {"name": "xform/283", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "xform/291", "reason": "plan relies on a computed column definition that QED's JSON schema drops"}
 {"name": "xform/333", "reason": "unsupported aggregate CONST AGG over INT"}
 {"name": "xform/335", "reason": "unsupported aggregate CONST AGG over INT"}
 {"name": "xform/389", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
@@ -371,42 +294,31 @@
 {"name": "xform/394", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/395", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/396", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "xform/427", "reason": "plan relies on a CHECK constraint that QED's JSON schema drops"}
-{"name": "xform/429", "reason": "plan relies on a CHECK constraint that QED's JSON schema drops"}
-{"name": "xform/439", "reason": "projection with no columns"}
+{"name": "xform/427", "reason": "unsupported aggregate ARRAY AGG over FLOAT"}
+{"name": "xform/429", "reason": "unsupported aggregate ARRAY AGG over STRING"}
+{"name": "xform/439", "reason": "unsupported aggregate CONST AGG over INT"}
 {"name": "xform/442", "reason": "unsupported aggregate ARRAY AGG over FLOAT"}
-{"name": "xform/508", "reason": "plan relies on a computed column definition that QED's JSON schema drops"}
 {"name": "xform/512", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/515", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "xform/539", "reason": "plan relies on a computed column definition that QED's JSON schema drops"}
-{"name": "xform/540", "reason": "plan relies on a computed column definition that QED's JSON schema drops"}
-{"name": "xform/564", "reason": "plan relies on a CHECK constraint that QED's JSON schema drops"}
 {"name": "xform/676", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "xform/682", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "xform/683", "reason": "returning (a bag comparison) over a column of type GEOMETRY (no exact encoding)"}
-{"name": "xform/694", "reason": "reads a column of type JSONB (no exact encoding)"}
-{"name": "xform/705", "reason": "reads a column of type STRING[] (no exact encoding)"}
-{"name": "xform/717", "reason": "reads a column of type JSONB (no exact encoding)"}
-{"name": "xform/718", "reason": "reads a column of type JSONB (no exact encoding)"}
-{"name": "xform/728", "reason": "plan relies on a CHECK constraint that QED's JSON schema drops"}
-{"name": "xform/729", "reason": "plan relies on a CHECK constraint that QED's JSON schema drops"}
-{"name": "xform/730", "reason": "plan relies on a CHECK constraint that QED's JSON schema drops"}
+{"name": "xform/694", "reason": "CONTAINS reads a column of type JSONB (no exact encoding)"}
+{"name": "xform/705", "reason": "CONTAINS reads a column of type STRING[] (no exact encoding)"}
+{"name": "xform/717", "reason": "CONTAINS reads a column of type JSONB (no exact encoding)"}
+{"name": "xform/718", "reason": "CONTAINS reads a column of type JSONB (no exact encoding)"}
+{"name": "xform/728", "reason": "VALUES column type JSONB"}
+{"name": "xform/729", "reason": "VALUES column type JSONB"}
+{"name": "xform/730", "reason": "VALUES column type JSONB"}
 {"name": "xform/739", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
-{"name": "xform/740", "reason": "reads a column of type JSONB (no exact encoding)"}
+{"name": "xform/740", "reason": "CONTAINS reads a column of type JSONB (no exact encoding)"}
 {"name": "xform/744", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/745", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/747", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/748", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "xform/750", "reason": "zero-column VALUES with other than one row"}
-{"name": "xform/752", "reason": "zero-column VALUES with other than one row"}
 {"name": "xform/753", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
-{"name": "xform/759", "reason": "projection with no columns"}
-{"name": "xform/760", "reason": "projection with no columns"}
 {"name": "xform/766", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
-{"name": "xform/767", "reason": "projection with no columns"}
-{"name": "xform/789", "reason": "reads a column of type TIMESTAMPTZ (no exact encoding)"}
-{"name": "xform/792", "reason": "reads a column of type TIMESTAMPTZ (no exact encoding)"}
-{"name": "xform/793", "reason": "reads a column of type TIMESTAMPTZ (no exact encoding)"}
+{"name": "xform/792", "reason": "CAST from TIMESTAMPTZ to STRING (printed in the session time zone)"}
 {"name": "xform/843", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/844", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/847", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
@@ -416,32 +328,25 @@
 {"name": "xform/857", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/858", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/869", "reason": "returning (a bag comparison) over a column of type GEOMETRY (no exact encoding)"}
-{"name": "xform/870", "reason": "plan relies on a CHECK constraint that QED's JSON schema drops"}
-{"name": "xform/871", "reason": "plan relies on a CHECK constraint that QED's JSON schema drops"}
-{"name": "xform/872", "reason": "plan relies on a CHECK constraint that QED's JSON schema drops"}
+{"name": "xform/870", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
+{"name": "xform/871", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
+{"name": "xform/872", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/887", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/890", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "xform/893", "reason": "plan relies on a computed column definition that QED's JSON schema drops"}
-{"name": "xform/894", "reason": "plan relies on a CHECK constraint that QED's JSON schema drops"}
+{"name": "xform/893", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
+{"name": "xform/894", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/906", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/926", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "xform/936", "reason": "reads a column of type JSONB (no exact encoding)"}
-{"name": "xform/956", "reason": "plan relies on a CHECK constraint that QED's JSON schema drops"}
+{"name": "xform/936", "reason": "<=> reads a column of type JSONB (no exact encoding)"}
 {"name": "xform/983", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "xform/993", "reason": "table key over a column with no exact encoding"}
 {"name": "xform/994", "reason": "table key over a column with no exact encoding"}
 {"name": "xform/995", "reason": "table key over a column with no exact encoding"}
-{"name": "xform/998", "reason": "plan relies on a CHECK constraint that QED's JSON schema drops"}
 {"name": "xform/1003", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "xform/1004", "reason": "CAST from STRING to TIMESTAMP"}
-{"name": "xform/1029", "reason": "plan relies on a computed column definition that QED's JSON schema drops"}
-{"name": "xform/1031", "reason": "plan relies on a CHECK constraint that QED's JSON schema drops"}
-{"name": "xform/1032", "reason": "plan relies on a computed column definition that QED's JSON schema drops"}
-{"name": "xform/1033", "reason": "plan relies on a computed column definition that QED's JSON schema drops"}
-{"name": "xform/1034", "reason": "plan relies on a computed column definition that QED's JSON schema drops"}
-{"name": "xform/1072", "reason": "reads a column of type JSONB (no exact encoding)"}
-{"name": "xform/1133", "reason": "reads a column of type INT[] (no exact encoding)"}
-{"name": "xform/1136", "reason": "reads a column of type INT[] (no exact encoding)"}
+{"name": "xform/1072", "reason": "FETCH VAL reads a column of type JSONB (no exact encoding)"}
+{"name": "xform/1133", "reason": "CONTAINS reads a column of type INT[] (no exact encoding)"}
+{"name": "xform/1136", "reason": "CONTAINED BY reads a column of type INT[] (no exact encoding)"}
 {"name": "xform/1166", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "xform/1167", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "xform/1170", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
@@ -450,8 +355,8 @@
 {"name": "xform/1173", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "xform/1174", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "xform/1180", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
-{"name": "xform/1226", "reason": "reads a column of type JSONB (no exact encoding)"}
-{"name": "xform/1315", "reason": "reads a column of type JSONB (no exact encoding)"}
+{"name": "xform/1226", "reason": "CONTAINS reads a column of type JSONB (no exact encoding)"}
+{"name": "xform/1315", "reason": "CONTAINS reads a column of type JSONB (no exact encoding)"}
 {"name": "xform/1328", "reason": "PLACEHOLDER (a query parameter has no value)"}
 {"name": "xform/1329", "reason": "PLACEHOLDER (a query parameter has no value)"}
 {"name": "xform/1374", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}

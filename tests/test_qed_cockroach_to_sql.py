@@ -141,9 +141,8 @@ def test_unmodelled_things_are_skipped_with_a_reason():
     assert "FUNCTION" in skipped(project([op("FUNCTION", op("SCALAR LIST", col(0), t="ANYELEMENT"), t="INT")]), project([col(0)]))
     assert "LIMIT/OFFSET without ORDER BY" in skipped(
         {"sort": {"collation": [], "source": {"scan": 0}, "limit": lit("1")}}, project([col(0)]))
-    assert "CHECK" in skipped(project([col(0)]), project([col(0)]), help_=("check constraint expressions",))
     assert "PLACEHOLDER" in skipped(project([col(0)], filt(op("EQ", col(0), lit("PLACEHOLDER")))), project([col(0)]))
-    assert "unsupported operator DIV" in skipped(project([op("DIV", col(0), col(1), t="DECIMAL")]), project([col(0)]))
+    assert "non-literal divisor" in skipped(project([op("DIV", col(0), col(1), t="DECIMAL")]), project([col(0)]))
     assert "CONST AGG" in skipped(
         {"group": {"function": [{"operator": "CONST AGG", "operand": [col(1)], "type": "INT", "distinct": False, "ignoreNulls": False}],
                    "keys": [col(0)], "source": {"scan": 0}}}, project([col(0)]))
@@ -154,6 +153,114 @@ def test_values_with_no_columns_is_the_one_empty_row():
     out = convert(project([lit("1")], empty), project([lit("1")], empty))
     assert "(SELECT 1 AS z)" in out["sql_a"]
     assert out["ddl"] == "" and out["schemas"] == []
+
+
+def duck_rows(sql):
+    duckdb = pytest.importorskip("duckdb")
+    return duckdb.connect().execute(sqlglot.transpile(sql, read="mysql", write="duckdb")[0]).fetchall()
+
+
+def test_zero_column_relations_are_carried_as_a_row_count():
+    # a projection with no columns keeps one constant column per row, so two such relations are bag-equal
+    # exactly when their row counts agree
+    nothing = {"values": {"content": [[]], "schema": []}}
+    two = {"values": {"content": [[], []], "schema": []}}
+    none = {"values": {"content": [], "schema": []}}
+    both = convert(project([], filt(op("TRUE", t="BOOL"), nothing)), project([], nothing))
+    assert "1 AS z" in both["sql_a"] and duck_rows(both["sql_a"]) == duck_rows(both["sql_b"]) == [(1,)]
+    assert len(duck_rows(convert(two, none)["sql_a"])) == 2
+    assert duck_rows(convert(two, none)["sql_b"]) == []
+    # the zero-column join side still multiplies the rows of the other side
+    joined = {"join": {"kind": "INNER", "condition": op("AND", t="BOOLEAN"), "left": two, "right": project([lit("7")], nothing)}}
+    assert duck_rows(convert(joined, joined)["sql_a"]) == [(7,), (7,)]
+    # a group by on a zero-column source counts its rows
+    counted = {"group": {"function": [{"operator": "COUNT ROWS", "operand": [], "type": "INT", "distinct": False}], "keys": [], "source": two}}
+    assert duck_rows(convert(counted, counted)["sql_a"]) == [(2,)]
+
+
+def test_empty_values_may_carry_columns_of_any_type():
+    empty = {"values": {"content": [], "schema": ["INT", "JSONB"]}}
+    out = convert(empty, empty)
+    assert duck_rows(out["sql_a"]) == []
+    # but a JSONB cell would need a JSONB encoding
+    full = {"values": {"content": [[lit("1"), lit("'[1]'", "JSONB")]], "schema": ["INT", "JSONB"]}}
+    assert "VALUES column type JSONB" in skipped(full, full)
+
+
+def test_division_is_exact_only_by_a_positive_power_of_two():
+    def div(divisor):
+        return project([op("DIV", col(0), lit(divisor, "DECIMAL" if "." in divisor else "INT"), t="DECIMAL")])
+
+    for d in ("1", "2", "4", "16", "2.0", "0.5"):
+        out = convert(div(d), project([col(0)]))
+        assert " / " in out["sql_a"]
+    for d, why in (("3", "power of two"), ("0", "by zero"), ("-2", "power of two"), ("10", "power of two"), ("0.1", "power of two")):
+        assert why in skipped(div(d), project([col(0)])), d
+    assert "non-literal divisor" in skipped(project([op("DIV", lit("4"), col(0), t="DECIMAL")]), project([col(0)]))
+    # DuckDB's quotient by a power of two is the exact rational, as CockroachDB's decimal quotient is
+    duckdb = pytest.importorskip("duckdb")
+    from fractions import Fraction
+    con = duckdb.connect()
+    for d in (1, 2, 4, 8, 64):
+        for x in (-1000001, -7, -1, 0, 1, 3, 25, 999999):
+            assert Fraction(con.execute(f"SELECT CAST({x} AS BIGINT) / {d}").fetchone()[0]) == Fraction(x, d)
+
+
+def test_modulo_by_a_nonzero_literal_keeps_the_dividends_sign_in_both_engines():
+    def mod(divisor):
+        return project([op("MOD", col(0), lit(divisor), t="INT")])
+
+    assert " % 3" in convert(mod("3"), project([col(0)]))["sql_a"]
+    assert "by zero" in skipped(mod("0"), project([col(0)]))
+    assert "non-literal divisor" in skipped(project([op("MOD", col(0), col(1), t="INT")]), project([col(0)]))
+    assert "non-integer" in skipped(project([op("MOD", col(0), lit("2.5", "DECIMAL"), t="DECIMAL")]), project([col(0)]))
+    duckdb = pytest.importorskip("duckdb")
+    con = duckdb.connect()
+    for d in (3, 16, -3):
+        for x in range(-40, 41):
+            # truncated remainder (Go's and C's %), not the floored one Python's % gives
+            assert con.execute(f"SELECT CAST({x} AS BIGINT) % ({d})").fetchone()[0] == x - d * int(x / d)
+
+
+def test_concat_and_integer_to_string_casts():
+    concat = project([op("CONCAT", col(0, "STRING"), lit("'foo'", "STRING"), t="STRING")])
+    out = convert(concat, concat, types=("STRING", "INT", "OID"))
+    assert "CONCAT(" in out["sql_a"]
+    # NULL in, NULL out (MySQL's CONCAT, transpiled to DuckDB's ||, and CockroachDB's || agree)
+    assert duck_rows("SELECT CONCAT(NULL, 'foo')") == [(None,)]
+    assert "non-string" in skipped(project([op("CONCAT", col(0), lit("'x'", "STRING"), t="STRING")]), project([col(0)]))
+    cast = project([op("CAST", col(0), t="STRING")])
+    assert "CAST(t1.c0 AS CHAR)" in convert(cast, cast)["sql_a"]
+    assert duck_rows("SELECT CAST(CAST(-12 AS BIGINT) AS CHAR)") == [("-12",)]
+    # a decimal's text keeps its scale, which the stand-in does not
+    dec = project([op("CAST", col(0, "DECIMAL"), t="STRING")])
+    assert "scale" in skipped(dec, dec, types=("DECIMAL", "INT", "OID"))
+
+
+def test_uuid_and_timestamptz_literals_are_converted_only_in_an_exact_spelling():
+    uuid = "'37685f26-4b07-40ba-9bbf-42916ed9bc61'"
+    eq = project([col(1)], filt(op("EQ", col(0, "UUID"), lit(uuid, "UUID"))))
+    out = convert(eq, eq, types=("UUID", "INT", "OID"))
+    assert f"= {uuid}" in out["sql_a"] and "t0_c0 VARCHAR(255)" in out["ddl"]
+    shouting = lit(uuid.upper(), "UUID")
+    assert "literal of type UUID" in skipped(project([col(1)], filt(op("EQ", col(0, "UUID"), shouting))), eq, types=("UUID", "INT", "OID"))
+    # a UUID only meets a UUID
+    mixed = project([col(1)], filt(op("EQ", col(0, "UUID"), lit("'x'", "STRING"))))
+    assert "cross-type" in skipped(mixed, mixed, types=("UUID", "INT", "OID"))
+    # a TIMESTAMPTZ literal is the UTC instant of its own offset
+    stamp = lambda text: project([col(1)], filt(op("EQ", col(0, "TIMESTAMPTZ"), lit(text, "TIMESTAMPTZ"))))  # noqa: E731
+    types = ("TIMESTAMPTZ", "INT", "OID")
+    assert "TIMESTAMP '2020-04-11 06:25:41'" in convert(stamp("'2020-04-11 06:25:41+00'"), stamp("'2020-04-11 06:25:41+00'"), types=types)["sql_a"]
+    assert "TIMESTAMP '2020-04-10 23:14:41'" in convert(stamp("'2020-04-11 06:25:41+07:11'"), stamp("'2020-04-11 06:25:41+07:11'"), types=types)["sql_a"]
+    assert "TIMESTAMP '2020-04-11 09:25:41.500000'" in convert(stamp("'2020-04-11 06:25:41.5-03'"), stamp("'2020-04-11 06:25:41.5-03'"), types=types)["sql_a"]
+    date_cast = project([col(1)], filt(op("EQ", col(0, "TIMESTAMPTZ"), op("CAST", lit("'2020-01-01'", "DATE"), t="TIMESTAMPTZ"))))
+    assert "session time zone" in skipped(date_cast, date_cast, types=types)
+
+
+def test_constraints_the_json_drops_are_recorded_not_skipped():
+    out = convert(project([col(0)]), project([col(0)]), help_=("scan\n  check constraint expressions\n  computed column expressions",))
+    assert out["dropped"] == ["CHECK constraint", "computed column"]
+    assert "dropped" not in convert(project([col(0)]), project([col(0)]))
 
 
 def test_set_operations_and_distinct():
