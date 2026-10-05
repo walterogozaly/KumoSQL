@@ -17,8 +17,8 @@ those positions, and the result goes back through the ordinary parser.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from collections.abc import Sequence
+from dataclasses import dataclass
 from functools import lru_cache
 
 import sqlglot
@@ -93,6 +93,12 @@ def _direct(tokens: Sequence[_Tok], pairs: dict[int, int], lo: int, hi: int):
     while i < hi:
         yield i
         i = pairs[i] + 1 if i in pairs else i + 1
+
+
+def _is_path(tokens: Sequence[_Tok], lo: int, hi: int) -> bool:
+    """Whether tokens [lo, hi) are a name path, ``a`` or ``a.b.c``."""
+
+    return (hi - lo) % 2 == 1 and all(tokens[i].type == ("DOT" if (i - lo) % 2 else "VAR") for i in range(lo, hi))
 
 
 # --- the rewrites: each takes the text and returns the new text, or None when it does not apply --------------------
@@ -183,8 +189,8 @@ def _aggregate_clauses(sql: str, dialect: str) -> str | None:
             end = close
             for i in direct:
                 word = tokens[i].upper.split(" ")[0]
-                if i > first[0] and word in enders and not (
-                        first is group and word == "HAVING" and not (i + 1 < close and tokens[i + 1].upper in ("MIN", "MAX"))):
+                min_max = i + 1 < close and tokens[i + 1].upper in ("MIN", "MAX")
+                if i > first[0] and word in enders and not (first is group and word == "HAVING" and not min_max):
                     end = i  # a HAVING after GROUP BY filters the groups: it goes with the clause
                     break
             spans.append((tokens[first[0]].start, tokens[end - 1].end, ""))
@@ -264,7 +270,7 @@ def _unknown_typed_arrays(sql: str, dialect: str) -> str | None:
             continue
         opener = tokens[j + 1]
         if opener.type == "L_BRACKET":
-            close = _matching_bracket(tokens, j + 1)
+            close = pairs[j + 1]
         elif opener.type == "L_PAREN" and t.upper == "STRUCT":
             close = pairs[j + 1]
         else:
@@ -272,21 +278,10 @@ def _unknown_typed_arrays(sql: str, dialect: str) -> str | None:
         type_text = sql[t.start:tokens[j].end]
         if close is None or not _unparsable_type(type_text, dialect):
             continue
-        body = sql[opener.start:tokens[close].end] if opener.type == "L_BRACKET" else sql[opener.end:tokens[close].start]
+        inner = opener.type == "L_BRACKET"
+        body = sql[opener.start:tokens[close].end] if inner else sql[opener.end:tokens[close].start]
         spans.append((t.start, tokens[close].end, f"{UNKNOWN_FUNCTION}({body})"))
     return _cut(sql, spans) if spans else None
-
-
-def _matching_bracket(tokens: Sequence[_Tok], open_index: int) -> int | None:
-    depth = 0
-    for k in range(open_index, len(tokens)):
-        if tokens[k].type == "L_BRACKET":
-            depth += 1
-        elif tokens[k].type == "R_BRACKET":
-            depth -= 1
-            if depth == 0:
-                return k
-    return None
 
 
 _COMPARISONS = frozenset({"=", "!=", "<>", "<", ">", "<=", ">=", "LIKE"})
@@ -307,7 +302,8 @@ def _quantified_unnest(sql: str, dialect: str) -> str | None:
         if tokens[i + 1].upper != "UNNEST" or tokens[i + 2].type != "L_PAREN":
             continue
         close = pairs[i + 2]
-        spans.append((tokens[i + 1].start, tokens[close].end, f"(SELECT * FROM {sql[tokens[i + 1].start:tokens[close].end]})"))
+        call = sql[tokens[i + 1].start:tokens[close].end]
+        spans.append((tokens[i + 1].start, tokens[close].end, f"(SELECT * FROM {call})"))
     return _cut(sql, spans) if spans else None
 
 
@@ -340,17 +336,20 @@ def _recursion_depth(sql: str, dialect: str) -> str | None:
             at += 2
         body_open = opening[k]
         branches = [i for i in _direct(tokens, pairs, body_open, k) if tokens[i].upper == "SELECT"]
-        if not branches or tokens[body_open + 1].upper != "SELECT" or any(tokens[i + 1].upper == "AS" for i in branches):
+        value_select = any(tokens[i + 1].upper == "AS" for i in branches)
+        if not branches or tokens[body_open + 1].upper != "SELECT" or value_select:
             return None
         for i in branches:
-            end = next((j for j in _direct(tokens, pairs, i, k) if tokens[j].upper.split(" ")[0] in _SELECT_LIST_END), k)
+            end = next((j for j in _direct(tokens, pairs, i, k)
+                        if tokens[j].upper.split(" ")[0] in _SELECT_LIST_END), k)
             comma = "" if tokens[end - 1].type == "COMMA" else ","
             spans.append((tokens[end - 1].end, tokens[end - 1].end, f"{comma} CAST(0 AS INT64) AS {name}"))
         spans.append((tokens[k + 1].start, tokens[at - 1].end, ""))
     return _cut(sql, spans) if spans else None
 
 
-_MR_CLAUSES = frozenset({"PARTITION", "ORDER", "MEASURES", "PATTERN", "DEFINE", "AFTER", "ONE", "OPTIONS", "SUBSET", "ALL"})
+_MR_CLAUSES = frozenset({"PARTITION", "ORDER", "MEASURES", "PATTERN", "DEFINE", "AFTER", "ONE", "OPTIONS", "SUBSET",
+                         "ALL"})
 _MR_FOLLOWER = {"ONE": "ROW", "ALL": "ROWS", "AFTER": "MATCH"}  # keywords that start a clause only before these
 _MR_PATTERN_FUNCTIONS = frozenset({"FIRST", "LAST", "PREV", "NEXT", "MATCH_NUMBER", "CLASSIFIER", "MATCH_ROW_NUMBER"})
 
@@ -371,8 +370,8 @@ def _match_recognize(sql: str, dialect: str) -> str | None:
     """``rel MATCH_RECOGNIZE(PARTITION BY p MEASURES m AS name ...)``: one row per match, whose columns are the
     partition columns and then the measures. A measure that names no pattern variable is an ordinary aggregate over
     the relation's columns, so the clause becomes ``(SELECT p, m AS name FROM rel)``. A measure that names a pattern
-    variable other than as a column qualifier (``FIRST(x)``, ``CLASSIFIER()``) is a column of unknown type; a clause this
-    does not know, or a partition key that is not a plain column, leaves the query unknown."""
+    variable other than as a column qualifier (``FIRST(x)``, ``CLASSIFIER()``) is a column of unknown type; a clause
+    this does not know, or a partition key that is not a plain column, leaves the query unknown."""
 
     tokens = _tokens(sql, dialect)
     pairs = _pairs(tokens) if tokens is not None else None
@@ -412,7 +411,8 @@ def _match_recognize(sql: str, dialect: str) -> str | None:
             name = tokens[hi - 1].text
             base = tokens[lo].start
             cuts = []
-            understood = not any(tokens[i].upper in _MR_PATTERN_FUNCTIONS or tokens[i].upper == "SELECT" for i in range(lo, hi - 2))
+            understood = not any(tokens[i].upper in _MR_PATTERN_FUNCTIONS or tokens[i].upper == "SELECT"
+                                 for i in range(lo, hi - 2))
             for i in range(lo, hi - 2):
                 if understood and tokens[i].upper in variables:
                     # only the qualifier of a column (A.x) is understood: A.x has the type of the relation's column x
@@ -499,7 +499,7 @@ def _align(sql: str, dialect: str) -> str | None:
                 expression, stamp = sql[tokens[lo].start:tokens[hi - 3].end], tokens[hi - 1].text
             else:
                 expression = sql[tokens[lo].start:tokens[hi - 1].end]
-                is_path = (hi - lo) % 2 == 1 and all(tokens[i].type == ("DOT" if (i - lo) % 2 else "VAR") for i in range(lo, hi))
+                is_path = _is_path(tokens, lo, hi)
                 stamp = tokens[hi - 1].text if is_path else "timestamp"
         elif begin_of["PERIOD"] == first:
             expression, stamp = "`timestamp`", "timestamp"  # the default timestamp column
@@ -513,7 +513,7 @@ def _align(sql: str, dialect: str) -> str | None:
                     return None
                 if b - a >= 3 and tokens[b - 2].upper == "AS" and re.fullmatch(name_pattern, tokens[b - 1].text):
                     aliases.add(tokens[b - 1].upper)
-                elif not ((b - a) % 2 == 1 and all(tokens[i].type == ("DOT" if (i - a) % 2 else "VAR") for i in range(a, b))):
+                elif not _is_path(tokens, a, b):
                     return None
                 partition.append(sql[tokens[a].start:tokens[b - 1].end])
         metrics = []
@@ -522,7 +522,8 @@ def _align(sql: str, dialect: str) -> str | None:
                 if b - a < 3 or tokens[b - 2].upper != "AS" or not re.fullmatch(name_pattern, tokens[b - 1].text):
                     return None
                 name = tokens[b - 1].text
-                if any(tokens[i].upper in aliases or tokens[i].upper in ("ALIGNED_TIMESTAMP", "SELECT") for i in range(a, b - 2)):
+                opaque = aliases | {"ALIGNED_TIMESTAMP", "SELECT"}
+                if any(tokens[i].upper in opaque for i in range(a, b - 2)):
                     metrics.append(f"{UNKNOWN_FUNCTION}(NULL) AS {name}")
                     continue
                 cuts = [(tokens[i].start - tokens[a].start, tokens[pairs[i + 1]].end - tokens[a].start, "")
@@ -559,18 +560,22 @@ def _multiway_unnest(sql: str, dialect: str) -> str | None:
         if t.upper != "UNNEST" or tokens[u + 1].type != "L_PAREN" or (u > 0 and tokens[u - 1].type == "DOT"):
             continue
         open_, close = u + 1, pairs[u + 1]
-        if any(tokens[i].type in ("LT", "GT") or tokens[i].text in ("<>", ">>") for i in _direct(tokens, pairs, open_, close)):
+        if any(tokens[i].type in ("LT", "GT") or tokens[i].text in ("<>", ">>")
+               for i in _direct(tokens, pairs, open_, close)):
             continue  # a typed array literal (ARRAY<STRUCT<a INT64, b STRING>>[...]) has commas that separate nothing
         items = _split_commas(tokens, pairs, open_ + 1, close)
-        named_mode = [it for it in items if it[1] - it[0] >= 3 and tokens[it[0]].upper == "MODE" and tokens[it[0] + 1].text == "=>"]
+        named_mode = [it for it in items
+                      if it[1] - it[0] >= 3 and tokens[it[0]].upper == "MODE" and tokens[it[0] + 1].text == "=>"]
         arrays = [it for it in items if it not in named_mode]
         aliased = [any(tokens[i].upper == "AS" for i in _direct(tokens, pairs, it[0] - 1, it[1])) for it in arrays]
         if len(arrays) < 2 and not any(aliased) and not named_mode:
             continue  # an ordinary UNNEST
-        if len(named_mode) > 1 or (named_mode and items[-1] != named_mode[0]) or not arrays or any(it[0] >= it[1] for it in items):
+        if len(named_mode) > 1 or (named_mode and items[-1] != named_mode[0]) or not arrays \
+                or any(it[0] >= it[1] for it in items):
             return None
         after = tokens[close + 1] if close + 1 < len(tokens) else None
-        if after is not None and (after.upper == "AS" or after.type in ("VAR", "IDENTIFIER") and after.upper not in _AFTER_UNNEST_OK):
+        if after is not None and (after.upper == "AS" or (after.type in ("VAR", "IDENTIFIER")
+                                                           and after.upper not in _AFTER_UNNEST_OK)):
             return None
         parts, sources = [], []
         for k, (lo, hi) in enumerate(arrays):
@@ -582,12 +587,19 @@ def _multiway_unnest(sql: str, dialect: str) -> str | None:
                     return None
                 array, name = sql[tokens[lo].start:tokens[a].start].strip(), tokens[a + 1].text
             else:
-                if tokens[hi - 1].type in ("VAR", "IDENTIFIER", "QUOTED_IDENTIFIER"):
-                    return None
-                array, name = sql[tokens[lo].start:tokens[hi - 1].end], f"{ANONYMOUS_PREFIX}{counter}"
+                array = sql[tokens[lo].start:tokens[hi - 1].end]
+                if tokens[hi - 1].type in ("VAR", "IDENTIFIER"):
+                    # a path names its column by its last identifier (T.arr gives arr); anything else ending in a
+                    # name could be named in ways this does not know
+                    if not _is_path(tokens, lo, hi):
+                        return None
+                    name = tokens[hi - 1].text
+                else:
+                    name = f"{ANONYMOUS_PREFIX}{counter}"
             parts.append(f"__kumo_e{counter} AS {name}")
             sources.append(f"UNNEST({array}) AS __kumo_e{counter}")
-        spans.append((t.start, tokens[close].end, f"UNNEST(ARRAY(SELECT AS STRUCT {', '.join(parts)} FROM {', '.join(sources)}))"))
+        select = f"SELECT AS STRUCT {', '.join(parts)} FROM {', '.join(sources)}"
+        spans.append((t.start, tokens[close].end, f"UNNEST(ARRAY({select}))"))
     return _cut(sql, spans) if spans else None
 
 
@@ -674,7 +686,10 @@ def _privacy_selects_are_ordinary(tree: exp.Expression) -> bool:
     for select in tree.find_all(exp.Select):
         if not any(_DP_MARK in c for c in (select.comments or [])):
             continue
-        for node in select.walk(prune=lambda n: isinstance(n, exp.Subquery) or (n is not select and isinstance(n, exp.Select))):
+        def nested(n):
+            return isinstance(n, exp.Subquery) or (n is not select and isinstance(n, exp.Select))
+
+        for node in select.walk(prune=nested):
             if isinstance(node, exp.AggFunc) and not isinstance(node, _PRIVACY_AGGREGATES):
                 return False
             if isinstance(node, exp.Anonymous) and node.name.upper().startswith("ANON_"):
@@ -685,6 +700,13 @@ def _privacy_selects_are_ordinary(tree: exp.Expression) -> bool:
 def rewrite(sql: str, dialect: str = "bigquery") -> Rewritten | None:
     """A text sqlglot parses with the same output column types as ``sql``, or ``None``."""
 
+    try:
+        return _rewrite(sql, dialect)
+    except Exception:  # noqa: BLE001 - whatever goes wrong here, the query is simply left unknown
+        return None
+
+
+def _rewrite(sql: str, dialect: str) -> Rewritten | None:
     text = sql
     used: list[str] = []
     for _ in range(6):

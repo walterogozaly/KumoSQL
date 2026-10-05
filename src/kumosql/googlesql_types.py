@@ -409,7 +409,7 @@ def infer(sql_or_tree, catalog: Catalog | None = None, dialect: str = "bigquery"
             fallback = rewrite(sql_or_tree, dialect) if isinstance(exc, sqlglot.errors.ParseError) else None
             if fallback is None:
                 return TypedQuery(None, None, (), {}, {}, f"parse error: {exc}"[:200])
-            tree, text = fallback.tree, fallback.sql
+            tree = fallback.tree  # `text` stays the original: it only decides which type names are ambiguous
     else:
         tree = sql_or_tree
     if not isinstance(tree, exp.Query):
