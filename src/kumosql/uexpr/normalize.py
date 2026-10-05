@@ -344,12 +344,16 @@ def simplify_term(t: Term, ctx: Ctx) -> list:
         if changed is not None:
             t = changed
             continue
-        # 4. a sum over the key values of a keyed table is a sum over its rows
+        # 4. a scalar restricted to a few distinct literals is that many terms
+        split = _split_literal_domain(t)
+        if split is not None:
+            return [u for part in split for u in simplify_term(part, ctx)]
+        # 5. a sum over the key values of a keyed table is a sum over its rows
         changed = _unkey_scalars(t, ctx)
         if changed is not None:
             t = changed
             continue
-        # 4. conditions simplified against each other: once more, until they settle
+        # 6. conditions simplified against each other: once more, until they settle
         if passes < 3 and not _settled(new_conjs, conjs):
             passes += 1
             continue
@@ -458,6 +462,30 @@ def _eliminate_scalar(t: Term) -> Term | None:
                 rest.append(extra)
             new = tuple(subst(g, {v: target}) for g in rest)
             return Term(tuple(x for x in t.vars if x != v), t.coef, new)
+    return None
+
+
+def _split_literal_domain(t: Term) -> list | None:
+    """``Σs. [s = a ∨ s = b]·f(s) = f(a) + f(b)`` for distinct literals ``a``, ``b`` (the disjuncts exclude each other)."""
+
+    for f in t.factors:
+        if not (isinstance(f, NInd) and isinstance(f.f, Or)):
+            continue
+        var, lits = None, []
+        for a in f.f.args:
+            if not (isinstance(a, Cmp) and a.op == "=" and isinstance(a.a, Ref) and isinstance(a.b, Lit) and a.b.value is not None):
+                break
+            if var is None:
+                var = a.a.var
+            if a.a.var != var:
+                break
+            lits.append(a.b)
+        else:
+            if var in t.vars and isinstance(var, SVar) and len({(type(x.value), x.value) for x in lits}) == len(lits) and len(lits) <= 16:
+                rest = tuple(g for g in t.factors if g is not f)
+                return [
+                    Term(tuple(v for v in t.vars if v != var), t.coef, tuple(subst(g, {var: lit}) for g in rest)) for lit in lits
+                ]
     return None
 
 
@@ -791,6 +819,30 @@ def _never_null(v, ctx: Ctx) -> bool:
     return False
 
 
+def _fold_string_fn(name: str, args: tuple):
+    """The literal an ASCII string function gives on literal arguments, or ``None``.
+
+    Only ``UPPER``, ``LOWER``, ``CONCAT`` and ``SUBSTRING`` at a positive start, where engines agree.
+    """
+
+    def text(a):
+        return isinstance(a, Lit) and isinstance(a.value, str) and a.kind == "str" and a.value.isascii()
+
+    def whole(a):
+        return isinstance(a, Lit) and isinstance(a.value, Fraction) and a.value.denominator == 1
+
+    if name in ("UPPER", "LOWER") and len(args) == 1 and text(args[0]):
+        return Lit(args[0].value.upper() if name == "UPPER" else args[0].value.lower(), "str")
+    if name == "CONCAT" and args and all(text(a) for a in args):
+        return Lit("".join(a.value for a in args), "str")
+    if name == "SUBSTRING" and len(args) in (2, 3) and text(args[0]) and all(whole(a) for a in args[1:]):
+        start = int(args[1].value)
+        length = int(args[2].value) if len(args) == 3 else None
+        if start >= 1 and (length is None or length >= 0):
+            return Lit(args[0].value[start - 1 :] if length is None else args[0].value[start - 1 : start - 1 + length], "str")
+    return None
+
+
 def _is_null(v, ctx: Ctx):
     if isinstance(v, Lit):
         return TRUE if v.value is None else FALSE
@@ -823,6 +875,9 @@ def simplify_value(v, ctx: Ctx):
         args = tuple(simplify_value(a, ctx) for a in v.args)
         if v.strict and any(isinstance(a, Lit) and a.value is None for a in args):
             return Lit(None, v.kind)
+        folded = _fold_string_fn(v.name, args)
+        if folded is not None:
+            return folded
         return Fn(v.name, args, v.strict, v.kind)
     if isinstance(v, Arith):
         a, b = simplify_value(v.a, ctx), simplify_value(v.b, ctx)

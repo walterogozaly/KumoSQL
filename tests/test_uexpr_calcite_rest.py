@@ -88,3 +88,13 @@ def test_sum_of_an_outside_value_over_a_join_is_the_value_times_the_count():
     )
     assert proves(left, right)
     assert not proves(left, right.replace("t1.sal * t2.c", "t1.sal + t2.c"))
+
+
+def test_string_functions_fold_over_a_union_of_literals():
+    left = (
+        "SELECT u FROM (SELECT UPPER(CONCAT(SUBSTRING(x, 1, 2), SUBSTRING(x, 3))) AS u "
+        "FROM (SELECT 'table' AS x UNION SELECT 'view' UNION SELECT 'foreign table') AS t) AS t2 WHERE u = 'TABLE'"
+    )
+    assert proves(left, "SELECT 'TABLE' AS u")
+    assert not proves(left, "SELECT 'TABLES' AS u")
+    assert not proves(left, "SELECT 'VIEW' AS u")
