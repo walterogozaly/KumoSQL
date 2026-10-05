@@ -206,6 +206,17 @@ def _lists_after(statement: list, types, keywords: set[str], first: int = 0) -> 
     return None
 
 
+def _partition_columns(statement: list, types, first: int) -> str | None:
+    """The unknown types in ``WITH PARTITION COLUMNS (name type, ...)`` (an external table, a ``LOAD DATA``)."""
+
+    for index in range(first, len(statement) - 2):
+        if [item.text.upper() for item in statement[index:index + 2]] == ["PARTITION", "COLUMNS"]:
+            found = _list_types(_group(statement, index + 2)[0], types)
+            if found:
+                return found
+    return None
+
+
 def _alter(statement: list, types) -> str | None:
     """The types an ``ALTER TABLE`` names: ``ADD COLUMN [IF NOT EXISTS] name TYPE`` and ``ALTER COLUMN [IF EXISTS]
     name SET DATA TYPE TYPE``. sqlglot also reads ``ADD name TYPE``, ``ADD COLUMNS (name TYPE, ...)`` and an
@@ -228,10 +239,15 @@ def _alter(statement: list, types) -> str | None:
                 if found:
                     return found
                 continue
-            position = start + 1  # the type follows the column name
+            position = start + 1  # the type follows the column name (a field of a struct is a dotted name)
+            while position + 1 < len(statement) and statement[position].token_type is TokenType.DOT:
+                position += 2
         elif word == "ALTER" and words[index + 1:index + 2] == ["COLUMN"]:
             start = after(index + 2, ("IF", "EXISTS"))
-            position = after(start + 1, ("SET", "DATA"), ("TYPE",))
+            position = start + 1
+            while position + 1 < len(statement) and statement[position].token_type is TokenType.DOT:
+                position += 2
+            position = after(position, ("SET", "DATA"), ("TYPE",))
         else:
             continue
         if position < len(statement) and _is_unknown(statement[position], types):
@@ -257,7 +273,8 @@ def _definitions(statement: list, types) -> str | None:
         return _alter(statement, types)
     if first == "LOAD" and len(statement) > 1 and statement[1].text.upper() == "DATA":
         opened = _first_list(statement, 2)
-        return _list_types(_group(statement, opened)[0], types) if opened is not None else None
+        found = _list_types(_group(statement, opened)[0], types) if opened is not None else None
+        return found or _partition_columns(statement, types, 2)
     if first != "CREATE":
         return None
     kinds = {"TABLE", "FUNCTION", "PROCEDURE", "MODEL"}
@@ -280,11 +297,9 @@ def _definitions(statement: list, types) -> str | None:
         if found:
             return found
     if statement[kind].text.upper() == "TABLE":
-        for index in range(kind, len(statement) - 2):  # an external table's WITH PARTITION COLUMNS (name type, ...)
-            if [item.text.upper() for item in statement[index:index + 2]] == ["PARTITION", "COLUMNS"]:
-                found = _list_types(_group(statement, index + 2)[0], types)
-                if found:
-                    return found
+        found = _partition_columns(statement, types, kind)
+        if found:
+            return found
     if opened is not None and end + 1 < len(statement) and statement[end].text.upper() == "RETURNS":
         returned = statement[end + 1]
         if _is_unknown(returned, types):

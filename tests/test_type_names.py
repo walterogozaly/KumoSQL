@@ -149,6 +149,8 @@ POSITIONS = [
     ("ALTER TABLE d.t ALTER COLUMN a FLOAT", "FLOAT"),
     ("LOAD DATA INTO d.t (a FLOAT) FROM FILES (format='CSV', uris=['gs://b/x'])", "FLOAT"),  # dry run: Type not found
     ("LOAD DATA OVERWRITE d.t (a INT64, b TEXT) FROM FILES (format='CSV', uris=['gs://b/x'])", "TEXT"),
+    ("LOAD DATA INTO d.t FROM FILES (format='CSV', uris=['gs://b/x']) WITH PARTITION COLUMNS (p FLOAT)", "FLOAT"),  # inferred
+    ("ALTER TABLE d.t ADD COLUMN s.c FLOAT", "FLOAT"),  # a field of a struct column is a dotted name; inferred
     ("CREATE EXTERNAL TABLE d.t (a STRING) WITH PARTITION COLUMNS (p FLOAT) OPTIONS (format='CSV')", "FLOAT"),
     ("CREATE EXTERNAL TABLE d.t WITH PARTITION COLUMNS (p FLOAT) OPTIONS (format='CSV')", "FLOAT"),
     ("CREATE MODEL d.m INPUT (f1 FLOAT) OUTPUT (o STRING) REMOTE WITH CONNECTION DEFAULT", "FLOAT"),  # dry run: Type not found
@@ -203,6 +205,8 @@ VALID_POSITIONS = [
     "ALTER TABLE d.t SET OPTIONS (description='add column a float')",
     "LOAD DATA INTO d.t (a INT64, b STRING) FROM FILES (format='CSV', uris=['gs://b/x'])",
     "LOAD DATA INTO d.t FROM FILES (format='CSV', uris=['gs://b/x'])",
+    "LOAD DATA INTO d.t FROM FILES (format='CSV', uris=['gs://b/x']) WITH PARTITION COLUMNS (p STRING, d DATE)",
+    "ALTER TABLE d.t ADD COLUMN s.c INT64, ADD COLUMN s.float STRING",
     "LOAD DATA OVERWRITE d.t FROM FILES (format='CSV', uris=['gs://b/float'])",
     "CREATE EXTERNAL TABLE d.t WITH PARTITION COLUMNS (p STRING, d DATE) OPTIONS (format='CSV')",
     "CREATE EXTERNAL TABLE d.t (a FLOAT64) WITH PARTITION COLUMNS OPTIONS (format='CSV')",
