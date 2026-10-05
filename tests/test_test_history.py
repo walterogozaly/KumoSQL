@@ -237,9 +237,9 @@ def test_routine_profile_keeps_full_and_eval_profiles_available(monkeypatch):
     for flags in (["--routine"], [], ["--evals"]):
         assert run_tests.main([*flags, "-j", "1"]) == 0
     routine, full, evals = commands
-    assert routine[routine.index("-m") + 1] == "not eval and not slow"
+    assert routine[routine.index("-m", 2) + 1] == "not eval and not slow"
     assert "--quick" in routine
-    assert full[full.index("-m") + 1] == "not slow"
+    assert full[full.index("-m", 2) + 1] == "not slow"
     assert "--quick" not in full
-    assert evals[evals.index("-m") + 1] == "eval and not slow"
+    assert evals[evals.index("-m", 2) + 1] == "eval and not slow"
     assert "--quick" not in evals
