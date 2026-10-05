@@ -60,3 +60,22 @@ Supply multiple `-r` options to run rules in that order. Put formatting last: ot
 For Dataform SQLX, the driver protects config, JavaScript, operation blocks, and `${...}` expressions. Formatting with `format_sql` is for SQL, not SQLX. Every formatting change is re-checked by a separate checker that requires the same words, comments and parse tree, so only whitespace and keyword case may differ; selecting sqlfluff rules that change more than layout makes the result `unproven` ([how](proof-safeguards.md#formatting)). A `${...}` expression comes back exactly as written, even when it holds a backslash such as `r'\d'` or `\1`. Unsupported syntax and parse recovery are reported in diagnostics. See [Dataform preservation](evals/dataform-bench.md).
 
 KumoSQL now requires SQLGlot 30.21.0. Walter approved using this one version so routine tests run once with its faster compiled build, instead of repeating the full suite on four configurations. The normal Python build still works; focused checks can use it when diagnosing a problem. Helpers written during the old version matrix remain: they prevent mistakes such as reading `SELECT * EXCEPT (b)` as a plain `SELECT *`. Older releases are no longer supported. See [Rewrite rules](../docs/rewrite-rules.md) for setup and helper names.
+
+## Window idioms the prover reads alike
+
+[Full reference](../docs/rewrite-rules.md#window-idioms-the-prover-reads-alike)
+
+People ask for “the latest row per user” in several ways: `ROW_NUMBER() ... = 1`, `ARRAY_AGG(... LIMIT 1)[OFFSET(0)]`, `MAX_BY`, `WHERE (user_id, ts) IN (SELECT user_id, MAX(ts) ... GROUP BY user_id)`, or a join to the grouped `MAX`. The equivalence prover rewrites these forms to the last one (or, when the query only reads the key and the extreme, to a plain `SELECT user_id, MAX(ts) ... GROUP BY user_id`), so two queries written differently can be proved to return the same rows. It does this only when that is exactly true and leaves the query alone otherwise.
+
+For example, with `events(user_id, ts, value)` where `(user_id, ts)` is a declared key:
+
+```sql
+SELECT user_id, value FROM events
+QUALIFY ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts DESC) = 1
+```
+
+means “each event whose `ts` is largest for its `user_id`”. Without the key, two events of one user can share the largest `ts`; `ROW_NUMBER` returns one of them, while the grouped join returns both. The prover therefore does not treat those forms as equivalent. `RANK() ... = 1` returns every tied row, like the join, so it needs no key. If the query only returns `user_id` and `ts`, ties do not matter even for `ROW_NUMBER`: every tied row looks the same.
+
+NULL order matters too. An ascending sort puts NULL first while `MIN` skips NULL, so an ascending order on a nullable column is left alone; a descending order is fine. `MAX_BY` and `MIN_BY` also need the compared column and returned column to be non-NULL.
+
+Every rewrite is cross-checked on DuckDB over small databases with ties, NULLs, and empty tables, and each refusal has a database where applying the rewrite would change the result. These checks test the rule; they do not prove it. See [the VeriEQL page](../docs/evals/verieql.md) for the benchmark pairs these rules unlock.

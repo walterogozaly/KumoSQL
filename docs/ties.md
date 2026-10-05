@@ -75,4 +75,6 @@ A witness belongs to the whole query: it does not say which of the query's sites
 
 ## Checks
 
+The prover's rewrites of the first row of each group rely on a total order and a declared key; see [Window idioms the prover reads alike](rewrite-rules.md#window-idioms-the-prover-reads-alike).
+
 `tests/test_tie_determinism.py` lists the verdicts for 50 queries without and with a declared key, and runs every query judged deterministic on DuckDB with its table's rows stored in every order (DuckDB on one thread breaks ties by storage order): each returns the same rows every time.
