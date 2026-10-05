@@ -32,6 +32,7 @@ from .ir import (
     Truth,
     TVar,
     free_vars,
+    rkey,
 )
 from .normalize import Term
 from .translate import Unsupported
@@ -77,14 +78,14 @@ def _masked(n, bound: set) -> str:
     for v in _walk(n):
         if isinstance(v, SVar) and v.kind == "param":
             mapping[v] = SVar(0, "param")
-    return repr(_rename(n, mapping))
+    return rkey(_rename(n, mapping))
 
 
 def _pkey(n) -> tuple:
     """A sort key that ignores the names of lifting parameters (their ids depend on the order of discovery)."""
 
     params = {v: SVar(0, "param") for v in _walk(n) if isinstance(v, SVar) and v.kind == "param"}
-    return (repr(_rename(n, params)), repr(n)) if params else (repr(n), "")
+    return (rkey(_rename(n, params)), rkey(n)) if params else (rkey(n), "")
 
 
 def _factors(body) -> list:
@@ -179,8 +180,8 @@ def canon_term(t: Term) -> Term:
         key = v.table if isinstance(v, TVar) else "$s"
         counts[key] = counts.get(key, 0) + 1
         m[v] = TVar(-counts[key], v.table) if isinstance(v, TVar) else SVar(-counts[key], None)
-    factors = sorted((_rename(f, m) for f in factors), key=repr)
-    new_vars = tuple(sorted((m[v] for v in t.vars), key=repr))
+    factors = sorted((_rename(f, m) for f in factors), key=rkey)
+    new_vars = tuple(sorted((m[v] for v in t.vars), key=rkey))
     return Term(new_vars, t.coef, tuple(factors))
 
 

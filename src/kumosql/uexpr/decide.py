@@ -62,6 +62,7 @@ from .ir import (
     TVar,
     conj,
     fresh_id,
+    rkey,
     free_vars,
     neg,
     nmul,
@@ -188,7 +189,7 @@ class Prover:
         return result
 
     def group_equal(self, ta: list, tb: list, depth: int) -> bool:
-        tvars = sorted({v for t in ta + tb for v in t.vars}, key=repr)
+        tvars = sorted({v for t in ta + tb for v in t.vars}, key=rkey)
         groups: dict = {}
         for v in tvars:
             groups.setdefault(v.table if isinstance(v, TVar) else "$s", []).append(v)

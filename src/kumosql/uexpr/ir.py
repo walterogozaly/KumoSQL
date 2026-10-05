@@ -21,14 +21,51 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields
 from fractions import Fraction
+import contextlib
+import contextvars
 import itertools
+import re
 from typing import Iterable
 
-_IDS = itertools.count(1)
+_IDS: contextvars.ContextVar = contextvars.ContextVar("uexpr_ids", default=None)
+_DEFAULT_IDS = itertools.count(1)
 
 
 def fresh_id() -> int:
-    return next(_IDS)
+    ids = _IDS.get()
+    return next(_DEFAULT_IDS if ids is None else ids)
+
+
+@contextlib.contextmanager
+def id_scope(start: int = 1):
+    """Number the variables of one proof from ``start``, whatever the process has translated before."""
+
+    token = _IDS.set(itertools.count(start))
+    try:
+        yield
+    finally:
+        _IDS.reset(token)
+
+
+_NUMBER = re.compile(r"-?\d+")
+
+
+def _padded(match) -> str:
+    return str(int(match.group()) + 10**9).zfill(14)
+
+
+def in_id_scope() -> bool:
+    return _IDS.get() is not None
+
+
+def rkey(x) -> str:
+    """A sort key for a term: its ``repr`` with every integer padded, so ids and numbers order by value.
+
+    Sorting by plain ``repr`` puts ``s10`` before ``s9``, so which proof was found depended on how many
+    variables the process had numbered before. This key orders the same way whatever the numbering starts at.
+    """
+
+    return _NUMBER.sub(_padded, x if isinstance(x, str) else repr(x))
 
 
 class Node:

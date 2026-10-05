@@ -34,7 +34,7 @@ def _parse(sql: str, dialect: str, schema):
     return expand_alias_columns(tree, schema)
 
 
-def prove_bag_equivalent(
+def _prove_bag_equivalent(
     left_sql: str,
     right_sql: str,
     *,
@@ -48,7 +48,7 @@ def prove_bag_equivalent(
     timeout_ms: int = 5000,
     use_foreign_keys: bool = True,
 ):
-    """Prove that two queries return the same bag of rows on every database, or say not proven."""
+    """The body of :func:`prove_bag_equivalent`."""
 
     from ..smt_equivalence import (
         BASE_ASSUMPTIONS,
@@ -118,6 +118,23 @@ def prove_bag_equivalent(
     if catalog.used_constraints:
         assumptions.append(DECLARED_CONSTRAINTS_ASSUMPTION)
     return SmtEquivalenceResult(SmtStatus.PROVEN_EQUIVALENT, "proved by the bag procedure (multiplicity algebra)", assumptions=tuple(dict.fromkeys(assumptions)))
+
+
+def prove_bag_equivalent(left_sql: str, right_sql: str, **options):
+    """Prove that two queries return the same bag of rows on every database, or say not proven.
+
+    Keyword options: ``schema``, ``constraints``, ``types``, ``dialect``, ``exact_arithmetic``,
+    ``compare_names``, ``group_by_constants``, ``timeout_ms``, ``use_foreign_keys``. Variables are
+    numbered from 1 inside each call (unless the caller opened an :func:`~.ir.id_scope`), so the answer
+    does not depend on what the process did before.
+    """
+
+    from .ir import id_scope, in_id_scope
+
+    if in_id_scope():
+        return _prove_bag_equivalent(left_sql, right_sql, **options)
+    with id_scope():
+        return _prove_bag_equivalent(left_sql, right_sql, **options)
 
 
 def _decide(left_q, right_q, catalog, exact: bool, timeout_ms: int):
