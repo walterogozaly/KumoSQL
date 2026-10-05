@@ -141,3 +141,27 @@ def test_count_rollup_over_an_empty_grouping_set_keeps_zero(grouping):
     assert "COALESCE" in reuse.sql.upper()
     setup = ["CREATE TABLE emps (empid INT, deptno INT, name TEXT, salary INT, commission INT)"]
     assert _same_rows(query, reuse, setup)  # empty table: the grand total is 1, not NULL
+
+
+def test_whole_view_with_wrong_output_width_does_not_reach_prover(monkeypatch):
+    import kumosql.algebraic_equivalence as ae
+    import kumosql.model_reuse as mr
+    original = ae.prove_equivalent_algebraic
+    pairs = []
+    def recording(left, right, **kwargs):
+        pairs.append((left, right))
+        return original(left, right, **kwargs)
+    monkeypatch.setattr(ae, "prove_equivalent_algebraic", recording)
+    result = mr.rewrite_over_model("SELECT x FROM t", "SELECT x, y FROM t",
+                                   schema={"t": ["x", "y"]})
+    assert result.rewritten
+    assert len(pairs) == 1
+    assert result.candidates_tried == 1
+
+
+def test_whole_view_star_keeps_equivalent_candidate():
+    from kumosql.model_reuse import rewrite_over_model
+    result = rewrite_over_model("SELECT t.* FROM t", "SELECT x, y FROM t",
+                                schema={"t": ["x", "y"]})
+    assert result.rewritten
+    assert result.strategy == "same-as-model"

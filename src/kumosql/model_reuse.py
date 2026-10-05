@@ -980,7 +980,12 @@ def rewrite_over_model(
     whole.reason = ""  # type: ignore[attr-defined]
     candidates: list[_Candidate] = []
     exact = "SELECT " + ", ".join(f"{model_name}.{n}" for n in names) + f" FROM {model_name}"
-    candidates.append(_Candidate(exact, "same-as-model"))
+    # A whole-view replacement cannot change its output width. Avoid expensive
+    # proof search for an impossible candidate; unresolved stars keep the old path.
+    explicit_width = (len(plain_query.expressions) if isinstance(plain_query, exp.Select)
+                      and not any(e.is_star for e in plain_query.expressions) else None)
+    if explicit_width is None or explicit_width == len(names):
+        candidates.append(_Candidate(exact, "same-as-model"))
     if model is None:
         if isinstance(model_tree, exp.SetOperation):
             # the prover reads a set operation under SELECT * as the set operation itself
