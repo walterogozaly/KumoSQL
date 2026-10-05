@@ -335,10 +335,102 @@ def _recursion_depth(sql: str, dialect: str) -> str | None:
     return _cut(sql, spans) if spans else None
 
 
+_MR_CLAUSES = frozenset({"PARTITION", "ORDER", "MEASURES", "PATTERN", "DEFINE", "AFTER", "ONE", "OPTIONS", "SUBSET", "ALL"})
+_MR_PATTERN_FUNCTIONS = frozenset({"FIRST", "LAST", "PREV", "NEXT", "MATCH_NUMBER", "CLASSIFIER", "MATCH_ROW_NUMBER"})
+
+
+def _split_commas(tokens: list[_Tok], pairs: dict[int, int], lo: int, hi: int) -> list[tuple[int, int]]:
+    """Index ranges [start, end) of the comma-separated items between ``lo`` and ``hi``."""
+
+    out, start = [], lo
+    for i in _direct(tokens, pairs, lo - 1, hi):
+        if tokens[i].type == "COMMA":
+            out.append((start, i))
+            start = i + 1
+    out.append((start, hi))
+    return out
+
+
+def _match_recognize(sql: str, dialect: str) -> str | None:
+    """``rel MATCH_RECOGNIZE(PARTITION BY p MEASURES m AS name ...)``: one row per match, whose columns are the
+    partition columns and then the measures. A measure that names no pattern variable is an ordinary aggregate over
+    the relation's columns, so the clause becomes ``(SELECT p, m AS name FROM rel)``. A measure that names a pattern
+    variable (``A.x``, ``FIRST(x)``), a clause this does not know, or a partition key that is not a plain column
+    leaves the query unknown."""
+
+    tokens = _tokens(sql, dialect)
+    pairs = _pairs(tokens) if tokens is not None else None
+    if tokens is None or pairs is None:
+        return None
+    opening = {close: open_ for open_, close in pairs.items()}
+    for m, t in enumerate(tokens):
+        if t.upper != "MATCH_RECOGNIZE":
+            continue
+        if m + 1 >= len(tokens) or tokens[m + 1].type != "L_PAREN":
+            return None
+        body_open = m + 1
+        body_close = pairs[body_open]
+        if any(tokens[i].upper == "MATCH_RECOGNIZE" for i in range(body_open, body_close)):
+            continue  # the innermost one first; this one is looked at again afterwards
+        starts = [i for i in _direct(tokens, pairs, body_open, body_close)
+                  if tokens[i].upper.split(" ")[0] in _MR_CLAUSES]
+        names = [tokens[i].upper.split(" ")[0] for i in starts]
+        if any(n in ("SUBSET", "ALL") for n in names) or "MEASURES" not in names or "DEFINE" not in names \
+                or "PATTERN" not in names or len(set(names)) != len(names):
+            return None
+        end_of = {n: (starts[k + 1] if k + 1 < len(starts) else body_close) for k, n in enumerate(names)}
+        begin_of = {n: starts[k] for k, n in enumerate(names)}
+        # pattern variables: the names DEFINE gives, and every identifier PATTERN uses
+        variables = set()
+        for lo, hi in _split_commas(tokens, pairs, begin_of["DEFINE"] + 1, end_of["DEFINE"]):
+            if lo < hi:
+                variables.add(tokens[lo].upper)
+        for i in range(begin_of["PATTERN"] + 1, end_of["PATTERN"]):
+            if re.fullmatch(r"[A-Za-z_]\w*", tokens[i].text):
+                variables.add(tokens[i].upper)
+        measures = []
+        for lo, hi in _split_commas(tokens, pairs, begin_of["MEASURES"] + 1, end_of["MEASURES"]):
+            if hi - lo < 3 or tokens[hi - 2].upper != "AS" or not re.fullmatch(r"[A-Za-z_]\w*", tokens[hi - 1].text):
+                return None
+            if any(tokens[i].upper in variables or tokens[i].upper in _MR_PATTERN_FUNCTIONS for i in range(lo, hi - 2)):
+                return None
+            measures.append(sql[tokens[lo].start:tokens[hi - 2].start].strip() + " AS " + tokens[hi - 1].text)
+        keys = []
+        if "PARTITION" in names:
+            lo = begin_of["PARTITION"] + 1
+            if tokens[begin_of["PARTITION"]].upper == "PARTITION":  # spelled as two tokens
+                lo += 1 if tokens[lo].upper == "BY" else 0
+            for a, b in _split_commas(tokens, pairs, lo, end_of["PARTITION"]):
+                parts = tokens[a:b]
+                if not parts or len(parts) % 2 == 0 or any(
+                        (p.type != "DOT") if k % 2 else not re.fullmatch(r"[A-Za-z_]\w*|`[^`]+`", sql[p.start:p.end])
+                        for k, p in enumerate(parts)):
+                    return None
+                keys.append(sql[parts[0].start:parts[-1].end])
+        # the from item the clause follows
+        if m == 0:
+            return None
+        k = m - 1
+        if tokens[k].type == "R_PAREN":
+            k = opening[k]
+            if k > 0 and re.fullmatch(r"[A-Za-z_]\w*", tokens[k - 1].text) and tokens[k - 1].upper not in ("FROM", "JOIN"):
+                k -= 1  # a table function: name(...)
+        else:
+            while k >= 2 and tokens[k - 1].type == "DOT":
+                k -= 2
+        if k == 0 or (tokens[k - 1].upper not in ("FROM", "JOIN") and tokens[k - 1].type != "COMMA"):
+            return None
+        from_item = sql[tokens[k].start:tokens[m].start].strip()
+        select = ", ".join(keys + measures)
+        return sql[:tokens[k].start] + f"(SELECT {select} FROM {from_item})" + sql[tokens[body_close].end:]
+    return None
+
+
 _REWRITES = (
     ("privacy clause", _privacy_clause),
     ("aggregate filter or group", _aggregate_clauses),
     ("recursion depth column", _recursion_depth),
+    ("match recognize", _match_recognize),
     ("quantified comparison over an array", _quantified_unnest),
     ("unknown cast type", _unknown_casts),
     ("unknown typed constructor", _unknown_typed_arrays),
@@ -366,7 +458,7 @@ def rewrite(sql: str, dialect: str = "bigquery") -> Rewritten | None:
 
     text = sql
     used: list[str] = []
-    for _ in range(3):
+    for _ in range(6):
         changed = False
         for name, step in _REWRITES:
             try:
