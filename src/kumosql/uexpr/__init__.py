@@ -68,6 +68,9 @@ def _limit_spelling(sql: str, dialect: str, schema) -> str:
             return sql  # PERCENT, WITH TIES: left for check_modeled to refuse
         tree = sqlglot.parse_one(spelled, read=dialect)
         changed = True
+    pulled = _limit_below_projection(tree)
+    if pulled is not None:
+        tree, changed = pulled, True
     if schema and isinstance(tree, exp.Select) and tree.args.get("limit") is not None and tree.args.get("order") is not None:
         if any(isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star)) for e in tree.expressions):
             from ..algebraic_equivalence import _expand_stars
@@ -75,6 +78,69 @@ def _limit_spelling(sql: str, dialect: str, schema) -> str:
             tree = _expand_stars(tree, schema)
             changed = True
     return tree.sql(dialect) if changed else sql
+
+
+def _limit_below_projection(tree):
+    """``SELECT k AS a FROM (SELECT * FROM t ORDER BY k LIMIT n) s`` is ``SELECT k AS a FROM t ORDER BY k LIMIT n``.
+
+    The outer select only renames or repeats columns, and every one is an ORDER BY key of the limit.
+    The rows the limit keeps may differ between tied rows, but their key values do not, so the
+    projection commutes with the limit. Returns ``None`` for any other shape.
+    """
+
+    from sqlglot import exp
+
+    if not isinstance(tree, exp.Select) or any(
+        tree.args.get(k) for k in ("where", "group", "having", "distinct", "joins", "limit", "offset", "qualify", "with", "with_", "windows", "laterals")
+    ):
+        return None
+    source = tree.args.get("from_") or tree.args.get("from")
+    sub = source.this if source is not None else None
+    if not isinstance(sub, exp.Subquery) or any(sub.args.get(k) for k in ("limit", "offset", "joins", "pivots")):
+        return None
+    inner = sub.this
+    if not isinstance(inner, exp.Select) or inner.args.get("limit") is None or inner.args.get("order") is None:
+        return None
+    if any(inner.args.get(k) for k in ("group", "having", "distinct", "qualify", "windows")) or inner.find(exp.Window):
+        return None
+    alias = sub.alias.lower()
+    keys = []
+    for ordered in inner.args["order"].expressions:
+        if not isinstance(ordered, exp.Ordered) or not isinstance(ordered.this, exp.Column) or isinstance(ordered.this.this, exp.Star):
+            return None
+        keys.append(ordered.this)
+    star = any(isinstance(e, exp.Star) for e in inner.expressions)
+    if not star and not all(isinstance(e.this if isinstance(e, exp.Alias) else e, exp.Column) for e in inner.expressions):
+        return None
+    inner_items = {}
+    for e in inner.expressions:
+        if not isinstance(e, exp.Star):
+            inner_items[e.alias_or_name.lower()] = e
+    items = []
+    for item in tree.expressions:
+        column = item.this if isinstance(item, exp.Alias) else item
+        if not isinstance(column, exp.Column) or isinstance(column.this, exp.Star) or column.table.lower() not in ("", alias):
+            return None
+        name = column.name.lower()
+        if name in inner_items:
+            found = inner_items[name]
+            source_column = found.this if isinstance(found, exp.Alias) else found
+            if isinstance(found, exp.Alias) and found.alias.lower() != source_column.name.lower():
+                return None  # an ORDER BY key could read the alias or the column: not worth deciding
+        elif star and len(inner_items) == 0:
+            source_column = exp.column(column.name)
+        else:
+            return None
+        match = [k for k in keys if k.name.lower() == source_column.name.lower()]
+        if not match:
+            return None
+        items.append(exp.alias_(match[0].copy(), item.alias_or_name))
+    renamed = {i.alias.lower(): i.this.name.lower() for i in items}
+    if any(renamed.get(k.name.lower(), k.name.lower()) != k.name.lower() for k in keys):
+        return None  # an output name that is also an ORDER BY key's column would be read as that output
+    result = inner.copy()
+    result.set("expressions", items)
+    return result
 
 
 def _plain_grouping_calls(tree):
