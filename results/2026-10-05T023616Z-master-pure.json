@@ -1,0 +1,35 @@
+{
+  "job": "master",
+  "kind": "master",
+  "ref": "master",
+  "sha": "04af1a9edc9f276a016b8b993847303352c85665",
+  "leg": "pure",
+  "mode": "full",
+  "status": "crashed",
+  "exit": 3,
+  "seconds": 399.2,
+  "workers": 6,
+  "notes": [],
+  "finished": "2026-10-05T02:36:16Z",
+  "machine": {
+    "system": "Windows",
+    "release": "10",
+    "cpus": 12,
+    "python": "3.11.9"
+  },
+  "passed": 4093,
+  "failed": [
+    "tests/test_catalogs.py::test_owned_model_keys_are_none_when_every_model_is_owned"
+  ],
+  "errors": [
+    "pytest::internal"
+  ],
+  "skipped": 5,
+  "tests": 4103,
+  "known_failed": [
+    "tests/test_dataform_loading_identity.py::test_a_crlf_operations_separator_splits_the_statements",
+    "tests/test_dataform_loading_identity.py::test_config_the_compiler_rejects_is_reported",
+    "tests/test_lineage_benchmarks.py"
+  ],
+  "tail": "INTERNALERROR> E           assert False\nINTERNALERROR> \nINTERNALERROR> ..\\venvs\\pure\\Lib\\site-packages\\xdist\\dsession.py:232: AssertionError\n..INTERNALERROR> Traceback (most recent call last):\nINTERNALERROR>   File \"<runner>\\kumo-runner\\work\\venvs\\pure\\Lib\\site-packages\\_pytest\\main.py\", line 330, in wrap_session\nINTERNALERROR>     session.exitstatus = doit(config, session) or 0\nINTERNALERROR>                          ^^^^^^^^^^^^^^^^^^^^^\nINTERNALERROR>   File \"<runner>\\kumo-runner\\work\\venvs\\pure\\Lib\\site-packages\\_pytest\\main.py\", line 384, in _main\nINTERNALERROR>     config.hook.pytest_runtestloop(session=session)\nINTERNALERROR>   File \"<runner>\\kumo-runner\\work\\venvs\\pure\\Lib\\site-packages\\pluggy\\_hooks.py\", line 512, in __call__\nINTERNALERROR>     return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)\nINTERNALERROR>            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nINTERNALERROR>   File \"<runner>\\kumo-runner\\work\\venvs\\pure\\Lib\\site-packages\\pluggy\\_manager.py\", line 120, in _hookexec\nINTERNALERROR>     return self._inner_hookexec(hook_name, methods, kwargs, firstresult)\nINTERNALERROR>            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nINTERNALERROR>   File \"<runner>\\kumo-runner\\work\\venvs\\pure\\Lib\\site-packages\\pluggy\\_callers.py\", line 167, in _multicall\nINTERNALERROR>     raise exception\nINTERNALERROR>   File \"<runner>\\kumo-runner\\work\\venvs\\pure\\Lib\\site-packages\\pluggy\\_callers.py\", line 139, in _multicall\nINTERNALERROR>     teardown.throw(exception)\nINTERNALERROR>   File \"<runner>\\kumo-runner\\work\\venvs\\pure\\Lib\\site-packages\\_pytest\\logging.py\", line 816, in pytest_runtestloop\nINTERNALERROR>     return (yield)  # Run all the tests.\nINTERNALERROR>             ^^^^^\nINTERNALERROR>   File \"<runner>\\kumo-runner\\work\\venvs\\pure\\Lib\\site-packages\\pluggy\\_callers.py\", line 139, in _multicall\nINTERNALERROR>     teardown.throw(exception)\nINTERNALERROR>   File \"<runner>\\kumo-runner\\work\\venvs\\pure\\Lib\\site-packages\\_pytest\\terminal.py\", line 708, in pytest_runtestloop\nINTERNALERROR>     result = yield\nINTERNALERROR>              ^^^^^\nINTERNALERROR>   File \"<runner>\\kumo-runner\\work\\venvs\\pure\\Lib\\site-packages\\pluggy\\_callers.py\", line 121, in _multicall\nINTERNALERROR>     res = hook_impl.function(*args)\nINTERNALERROR>           ^^^^^^^^^^^^^^^^^^^^^^^^^\nINTERNALERROR>   File \"<runner>\\kumo-runner\\work\\venvs\\pure\\Lib\\site-packages\\xdist\\dsession.py\", line 138, in pytest_runtestloop\nINTERNALERROR>     self.loop_once()\nINTERNALERROR>   File \"<runner>\\kumo-runner\\work\\venvs\\pure\\Lib\\site-packages\\xdist\\dsession.py\", line 163, in loop_once\nINTERNALERROR>     call(**kwargs)\nINTERNALERROR>   File \"<runner>\\kumo-runner\\work\\venvs\\pure\\Lib\\site-packages\\xdist\\dsession.py\", line 217, in worker_workerfinished\nINTERNALERROR>     assert not crashitem, (crashitem, node)\nINTERNALERROR> AssertionError: ('tests/test_long_paths.py::test_extended_path_is_unchanged_off_windows', <WorkerController gw5>)\nINTERNALERROR> assert not 'tests/test_long_paths.py::test_extended_path_is_unchanged_off_windows'\n\n3 failed, 4092 passed, 4 skipped, 1 xfailed, 1 error in 397.24s (0:06:37)"
+}
