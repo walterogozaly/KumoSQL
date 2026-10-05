@@ -10,6 +10,21 @@ python -m kumosql rewrite-sql query.sql -r remove_trivial_predicates
 
 KumoSQL checks each changed result against its input. Read the evidence label before using the output.
 
+## Window totals and "previous row" as joins
+
+Two ways of asking for the same numbers often look nothing alike. "Each row's total for its customer" can be a window (`SUM(amount) OVER (PARTITION BY customer)`) or a join to a grouped query. "The previous row's value" can be `LAG(value) OVER (ORDER BY id)` or a join of the table to itself on row numbers (row n against row n minus 1). KumoSQL's prover now rewrites the window spelling into the join spelling before comparing, as a second attempt after the ordinary one, so it can say two such queries match. This does not change your SQL (see the [full reference](../docs/rewrite-rules.md#windows-as-joins-a-later-attempt-of-the-prover)).
+
+Example: if `customer` is never NULL, these match:
+
+```sql
+SELECT id, SUM(amount) OVER (PARTITION BY customer) AS total FROM orders
+
+SELECT o.id, g.total FROM orders o
+JOIN (SELECT customer, SUM(amount) AS total FROM orders GROUP BY customer) g ON o.customer = g.customer
+```
+
+Limits, and why they matter. If `customer` can be NULL, the join with `=` silently drops those rows (NULL never equals NULL), so the pair stays "unknown", and the join must use `IS NOT DISTINCT FROM` to match. The "previous row" form is only rewritten when KumoSQL knows the order has no ties (you declared a never-NULL key and the window orders by it): with ties, which row is "previous" can change from run to run, and two separate numberings might pick different ones. It also needs the join to be a `LEFT JOIN` (an inner join loses each group's first row) and a default value to be written as a `CASE`, not `COALESCE`, because a previous row that exists but holds NULL must stay NULL. Running totals (a window with `ORDER BY`) are never turned into group totals. The checks ran on small DuckDB databases with ties and NULLs, which shows no counterexample in them and is not a proof for every query. `a.n = b.n + 1` and `b.n = a.n - 1` are read as the same thing, but a neighbour condition that is not a plain "row number plus or minus a whole number" is compared as written, and "previous row" written with a correlated subquery (the largest id below this one) is not covered.
+
 ## Choose a rule
 
 | Rule | Plain meaning |

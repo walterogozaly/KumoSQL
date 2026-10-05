@@ -49,6 +49,7 @@ import math
 import os
 from pathlib import Path
 import queue
+import re
 import random
 import subprocess
 import sys
@@ -858,14 +859,17 @@ def trace_case(case: dict, only: set | None = None) -> tuple[list[Fire], list[st
     fires: list[Fire] = []
     crashes = []
     # keyed_distinct 1 and 2 only add rules that drop a DISTINCT
-    levels = (0, 1, 2) if case.get("constraints") and "DISTINCT" in case["sql"].upper() else (0,)
+    levels = [(level, False) for level in ((0, 1, 2) if case.get("constraints") and "DISTINCT" in case["sql"].upper() else (0,))]
+    if re.search(r"\bover\b", case["sql"], re.IGNORECASE):
+        levels.append((0, True))  # the later attempt that spells windows as joins (``window_joins``)
     sql = case["sql"]
     dialect = case.get("dialect", "bigquery")
     if dialect == "bigquery":
         sql = ae.canonical_literals(sql)
-    for level in levels:
+    for level, window_joins in levels:
         kwargs = normalize_kwargs(case, level)
         kwargs["not_null"] = _not_null_as_prover(case)
+        kwargs["window_joins"] = window_joins
         with Tracer(only, mode="probe") as probe:
             try:
                 ae.normalize(sql, **kwargs)

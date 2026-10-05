@@ -52,6 +52,9 @@ from .grouping_expansion import collapse_grouping_expansion
 from .grouping_sets import expand_grouping_sets, grouping_sets_to_union
 from .named_windows import inline_named_windows
 from .having_rules import key_having_to_where
+from .isolated_window_columns import prune_window_sources
+from .lag_lead_joins import lag_lead_joins
+from .window_aggregate_joins import windowed_aggregate_joins
 from .window_canonical import canonical_windows
 from .unread_windows import drop_unread_windows
 from .window_rules import window_rules
@@ -4815,6 +4818,7 @@ def normalize(
     group_by_constants: bool = False,
     keyed_distinct: int = 0,
     foreign_keys: dict[str, list[tuple]] | None = None,
+    window_joins: bool = False,
     _assumptions: set[str] | None = None,
 ) -> str:
     """Rewrite ``sql`` with the bag-semantics identities above (``dialect`` in and out).
@@ -4823,7 +4827,8 @@ def normalize(
     column ordinal (see ``_drop_constant_groupings``). ``keyed_distinct`` drops a ``DISTINCT`` that outputs a
     NOT NULL key (``keyed_rules.drop_keyed_distinct``), and at 2 also strips duplicate removal from derived tables
     under a duplicate-blind select (``dedup_join_rules.strip_distinct_sources``); these are later attempts, since applying them on one side
-    can hide a match the first attempt finds.
+    can hide a match the first attempt finds. ``window_joins`` is another later attempt: it spells windows as the joins
+    they equal (``window_aggregate_joins``, ``lag_lead_joins``), which can hide a match between two windows that read alike.
     """
 
     tree = expand_alias_columns(check_modeled(canonical_negation(strip_positions(sqlglot.parse_one(sql, read=dialect)))), schema)
@@ -4871,7 +4876,11 @@ def normalize(
     tree = _name_derived_columns(_lateral_joins(tree))
     if schema:
         tree = _expand_stars(tree, schema)
-    tree = _isolate_windows(canonical_windows(drop_unread_windows(tree), types))
+    tree = canonical_windows(drop_unread_windows(tree), types)
+    if window_joins:
+        lowered = {t.lower(): {c.lower(): v for c, v in cols.items()} for t, cols in (types or {}).items()}
+        tree = lag_lead_joins(windowed_aggregate_joins(tree, not_null, lowered), keys, not_null, lowered)
+    tree = _isolate_windows(tree)
     if schema:
         # name each bare column's source before any rewrite reads a derived table as its base table, whose
         # other columns would otherwise capture (or make ambiguous) a bare column of another source
@@ -4940,6 +4949,8 @@ def normalize(
         tree = rewrite_counted_membership(tree, schema, not_null, _assumptions)
         if tree.sql(dialect="bigquery") == before:
             break
+    if window_joins:
+        tree = prune_window_sources(tree)
     for subquery in list(tree.find_all(exp.Subquery)):
         if subquery.find_ancestor(exp.Select) is not None:
             replacement = _canonicalize_union_source(subquery)
@@ -5057,6 +5068,11 @@ def _prove_algebraic_levels(left_sql: str, right_sql: str, search: bool, **kwarg
             retry = _prove_algebraic(semi[0] or left_sql, semi[1] or right_sql, False, **kwargs)
             if retry.proven:
                 return retry
+    if result.status is SmtStatus.NOT_PROVEN and _has_window(left_sql, right_sql):
+        # a later attempt, so that spelling windows as joins can never hide a match the plain attempt finds
+        retry = _prove_algebraic(left_sql, right_sql, 0, True, **kwargs)
+        if retry.proven:
+            return retry
     if search and result.status is SmtStatus.NOT_PROVEN:
         from . import executed_refutation
 
@@ -5077,7 +5093,14 @@ def _prove_algebraic_levels(left_sql: str, right_sql: str, search: bool, **kwarg
     return result
 
 
-def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, **kwargs) -> SmtEquivalenceResult:
+_WINDOW_CALL = re.compile(r"\bover\b", re.IGNORECASE)
+
+
+def _has_window(*queries: str) -> bool:
+    return any(_WINDOW_CALL.search(q) for q in queries)
+
+
+def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, window_joins: bool = False, **kwargs) -> SmtEquivalenceResult:
     dialect = kwargs.get("dialect", "bigquery")
     types = kwargs.get("types")
     constants = kwargs.get("group_by_constants", False)
@@ -5087,8 +5110,8 @@ def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, **kwarg
         not_null = {t: c.not_null for t, c in (kwargs.get("constraints") or {}).items()}
         keys = {t.lower(): [tuple(k) for k in c.keys] for t, c in (kwargs.get("constraints") or {}).items()}
         fks = {t.lower(): list(c.foreign_keys) for t, c in (kwargs.get("constraints") or {}).items() if c.foreign_keys}
-        left = normalize(left_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants, keyed_distinct=keyed_distinct, foreign_keys=fks, _assumptions=normalization_assumptions)
-        right = normalize(right_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants, keyed_distinct=keyed_distinct, foreign_keys=fks, _assumptions=normalization_assumptions)
+        left = normalize(left_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants, keyed_distinct=keyed_distinct, foreign_keys=fks, window_joins=window_joins, _assumptions=normalization_assumptions)
+        right = normalize(right_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants, keyed_distinct=keyed_distinct, foreign_keys=fks, window_joins=window_joins, _assumptions=normalization_assumptions)
         if keyed_distinct and (left, right) == tuple(
             normalize(sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants, foreign_keys=fks, _assumptions=normalization_assumptions)
             for sql in (left_sql, right_sql)

@@ -51,6 +51,8 @@ SQLSolver, QED, mined Calcite, R-Bot, TPC-H and TPC-C evals; held-out pairs are 
 (`tools/rule_fuzz_targets/<module>.py`, template generators that expose `cases(seed, count)`; `count` is per module). The modules are `aggregates` (aggregate, eager-aggregation, regrouping and keyed rules), `distinct_sets` (DISTINCT, dedup joins, set operations and set splits), `outer_joins`, `grouping_windows` (grouping sets, windows, QUALIFY, LIMIT rules, empty relations) and `scalars` (casts, integer division, dates, LIKE, quantified comparisons, scalar subqueries, UNNEST, constant folding). A template is SQL with `{a|b|c}` choice groups (`tools/rule_fuzz_targets/_base.py`). A query
 that `normalize` cannot print faithfully (`LossySql`) still has its earlier firings checked.
 
+A query that holds a window is traced a second time with `window_joins=True`, the later prover attempt that spells windowed aggregates and `LAG`/`LEAD` as joins (`window_aggregate_joins`, `lag_lead_joins`, `isolated_window_columns`; see [rewrite rules](rewrite-rules.md#windows-as-joins-a-later-attempt-of-the-prover)); the `window_joins` target generates the shapes they fire on, with near misses (ties, nullable keys, offsets, joins) that must decline.
+
 `tests/fixtures/rule_fuzz/known_rule_bugs.json` lists open bugs the run should not fail on; a thread that fixes one
 deletes its entry. `tests/test_rule_fuzz.py` checks that the harness sees an unsound rewrite, ignores a `LIMIT` cut
 among ties, and finds nothing on a small seeded generated run.
