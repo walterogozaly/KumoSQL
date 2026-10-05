@@ -41,7 +41,17 @@ What the proposer reads beyond select-project-join and rollups:
 
 The `COALESCE` fix matters for correctness: the prover currently proves `COUNT(*)` equal to a `SUM` of grouped counts even over an empty table, so before it five CUBE/ROLLUP rewrites were accepted and failed the random-database check (reported to the prover's soundness owners).
 
-Not read yet: unique/foreign-key joins, outer-join models, `INTERSECT ALL` and branchwise set-operation compensation, union compensation from base tables, correlated subqueries, injective group keys.
+Not read yet: outer-join models, `INTERSECT ALL` and branchwise set-operation compensation, union compensation from base tables, correlated subqueries, injective group keys.
+
+### Key-aware matching
+
+`src/kumosql/key_aware.py` lets declared constraints (`TableConstraints.keys`, `foreign_keys`, `not_null`) simplify the match. It only proposes; the prover must still prove the replacement against the original query and model, and the replacement is re-run on random databases that respect the same constraints.
+
+* **Lossless parent joins.** `child JOIN parent ON child.fk = parent.key` keeps every child row exactly once when `child(fk)` references `parent(key)` and the joined parent columns contain a unique key. The proposer also tries the query and the model without such a parent when the block says nothing else about it (no filter on it, no other join condition) and, for the query, reads none of its columns. A parent the model keeps may still be read by the model's own outputs; those outputs are simply not offered to the query. A table that both sides read is matched to its partner, not dropped. A nullable foreign-key column costs a `col IS NOT NULL` filter, because the equality join already loses the NULL rows: `fk_nullable_join.py` makes the prover read the join the same way (it writes that filter down and lets `fk_rules.drop_fk_join` drop the join).
+* **LEFT JOIN onto a unique key.** `a LEFT JOIN p ON a.x = p.key` keeps each row of `a` once whether or not `p` matches, so when nothing else reads `p` the join is ignored (`drop_unread_left_joins`, applied to both the query and the model before the blocks are read; the prover already has the same rule).
+* **Aggregate models joined to extra query tables.** A query that joins a grouped model to a table the model lacks is read as the model joined to that table on the model's grouping columns, then re-aggregated. Columns of the extra table can be grouped by and compared; `MIN` and `MAX` over them are unchanged and `SUM(x)` over them becomes `SUM(x * n)` with `n` the model's `COUNT(*)`, since each model row stands for `n` rows that all meet the same partners. A model without that count is not rewritten. `COUNT(x)` and `AVG(x)` over an extra column are not proposed: the prover does not yet prove their weighted forms.
+
+Traps stay unrewritten: a filtered parent, a join onto non-key columns, a join onto a table the foreign key does not cover, a nullable foreign key without the `IS NOT NULL` filter, and a LEFT JOIN onto a column set that is not a key. Tests: `tests/test_key_aware_reuse.py`. Eval: the `keys` group of the outer-union set (development 4/4 reusable rewritten, from 1/4; the traps stay unrewritten).
 
 ## Query containment
 

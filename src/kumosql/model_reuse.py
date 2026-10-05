@@ -34,6 +34,7 @@ from sqlglot.optimizer.merge_subqueries import merge_subqueries
 from sqlglot.optimizer.qualify import qualify
 
 from .ast_utils import captured_names, grouping_elements, inside as _inside
+from .key_aware import drop_unread_left_joins, lossless_variants, weighted_aggregate
 from .smt_equivalence import SmtStatus, TableConstraints
 
 
@@ -474,11 +475,16 @@ class _Candidate:
     strategy: str
 
 
-def _candidates(query: _Block, model: _Block, names: list[str], model_name: str):
+def _candidates(query: _Block, model: _Block, names: list[str], model_name: str, constraints=None):
     """Yield replacement queries over ``model_name``; none is trusted until proven."""
 
     if model.is_aggregate and not query.is_aggregate:
         return
+    # joins that declared keys make lossless (key_aware) can be left out of either side; a replacement
+    # without them reads less, so it is tried first
+    for smaller_query, smaller_model in lossless_variants(query, model, constraints):
+        for mapping in _mappings(smaller_model.tables, smaller_query.tables):
+            yield from _candidates_for(smaller_query, smaller_model, names, model_name, mapping)
     for mapping in _mappings(model.tables, query.tables):  # query alias -> model alias
         yield from _candidates_for(query, model, names, model_name, mapping)
 
@@ -703,14 +709,17 @@ def _agg_rewrite(node: exp.Expression, rewriter: _Rewriter, model_aggs: dict[str
 
     def visit(n: exp.Expression):
         if isinstance(n, exp.AggFunc):
-            return aggregate(n)
+            found = aggregate(n)
+            if found is None and rewriter.extras and not same_grain:
+                found = weighted_aggregate(n, rewriter, lookup(exp.Count(this=exp.Star())))
+            return found
         if isinstance(n, exp.Alias):
             return visit(n.this)
         key = _key(n)
         if key in rewriter.available:
             return _column(alias, rewriter.available[key])
         if isinstance(n, exp.Column):
-            return None
+            return n.copy() if n.table in rewriter.extras else None  # a column of an extra joined table
         if isinstance(n, (exp.Literal, exp.Null, exp.Boolean)):
             return n.copy()
         copy = n.copy()
@@ -936,7 +945,7 @@ def rewrite_over_model(
     try:
         model_tree = _prepare(model_sql, schema, dialect)
         try:
-            model = _block(model_tree, nn)
+            model = _block(drop_unread_left_joins(model_tree, constraints), nn)
             names = _output_names(model)
         except _Unsupported as error:
             # a model the proposer does not read can still answer the query as a whole or as a projection
@@ -965,14 +974,14 @@ def rewrite_over_model(
     def whole() -> list[_Candidate]:
         out = []
         try:
-            query = _block(_prepare(query_sql, schema, dialect), nn)
+            query = _block(drop_unread_left_joins(_prepare(query_sql, schema, dialect), constraints), nn)
         except _Unsupported as error:
             whole.reason = str(error)  # type: ignore[attr-defined]
             return out
         except sqlglot.errors.SqlglotError as error:
             whole.reason = f"parse error: {error}"  # type: ignore[attr-defined]
             return out
-        out.extend(_candidates(query, model, names, model_name))
+        out.extend(_candidates(query, model, names, model_name, constraints))
         return out
 
     whole.reason = ""  # type: ignore[attr-defined]

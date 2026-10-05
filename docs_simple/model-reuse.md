@@ -29,4 +29,10 @@ Averages need the sum and count: averaging daily averages gives the wrong weight
 
 This rebuilding is called aggregate decomposition. The report checks whether the existing summary kept enough information, then proves a supported replacement or declines it.
 
+### Joins that change nothing
+
+Suppose a model joins orders to customers, and your query reads only orders. If every order must have a customer (a declared foreign key onto the customer's unique id, and the order's customer column cannot be empty), that join neither drops nor repeats an order, so the model's rows are your orders. KumoSQL uses this: it leaves such joins out when it compares the query with the model, then lets the prover check the answer. The same holds for a `LEFT JOIN` onto a unique key that nothing reads. If the customer column can be empty, the join quietly drops those orders, so the query must also say `customer IS NOT NULL`. A filter on the customer, a join on a column that is not unique, or no declared constraint at all means the join stays and the model cannot be used.
+
+A grouped model can also answer a query that joins one more table, for example sales by product joined to product names: the model's rows are joined to the names and summed again. A total over a column of the extra table (say a budget) is multiplied by the model's row count first.
+
 These checks depend on the schema, declared constraints, and the features the prover supports. The full guide contains API signatures and regression examples. [Pipeline analysis](pipeline-analysis.md) explains how to find candidate overlaps and rollups across a project.
