@@ -90,7 +90,8 @@ def test_a_declared_fact_that_removes_the_difference_removes_the_predicate():
 @pytest.mark.parametrize(
     "pair",
     [
-        ("SELECT COUNT(*) AS n FROM t WHERE x > 5", "SELECT COUNT(*) AS n FROM t WHERE x >= 5"),  # grouped: not row-local
+        ("SELECT a FROM t", "SELECT a FROM t GROUP BY a"),  # they differ on duplicates, which a row does not show
+        ("SELECT AVG(x) AS m FROM t", "SELECT AVG(x + 1) AS m FROM t"),
         ("SELECT DISTINCT id FROM t WHERE x > 5", "SELECT DISTINCT id FROM t WHERE x >= 5"),
         ("SELECT p.id FROM t p JOIN t q ON p.id = q.id WHERE p.x > 5", "SELECT p.id FROM t p JOIN t q ON p.id = q.id WHERE p.x >= 5"),  # a table twice
         ("SELECT t.id FROM t LEFT JOIN u ON t.id = u.id", "SELECT t.id FROM t JOIN u ON t.id = u.id"),
@@ -107,14 +108,43 @@ def test_what_is_not_row_local_is_unknown(pair):
     assert explain_difference(*pair) is None
 
 
+@pytest.mark.parametrize(
+    "pair, predicate",
+    [
+        (("SELECT COUNT(*) AS n FROM t WHERE x > 5", "SELECT COUNT(*) AS n FROM t WHERE x >= 5"), "x = 5"),
+        (("SELECT COUNT(*) AS n FROM t", "SELECT COUNT(a) AS n FROM t"), "a IS NULL"),
+        (("SELECT a, SUM(x) AS s FROM t WHERE x > 5 GROUP BY a", "SELECT a, SUM(x) AS s FROM t WHERE x >= 5 GROUP BY a"), "x = 5"),
+        (("SELECT a, MAX(x) AS m FROM t GROUP BY a", "SELECT a, MAX(COALESCE(x, 0)) AS m FROM t GROUP BY a"), "x IS NULL"),
+    ],
+)
+def test_a_grouped_pair_is_read_on_one_row_and_is_not_exact(pair, predicate):
+    found = explain_difference(*pair)
+    assert found is not None and found.sql == predicate
+    assert not found.exact  # the groups of a many-row table can interact: only the proof speaks for them
+
+
 def test_a_star_with_a_schema_is_read():
     found = explain_difference("SELECT * FROM t WHERE x > 5", "SELECT * FROM t WHERE x >= 5", schema=SCHEMA, types=TYPES)
     assert found is not None and found.sql == "x = 5"
 
 
-def test_the_difference_is_exact_on_the_rows_either_query_returns():
+def test_the_predicate_names_every_condition_the_difference_needs():
     found = explain_difference("SELECT id FROM t WHERE x > 5 AND a = 1", "SELECT id FROM t WHERE x >= 5 AND a = 1")
-    assert found is not None and found.sql == "x = 5"
+    assert found is not None and found.sql == "a = 1 AND x = 5" and found.exact
+    found = explain_difference("SELECT id FROM t WHERE status = 'a'", "SELECT id FROM t WHERE status = 'a' OR status = 'b'")
+    assert found is not None and found.sql == "status = 'b'"
+    found = explain_difference("SELECT id FROM t WHERE x = 1", "SELECT id FROM t WHERE x = 2")
+    assert found is not None and found.sql == "x = 1 OR x = 2" and found.exact
+
+
+def test_a_predicate_that_covers_the_difference_is_labelled_so():
+    # across a join the rows with x = 5 differ only when they have a partner: x = 5 covers the difference, it is not the difference
+    found = explain_difference(*JOINED)
+    assert found is not None and found.sql == "x = 5" and not found.exact
+    # the rows the second query adds are the ones the first query's test rejects
+    found = explain_difference("SELECT id FROM t WHERE x = 5 AND a < 1", "SELECT id FROM t WHERE x < 10")
+    assert found is not None and not found.exact
+    assert found.sql == "(x = 5) IS NOT TRUE OR (a < 1) IS NOT TRUE"
 
 
 def test_a_predicate_that_every_row_satisfies_explains_nothing():
@@ -126,6 +156,11 @@ def test_a_table_spelled_with_a_dataset_keeps_its_spelling():
     assert found.tables == ("proj.ds.t",)
     (condition,) = conditions_of(found)
     assert condition.check_sql == "SELECT COUNT(*) AS violations FROM `proj`.`ds`.`t` WHERE x = 5"
+
+
+def test_a_table_read_through_its_own_name_keeps_that_name():
+    found = explain_difference("SELECT t.id FROM proj.ds.t WHERE t.x > 5", "SELECT t.id FROM proj.ds.t WHERE t.x >= 5")
+    assert found is not None and found.sql == "x = 5"
 
 
 def test_another_dialect_is_read():
@@ -199,7 +234,7 @@ def test_the_proof_asks_both_provers():
         assert explain_difference(*BOUNDARY) is not None
     finally:
         algebraic.prove_equivalent_algebraic, smt.prove_equivalent_smt = originals
-    assert calls.count("smt") >= 1 and calls.count("algebraic") >= 2  # the pair first, then the rewritten pair
+    assert calls.count("smt") >= 1 and calls.count("algebraic") >= 1  # the rewritten pair goes to both
 
 
 # ---- the no_rows condition ------------------------------------------------------------------------

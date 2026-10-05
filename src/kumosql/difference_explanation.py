@@ -7,17 +7,22 @@ NOT NULL assertion, without reading a counterexample database. In the verdict mo
 verdict (:mod:`kumosql.conditional_equivalence`) under one more condition kind, ``no_rows``; :func:`conditions_of`
 turns an explanation into those conditions.
 
-How a predicate is found (row-local select-project-join pairs only; everything else is unknown):
+How a predicate is found (select-project-join pairs, and grouped pairs on one row; everything else is unknown):
 
 1. Both queries are compiled by the SMT prover's compiler into one block each, over the same tables, each table
-   read once, with no subquery, DISTINCT, aggregate or set operation. On a database with one row per table the
-   outputs differ exactly when ``D = XOR(cond_a, cond_b) OR (cond_a AND cond_b AND outputs differ)`` holds.
+   read once, with no subquery, DISTINCT or set operation. On a database with one row per table the outputs differ
+   exactly when ``D = XOR(cond_a, cond_b) OR (cond_a AND cond_b AND outputs differ)`` holds. In a grouped block
+   the one row is its own group (``COUNT`` is 1 or 0, ``SUM``, ``MIN`` and ``MAX`` are the value).
 2. Candidate atoms come from the queries themselves (every comparison or predicate they write, ``col IS NULL`` and
    ``col IS NOT NULL`` for every column they read, and the equality behind each inequality such as ``x > 5``).
-   Each atom mentions one table. A search over conjunctions and disjunctions of at most three atoms finds one that
-   Z3 shows equal to D (``exact``), else the tightest one that D implies (not ``exact``: it covers the difference
-   and more). A predicate across tables is a disjunction of single-table atoms, because the proof below filters
-   each table on its own.
+   Each atom mentions one table. A search over conjunctions and disjunctions of at most three atoms, shortest
+   first, finds a P that Z3 shows equal to D (``exact``); failing that, one with ``D = P AND S``, where S holds
+   when at least one query returns the row (D implies S): the queries differ exactly on the rows they return that
+   satisfy P, which is not ``exact``. A predicate across tables is a disjunction of single-table atoms, because
+   the proof below filters each table on its own, so a difference that only a comparison across tables
+   (``a.x > b.y``) describes has no predicate. A P that Z3 shows only implied by D is never returned, and
+   neither is one that every row satisfies. A pair of grouped blocks is never ``exact``: the groups of a table of
+   many rows can interact, so only the proof speaks for them.
 3. Before a predicate is returned it must pass both checks:
 
    * witness: a one-row-per-table database that satisfies P and on which the outputs differ is replayed on
@@ -26,11 +31,13 @@ How a predicate is found (row-local select-project-join pairs only; everything e
      (:func:`kumosql.counterexample.guard_arbitrary_picks`);
    * proof: every table t is replaced by ``(SELECT cols FROM t WHERE (P_t) IS NOT TRUE)`` under its own alias in
      both queries, and the rewritten pair is proved equivalent by both
-     :func:`kumosql.algebraic_equivalence.prove_equivalent_algebraic` and
-     :func:`kumosql.smt_equivalence.prove_equivalent_smt`.
+     :func:`kumosql.smt_equivalence.prove_equivalent_smt` and
+     :func:`kumosql.algebraic_equivalence.prove_equivalent_algebraic`.
 
-Unknown beats wrong: any failure, unsupported construct or exhausted time budget returns ``None``.
-The function is opt-in; nothing else calls it.
+Unknown beats wrong: any failure, unsupported construct or exhausted time budget returns ``None``
+(:func:`explain_or_why` also says why). The budget (``explain_seconds``, 30 by default) is checked between solver
+calls and caps the time limit of each prover call, so a very large query pair can overrun it. The function is
+opt-in; nothing else calls it.
 """
 
 from __future__ import annotations
@@ -61,6 +68,7 @@ MAX_VERIFICATIONS = 4  # candidates taken through both checks
 
 _OPTIONS = ("schema", "types", "constraints", "exact_arithmetic", "timeout_ms", "dialect", "compare_names")
 _PREDICATES = (exp.EQ, exp.NEQ, exp.LT, exp.LTE, exp.GT, exp.GTE, exp.Is, exp.In, exp.Between, exp.Like, exp.ILike, exp.NullSafeEQ, exp.NullSafeNEQ)
+_ROW_AGGREGATES = (exp.Min, exp.Max, exp.Sum, exp.Avg)
 _INEQUALITIES = (exp.NEQ, exp.LT, exp.LTE, exp.GT, exp.GTE)
 
 
@@ -114,6 +122,22 @@ def _sql(node: exp.Expression, dialect: str) -> str:
     return node.sql(dialect=dialect)
 
 
+def _row_level(node: exp.Expression) -> exp.Expression | None:
+    """``node`` as a test on one row: ``MAX(x) > 5`` reads ``x > 5`` (MIN, MAX, SUM and AVG of one row are the row's value),
+    ``None`` for a subquery, a window or another aggregate."""
+
+    if node.find(exp.Subquery, exp.Select, exp.Window):
+        return None
+    if not node.find(exp.AggFunc):
+        return node
+    node = node.copy()
+    for call in list(node.find_all(exp.AggFunc)):
+        if not isinstance(call, _ROW_AGGREGATES) or call.this is None or isinstance(call.this, exp.Distinct) or call.args.get("expressions"):
+            return None
+        call.replace(call.this.copy())
+    return node
+
+
 def _unqualified(node: exp.Expression) -> exp.Expression:
     node = node.copy()
     for column in node.find_all(exp.Column):
@@ -149,10 +173,11 @@ def _written_atoms(trees: list[exp.Select], schema, dialect: str) -> list[_Atom]
                 return None
             return reader.owner(next(node.find_all(exp.Column)))
 
-        for node in tree.find_all(*_PREDICATES):
-            if node.find(exp.Subquery, exp.Select, exp.Window, exp.AggFunc):
+        for found_node in tree.find_all(*_PREDICATES):
+            node = _row_level(found_node)
+            if node is None:
                 continue
-            occ = owner_of(node)
+            occ = owner_of(found_node)
             if occ is None:
                 continue
             columns = frozenset(c.name.lower() for c in node.find_all(exp.Column))
@@ -223,23 +248,48 @@ class _Problem:
         self.samples: list[tuple[list[bool], bool, bool]] = []
         self.rounds = 0
 
-    def check(self, *formulas):
-        """``(result, model or None)`` of the formulas under the declared facts."""
-
-        if time.monotonic() > self.deadline or self.rounds >= MAX_ROUNDS:
-            raise _Out()
-        self.rounds += 1
-        smt.z3  # noqa: B018 - z3 is present (checked by the caller)
+    def _solver(self, formulas):
         solver = bounded_solver(self.prover.timeout_ms)
         solver.add(*self.prover._typing(self.occs))
         solver.add(*self.prover._constraint_facts(self.occs))
         solver.add(*self.prover._group_member_facts(self.occs))
         solver.add(*self.facts)
         solver.add(*formulas)
+        return solver
+
+    def _tick(self) -> None:
+        if time.monotonic() > self.deadline or self.rounds >= MAX_ROUNDS:
+            raise _Out()
+        self.rounds += 1
+
+    def check(self, *formulas):
+        """``(result, model or None)`` of the formulas under the declared facts."""
+
+        self._tick()
+        solver = self._solver(formulas)
         result = solver.check()
         if result != smt.z3.sat:
             return result, None
         return result, self.prover._counterexample(solver.assertions(), solver.model(), self.values)
+
+    def readable_model(self, *formulas):
+        """A model of the formulas in which each column holds a (non-NULL) whole number wherever nothing forbids it, or ``None``."""
+
+        z3 = smt.z3
+        V = smt._value_sort()
+        self._tick()
+        solver = self._solver(formulas)
+        if solver.check() != z3.sat:
+            return None
+        for v in self.values:
+            whole = z3.And(V.is_Num(v.val), z3.IsInt(V.num(v.val)))
+            for wish in (z3.And(z3.Not(v.null), whole), z3.Implies(z3.Not(v.null), whole)):
+                solver.push()
+                solver.add(wish)
+                if solver.check() == z3.sat:
+                    break
+                solver.pop()
+        return solver.model() if solver.check() == z3.sat else None
 
     def term(self, candidate: _Candidate):
         terms = [self.atoms[i].term for i in candidate.atoms]
@@ -255,22 +305,22 @@ class _Problem:
         values = [row[i] for i in candidate.atoms]
         return all(values) if candidate.op == "and" else any(values)
 
-    def search(self, candidates: list[_Candidate], rejected: set) -> _Candidate | None:
-        """The first candidate P (fewest atoms first) with ``D = P AND S`` shown by Z3, or ``None`` when none is left.
-
-        D is where the outputs differ and S where some query returns a row, so D implies S. A P that also holds
-        on every row (nothing to explain) is passed over.
+    def search(self, candidates: list[_Candidate], rejected: set, strict: bool) -> _Candidate | None:
+        """The first candidate P (fewest atoms first) that Z3 shows equal to D (``strict``), or with ``D = P AND S`` (not
+        ``strict``), else ``None``. S holds where some query returns the row, so D implies S: a P that is not strict
+        covers the difference and more. A P that holds on every row (nothing to explain) is passed over.
         """
 
         z3 = smt.z3
         alive = [c for c in candidates if c not in rejected]
         while True:
-            alive = [c for c in alive if all((self.value(c, row) and s) == d for row, d, s in self.samples)]
+            alive = [c for c in alive if all(((self.value(c, row) and (strict or s)) == d) for row, d, s in self.samples)]
             if not alive:
                 return None
             candidate = alive[0]
             p = self.term(candidate)
-            for formula in (z3.And(self.region, z3.Not(p)), z3.And(p, self.seen, z3.Not(self.region))):
+            gap = z3.And(p, z3.Not(self.region)) if strict else z3.And(p, self.seen, z3.Not(self.region))
+            for formula in (z3.And(self.region, z3.Not(p)), gap):
                 result, model = self.check(formula)
                 if result == z3.sat:
                     self.add_sample(model)
@@ -316,8 +366,8 @@ def _flat(sql: str, dialect: str) -> str:
     for table in list(tree.find_all(exp.Table)):
         name = _flat_name(".".join(p.name for p in table.parts))
         flat = exp.Table(this=exp.to_identifier(name, quoted=True))
-        if table.args.get("alias") is not None:
-            flat.set("alias", table.args["alias"].copy())
+        # the name the query reads the table by (its alias, else the table's own last part) stays valid
+        flat.set("alias", exp.TableAlias(this=exp.to_identifier(table.alias_or_name)))
         table.replace(flat)
     return tree.sql(dialect=dialect)
 
@@ -407,15 +457,24 @@ def _rewrite(sql: str, dialect: str, filters: Mapping[str, tuple[str, list[str]]
     return tree.sql(dialect=dialect)
 
 
-def _prove_rewritten(left_sql: str, right_sql: str, filters, options: dict) -> bool:
+def _within(options: dict, deadline: float) -> dict:
+    """``options`` with the solver time limit cut to what is left of the budget (the limit applies to each solver check)."""
+
+    left = int((deadline - time.monotonic()) * 1000)
+    if left <= 0:
+        raise _Out()
+    return {**options, "timeout_ms": max(50, min(options.get("timeout_ms", 5000), left // 2))}
+
+
+def _prove_rewritten(left_sql: str, right_sql: str, filters, options: dict, deadline: float) -> bool:
     from .algebraic_equivalence import prove_equivalent_algebraic
 
     dialect = options.get("dialect", "bigquery")
     pair = [_rewrite(sql, dialect, filters) for sql in (left_sql, right_sql)]
     if None in pair:
         return False
-    for prove in (prove_equivalent_algebraic, smt.prove_equivalent_smt):
-        if prove(*pair, **options).status is not smt.SmtStatus.PROVEN_EQUIVALENT:
+    for prove in (smt.prove_equivalent_smt, prove_equivalent_algebraic):  # the quicker one first
+        if prove(*pair, **_within(options, deadline)).status is not smt.SmtStatus.PROVEN_EQUIVALENT:
             return False
     return True
 
@@ -449,9 +508,8 @@ def _filters(candidate: _Candidate, atoms: list[_Atom], dialect: str, columns: M
 def _witness(problem: _Problem, candidate: _Candidate, occs: list, schema, constraints) -> dict | None:
     """One row per table that satisfies the predicate and on which the queries differ, or ``None``."""
 
-    z3 = smt.z3
-    result, model = problem.check(problem.region, problem.term(candidate))
-    if result != z3.sat:
+    model = problem.readable_model(problem.region, problem.term(candidate))
+    if model is None:
         return None
     tables: dict[str, list[dict]] = {}
     for occ in occs:
@@ -467,78 +525,145 @@ def _witness(problem: _Problem, candidate: _Candidate, occs: list, schema, const
 
 
 def _verify(
-    problem: _Problem, candidate: _Candidate, atoms: list[_Atom], occs: list, left: str, right: str, options: dict, columns, qualify: bool
-) -> DifferenceExplanation | None:
+    problem: _Problem, candidate: _Candidate, atoms: list[_Atom], occs: list, left: str, right: str, options: dict, columns, qualify: bool, exact: bool
+) -> tuple[DifferenceExplanation | None, str]:
+    """``(explanation, "")`` when the candidate passes both checks, else ``(None, the check it failed)``."""
+
     dialect = options.get("dialect", "bigquery")
     witness = _witness(problem, candidate, occs, options.get("schema"), problem.prover.constraints)
     if witness is None:
-        return None
+        return None, "witness"
     sql, shown = _join(candidate, atoms, dialect, qualify)
     tables = _tables_of(candidate, atoms)
-    explanation = DifferenceExplanation(sql, shown, tables, True, {k: [dict(r) for r in v] for k, v in witness.items()})
+    explanation = DifferenceExplanation(sql, shown, tables, exact, {k: [dict(r) for r in v] for k, v in witness.items()})
     spelled = {t.lower(): t for t in witness}
     held = conditions_of(explanation, dialect=dialect, _candidate=(candidate, atoms), _spelled=spelled)
     if not any(broken_by(c, witness) for c in held):
-        return None
+        return None, "witness"
     if not replay(left, right, witness, dialect=dialect, types=options.get("types")):
-        return None
-    if not _prove_rewritten(left, right, _filters(candidate, atoms, dialect, columns), options):
-        return None
-    return explanation
+        return None, "witness"
+    if not _prove_rewritten(left, right, _filters(candidate, atoms, dialect, columns), options, problem.deadline):
+        return None, "proof"
+    return explanation, ""
+
+
+class _Unknown(Exception):
+    """Nothing can be said, and why (the reason is for tools that count the unknowns)."""
 
 
 @serialized
 def explain_difference(left_sql: str, right_sql: str, **prover_options) -> DifferenceExplanation | None:
     """Return a verified difference predicate for two non-equivalent queries, or None when none is verified."""
 
+    try:
+        return explain_or_why(left_sql, right_sql, **prover_options)[0]
+    except (smt.Unsupported, UnmodeledConstruct, sqlglot.errors.SqlglotError, RecursionError, smt.z3.Z3Exception):
+        return None
+
+
+@serialized
+def explain_or_why(left_sql: str, right_sql: str, **prover_options) -> tuple[DifferenceExplanation | None, str]:
+    """``(explanation, "")``, or ``(None, why there is none)``; the options are those of :func:`explain_difference`."""
+
     seconds = prover_options.pop("explain_seconds", DEFAULT_SECONDS)
     options = {k: v for k, v in prover_options.items() if k in _OPTIONS}
     smt._check_options(options)
     if smt.z3 is None:
-        return None
+        return None, "z3-solver is not installed"
     try:
-        return _explain(left_sql, right_sql, options, time.monotonic() + seconds)
-    except (smt.Unsupported, UnmodeledConstruct, sqlglot.errors.SqlglotError, RecursionError, _Out, smt.z3.Z3Exception, KeyError):
-        return None
+        return _explain(left_sql, right_sql, options, time.monotonic() + seconds), ""
+    except _Unknown as unknown:
+        return None, str(unknown)
+    except _Out:
+        return None, "out of time"
+    except (smt.Unsupported, UnmodeledConstruct) as error:
+        return None, f"unsupported: {error}"
 
 
-def _explain(left_sql: str, right_sql: str, options: dict, deadline: float) -> DifferenceExplanation | None:
-    from .algebraic_equivalence import prove_equivalent_algebraic
+def _one_row(block):
+    """``(row passes, outputs)`` of a block on a database where each table holds one row.
 
+    A select-project-join block is its own condition and outputs. In a grouped block the one row is its own group, so
+    each aggregate is that row's value (COUNT is 1 or 0, SUM, MIN, MAX and LOGICAL_AND/OR are the argument) and the
+    group passes when the filter and HAVING hold; a global aggregate always returns a row, of the empty-group values
+    when the filter fails.
+    """
+
+    z3 = smt.z3
+    V = smt._value_sort()
+    if isinstance(block, smt._Spj):
+        return block.cond.t, list(block.outputs)
+
+    def value(call, empty: bool):
+        if empty:
+            return smt._aggregate_of_nothing(call)
+        if call.func == "COUNT":
+            return smt._Val(z3.BoolVal(False), V.Num(1) if call.arg is None else z3.If(call.arg.null, V.Num(0), V.Num(1)))
+        if call.func == "COUNTIF":
+            return smt._Val(z3.BoolVal(False), z3.If(z3.And(z3.Not(call.arg.null), V.bool(call.arg.val)), V.Num(1), V.Num(0)))
+        if call.func in ("SUM", "MIN", "MAX", "LOGICAL_AND", "LOGICAL_OR"):
+            return call.arg
+        raise _Unknown(f"the aggregate {call.func} is not read on one row")
+
+    def read(empty: bool):
+        pairs = []
+        for call in block.aggs:
+            got = value(call, empty)
+            if not z3.is_false(call.var.null):
+                pairs.append((call.var.null, got.null))
+            pairs.append((call.var.val, got.val))
+        having = smt._subst(block.having.t, pairs) if block.having is not None else z3.BoolVal(True)
+        return having, [smt._subst_val(v, pairs) for v in block.outputs]
+
+    having, outputs = read(False)
+    if not block.is_global:
+        return z3.And(block.cond.t, having), outputs
+    none_having, none_outputs = read(True)
+    held = block.cond.t
+    return (
+        z3.If(held, having, none_having),
+        [smt._Val(z3.If(held, v.null, w.null), z3.If(held, v.val, w.val)) for v, w in zip(outputs, none_outputs)],
+    )
+
+
+def _explain(left_sql: str, right_sql: str, options: dict, deadline: float) -> DifferenceExplanation:
     dialect = options.get("dialect", "bigquery")
     schema, types, constraints = options.get("schema"), options.get("types"), options.get("constraints")
     exact_arithmetic = options.get("exact_arithmetic", False)
     timeout_ms = options.get("timeout_ms", 5000)
     if dialect == "bigquery" and (invalid_type_name(left_sql) or invalid_type_name(right_sql)):
-        return None
+        raise _Unknown("BigQuery rejects a type name")
     left, right = (string_number_literals.normalize(sql, dialect, types) for sql in (left_sql, right_sql))
     if dialect == "bigquery":
         left, right = canonical_literals(left), canonical_literals(right)
     left, right, problem = positional_sql_pair(left, right, dialect)
     if problem or string_number_compare.problem(left, dialect, types, plain_ok=True) or string_number_compare.problem(right, dialect, types, plain_ok=True):
-        return None
+        raise _Unknown("strings compared with numbers, or a BY NAME set operation")
     trees = [_single_select(sql, dialect) for sql in (left, right)]
-    if None in trees or any(t.args.get("distinct") or t.args.get("group") or t.args.get("having") for t in trees):
-        return None
+    if None in trees:
+        raise _Unknown("not a single select")
 
     compiler = smt._Compiler(schema, exact_arithmetic, dialect, types)
     compiled = [compiler.compile(sql) for sql in (left, right)]
     if compiler.uses_uf or compiler.limit_opaque or compiler.window_opaque or compiler.big_literals or compiler.timestamp_literals:
-        return None
+        raise _Unknown("a construct whose values are free in the model")
     blocks = []
     for union in compiled:
         if union.distinct or len(union.branches) != 1:
-            return None
+            raise _Unknown("a set operation")
         block = union.branches[0]
-        if not isinstance(block, smt._Spj) or block.distinct or block.subs or any(o.opaque or o.table == smt._UNNEST_TABLE for o in block.occs):
-            return None
+        if block.distinct or block.subs or any(o.opaque or o.table == smt._UNNEST_TABLE for o in block.occs):
+            raise _Unknown("DISTINCT, a subquery or a derived table")
         blocks.append(block)
     a, b = blocks
     if len(a.outputs) != len(b.outputs) or (options.get("compare_names", True) and list(compiled[0].names) != list(compiled[1].names)):
-        return None
+        raise _Unknown("the output columns differ")
     tables = Counter(o.table.lower() for o in a.occs)
-    if tables != Counter(o.table.lower() for o in b.occs) or max(tables.values()) > 1:
-        return None  # another table multiset, or a table read twice: not row-local
+    if tables != Counter(o.table.lower() for o in b.occs):
+        raise _Unknown("the queries read different tables")
+    if max(tables.values(), default=1) > 1:
+        raise _Unknown("a table is read twice")
+    rows_only = isinstance(a, smt._Spj) and isinstance(b, smt._Spj)  # a grouped pair is read on one row per table only
 
     order = compiler.order_facts()
     for block in blocks:
@@ -548,24 +673,61 @@ def _explain(left_sql: str, right_sql: str, options: dict, deadline: float) -> D
     pairs = prover._pairs(mapping)
     facts = a.facts + [smt._subst(f, pairs) for f in b.facts]
     z3 = smt.z3
-    cond_a, cond_b = a.cond.t, smt._subst(b.cond.t, pairs)
-    outs_b = [smt._subst_val(v, pairs) for v in b.outputs]
-    region = z3.Or(z3.Xor(cond_a, cond_b), z3.And(cond_a, cond_b, z3.Not(smt._rows_eq(a.outputs, outs_b))))
+    cond_a, outs_a = _one_row(a)
+    cond_b, outs_b = _one_row(b)
+    cond_b, outs_b = smt._subst(cond_b, pairs), [smt._subst_val(v, pairs) for v in outs_b]
+    region = z3.Or(z3.Xor(cond_a, cond_b), z3.And(cond_a, cond_b, z3.Not(smt._rows_eq(outs_a, outs_b))))
 
-    # equivalent pairs have no region, and the provers decide those first
-    if prove_equivalent_algebraic(left_sql, right_sql, **options).status is smt.SmtStatus.PROVEN_EQUIVALENT:
-        return None
+    usable, facts = _usable_atoms(compiler, trees, a, schema, dialect, facts)
+    if not usable:
+        raise _Unknown("no atom to build a predicate from")
+    problem_ = _Problem(prover, a.occs, facts, region, z3.Or(cond_a, cond_b), usable, deadline)
+    result, model = problem_.check(region)
+    if result != z3.sat:
+        raise _Unknown("the queries agree on every one-row database" if result == z3.unsat else "the solver gave no answer")
+    problem_.add_sample(model)
+    result, model = problem_.check(z3.Not(region))
+    if result == z3.sat:
+        problem_.add_sample(model)
 
-    atoms = _written_atoms([t for t in trees], schema, dialect)
+    columns = {}
+    for occ in a.occs:
+        listed = {k.lower(): v for k, v in (schema or {}).items()}.get(occ.table.lower())
+        columns[occ.table.lower()] = [c for c in (listed or sorted(occ.cols))]
+    candidates = _candidates(usable)
+    rejected: set = set()
+    why = "no predicate of at most three atoms describes the difference"
+    verified = 0
+    for strict in (True, False):
+        while verified < MAX_VERIFICATIONS:
+            candidate = problem_.search(candidates, rejected, strict)
+            if candidate is None:
+                break
+            tables = _tables_of(candidate, usable)
+            qualify = len(tables) > 1
+            if qualify and len({_short(t) for t in tables}) < len(tables):
+                rejected.add(candidate)  # two tables of one short name: the columns could not be told apart
+                continue
+            verified += 1
+            found, failed = _verify(problem_, candidate, usable, a.occs, left_sql, right_sql, options, columns, qualify, strict and rows_only)
+            if found is not None:
+                return found
+            why = f"a predicate failed its {failed}"
+            rejected.add(candidate)
+    raise _Unknown(why)
+
+
+def _usable_atoms(compiler, trees, a, schema, dialect: str, facts: list):
+    """The atoms that compile, each with its Z3 term over the first query's table occurrences, and the facts they add."""
+
+    z3 = smt.z3
     by_table = {o.table.lower(): o for o in a.occs}
     usable = []
-    for atom in atoms:
+    for atom in _written_atoms(list(trees), schema, dialect):
         occ = by_table.get(atom.table)
-        if occ is None:
+        table_sql = next((t.copy() for tree in trees for t in tree.find_all(exp.Table) if ".".join(p.name for p in t.parts).lower() == atom.table), None)
+        if occ is None or table_sql is None:
             continue
-        table_sql = next((t.copy() for t in trees[0].find_all(exp.Table) if ".".join(p.name for p in t.parts).lower() == atom.table), None)
-        if table_sql is None:
-            table_sql = next(t.copy() for t in trees[1].find_all(exp.Table) if ".".join(p.name for p in t.parts).lower() == atom.table)
         table_sql.set("alias", None)
         probe = f"SELECT 1 AS probe FROM {table_sql.sql(dialect=dialect)} WHERE {_sql(atom.node, dialect)}"
         try:
@@ -583,38 +745,7 @@ def _explain(left_sql: str, right_sql: str, options: dict, deadline: float) -> D
             atom.term = z3.Not(atom.term)
         facts = facts + [smt._subst(f, move) for f in block.facts]
         usable.append(atom)
-    if not usable:
-        return None
-
-    problem_ = _Problem(prover, a.occs, facts, region, z3.Or(cond_a, cond_b), usable, deadline)
-    result, model = problem_.check(region)
-    if result != z3.sat:
-        return None  # unsat: the pair agrees on every one-row database; unknown: nothing to say
-    problem_.add_sample(model)
-    result, model = problem_.check(z3.Not(region))
-    if result == z3.sat:
-        problem_.add_sample(model)
-
-    columns = {}
-    for occ in a.occs:
-        listed = {k.lower(): v for k, v in (schema or {}).items()}.get(occ.table.lower())
-        columns[occ.table.lower()] = [c for c in (listed or sorted(occ.cols))]
-    candidates = _candidates(usable)
-    rejected: set = set()
-    for _ in range(MAX_VERIFICATIONS):
-        candidate = problem_.search(candidates, rejected)
-        if candidate is None:
-            return None
-        tables = _tables_of(candidate, usable)
-        qualify = len(tables) > 1
-        if qualify and len({_short(t) for t in tables}) < len(tables):
-            rejected.add(candidate)  # two tables of one short name: the columns could not be told apart
-            continue
-        found = _verify(problem_, candidate, usable, a.occs, left_sql, right_sql, options, columns, qualify)
-        if found is not None:
-            return found
-        rejected.add(candidate)
-    return None
+    return usable, facts
 
 
 def conditions_of(explanation: DifferenceExplanation, *, dialect: str = "bigquery", _candidate=None, _spelled=None) -> list[Condition]:
