@@ -31,7 +31,57 @@ def _parse(sql: str, dialect: str, schema):
     tree = sqlglot.parse_one(sql, read=dialect)
     tree = strip_positions(tree)
     tree = check_modeled(canonical_negation(tree))
-    return expand_alias_columns(tree, schema)
+    tree = expand_alias_columns(tree, schema)
+    return _grouping_sets_as_union(tree)
+
+
+def _grouping_sets_as_union(tree):
+    """Spell ROLLUP, CUBE and GROUPING SETS as the UNION ALL of one plain GROUP BY per set.
+
+    This is the rewrite the algebraic prover already uses (:mod:`kumosql.grouping_sets`): a key
+    missing from a set reads as NULL and ``GROUPING(..)`` as the bit mask of the missing keys. A
+    list it declines (repeated sets, non-column keys) stays as it is and is then unsupported.
+    """
+
+    from ..grouping_sets import expand_grouping_sets, grouping_sets_to_union
+
+    return _plain_grouping_calls(grouping_sets_to_union(expand_grouping_sets(tree)))
+
+
+def _plain_grouping_calls(tree):
+    """``GROUPING(k)`` over a plain GROUP BY is 0: every key is present in every group.
+
+    Only a call whose arguments are all columns the select groups by is read; any other stays and is
+    unsupported.
+    """
+
+    from sqlglot import exp
+
+    from ..grouping_sets import is_grouping_call
+
+    for select in tree.find_all(exp.Select):
+        group = select.args.get("group")
+        if group is None or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals", "all")):
+            continue
+        if any(isinstance(e, (exp.GroupingSets, exp.Rollup, exp.Cube)) for e in group.expressions):
+            continue
+        keys = {e.sql().lower() for e in group.expressions}
+        roots = list(select.expressions) + ([select.args["having"]] if select.args.get("having") is not None else [])
+        calls = []
+        for root in roots:
+            stack = [root]
+            while stack:
+                node = stack.pop()
+                if isinstance(node, (exp.Subquery, exp.Select)):
+                    continue
+                if is_grouping_call(node):
+                    calls.append(node)
+                    continue
+                stack.extend(node.iter_expressions())
+        for call in calls:
+            if call.expressions and all(isinstance(a, exp.Column) and a.sql().lower() in keys for a in call.expressions):
+                call.replace(exp.Literal.number(0))
+    return tree
 
 
 def prove_bag_equivalent(
