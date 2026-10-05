@@ -73,7 +73,7 @@ Measured 2026-10-02 at 3 rows per table.
 | SQLSolver Spark SQL | 127 | 106 | 0 | 0 | 20 | 1 |
 | SQLSolver TPC-H | 22 | 7 | 0 | 4 | 11 | 0 |
 | SQLSolver TPC-C | 19 | 19 | 0 | 0 | 0 | 0 |
-| QED Calcite | 375 | 363 | 0 | 3 | 9 | 0 |
+| QED Calcite | 390 | 360 | 0 | 4 | 26 | 0 |
 | R-Bot Calcite | 45 | 23 | 0 | 0 | 22 | 0 |
 | Cosette examples | 60 | 52 | 6 | 0 | 2 | 0 |
 | SPES Calcite | 34 | 26 | 3 | 0 | 5 | 0 |
