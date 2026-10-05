@@ -36,6 +36,8 @@ from typing import Iterable, Mapping
 import sqlglot
 from sqlglot import exp
 
+from .googlesql_text_fallback import ANONYMOUS_PREFIX, rewrite
+
 # --- types --------------------------------------------------------------------------------------------------------
 
 SCALAR_KINDS = (
@@ -625,7 +627,10 @@ def infer(sql_or_tree, catalog: Catalog | None = None, dialect: str = "bigquery"
         try:
             statements = [s for s in sqlglot.parse(parse_text, read=dialect) if s is not None]
         except Exception as exc:  # noqa: BLE001 - an unparsed query has no types
-            return TypedQuery(None, None, (), {}, {}, f"parse error: {exc}"[:200])
+            fallback = rewrite(parse_text, dialect) if isinstance(exc, sqlglot.errors.ParseError) else None
+            if fallback is None:
+                return TypedQuery(None, None, (), {}, {}, f"parse error: {exc}"[:200])
+            statements = [fallback.tree]  # `text` stays the original: it only decides which type names are ambiguous
         # A trailing `;` followed only by a comment is parsed as a second, empty statement.
         statements = [s for s in statements if not isinstance(s, exp.Semicolon)]
         if len(statements) != 1:
@@ -652,8 +657,14 @@ def infer(sql_or_tree, catalog: Catalog | None = None, dialect: str = "bigquery"
         return TypedQuery(tree, None, typer.findings, typer.types, typer.relations, "query too deep")
     columns = None
     if rel is not None and rel.columns is not None:
-        columns = tuple(Column(c.name, _materialize(c.t), c.required) for c in rel.columns)
+        columns = tuple(Column(_public_name(c.name), _materialize(c.t), c.required) for c in rel.columns)
     return TypedQuery(tree, columns, typer.findings, typer.types, typer.relations)
+
+
+def _public_name(name: str | None) -> str | None:
+    """A column the text fallback named only to build it (see :mod:`kumosql.googlesql_text_fallback`) has no name."""
+
+    return None if name is not None and name.startswith(ANONYMOUS_PREFIX) else name
 
 
 _TEMPLATE_MASK = re.compile(r"__sqlx_token_\d+__")
@@ -837,7 +848,7 @@ class _Typer:
         return t
 
     def note_relation(self, node: exp.Expression, columns: list[_Col] | None) -> None:
-        self.relations[id(node)] = (node, None if columns is None else tuple(Column(c.name, c.t.type) for c in columns))
+        self.relations[id(node)] = (node, None if columns is None else tuple(Column(_public_name(c.name), c.t.type) for c in columns))
 
     def finding(self, code: str, message: str, node: exp.Expression | None = None) -> None:
         self.findings.append(Finding(code, message, node))

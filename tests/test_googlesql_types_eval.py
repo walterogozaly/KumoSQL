@@ -20,7 +20,7 @@ sys.modules[SPEC.name] = ev  # dataclasses and typing look their module up here
 SPEC.loader.exec_module(ev)
 
 # BigQuery-typed dev columns whose type KumoSQL gives exactly. Raise it with the score, never lower it.
-FLOOR_EXACT = 13473
+FLOOR_EXACT = 14755
 # sqlglot 26.0.0, the oldest the project allows, cannot parse BY NAME / CORRESPONDING modes, ARRAY_ZIP's named
 # arguments, GRAPH_TABLE and aggregate WHERE filters; those queries are unknown there, so its floor is lower. Still 0 wrong.
 FLOOR_EXACT_OLD_SQLGLOT = 10732
