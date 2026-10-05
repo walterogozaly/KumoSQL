@@ -24,7 +24,7 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Table minimization](table-minimization.md) | The lowest-complexity set of tables that keeps every protected table proved unchanged |
 | [Project reduction](project-reduction.md) | The smallest Dataform project that still produces the outputs you keep, as a proved patch on the `.sqlx` files |
 | [Output properties](output-properties.md) | Never-NULL columns, unique keys and row bounds, inferred without running a query |
-| [Ties and nondeterministic results](ties.md) | Windows, LIMITs and aggregates whose result can depend on how tied rows are ordered, and what would pin them down |
+| [Ties and nondeterministic results](ties.md) | Windows, LIMITs and aggregates whose result can depend on how tied rows are ordered, what would pin them down, and small databases that show the difference (tie witnesses) |
 | [Constraint-dependent rewrites](constraint-rewrites.md) | Rewrites that hold only under declared NOT NULL columns, keys and foreign keys |
 | [Incremental models](incremental.md) | Whether an incremental run equals a full refresh |
 | [Join ordering and cardinality](joinorder.md) | Sub-join size estimates and join orders, in pure Python |
