@@ -1239,8 +1239,8 @@ class _Typer:
         merged_star: list[_Col] = []
         for name in names:
             key = name.lower()
-            left = self._unique(left_ranges, scope.merged, key)
-            right = self._unique(new, {}, key)
+            left = self._unique(left_ranges, scope.merged, key, name)
+            right = self._unique(new, {}, key, name)
             if left is None or right is None:
                 t = UNKNOWN
                 col_name = name
@@ -1266,7 +1266,7 @@ class _Typer:
         ]
 
     @staticmethod
-    def _unique(ranges: list[_Range], merged: dict, key: str) -> _Col | None:
+    def _unique(ranges: list[_Range], merged: dict, key: str, spelling: str | None = None) -> _Col | None:
         if key in merged:
             return merged[key]
         found = []
@@ -1275,6 +1275,9 @@ class _Typer:
             if cols is None:
                 return None
             found.extend(c for c in cols if c.name and c.name.lower() == key)
+            if r.value is not None and r.value.type is not None and r.value.type.kind != "STRUCT" and r.display \
+                    and r.display == spelling:
+                found.append(_Col(r.display, r.value))  # UNNEST(arr) AS a: the column is named a, like the range
         return found[0] if len(found) == 1 else None
 
     def range_of(self, item: exp.Expression, scope: _Scope, outer, ctes) -> list[_Range]:
