@@ -29,7 +29,13 @@ Replace the path and names. The JSON output lists what was removed, changed, add
 
 ## What stays as written
 
-Incremental tables, operations scripts, models with pre or post operations and models whose `${...}` code depends on the file are never rewritten, and the tables they read are kept unchanged. A model that uses a project variable as a value, for example `WHERE status = '${dataform.projectConfig.vars.status}'`, is also kept as written, because the prover cannot read the variable's value. Assertions on removed or rewritten tables are dropped and listed with the reason, unless you ask to keep them.
+Incremental tables, operations scripts, models with pre or post operations and models whose `${...}` code depends on the file are never rewritten, and the tables they read are kept unchanged. Assertions on removed or rewritten tables are dropped and listed with the reason, unless you ask to keep them.
+
+## Project variables
+
+A model that compares a column with a project variable, for example `WHERE status = '${dataform.projectConfig.vars.status}'`, can be folded and rewritten like any other. KumoSQL treats the variable as a value it does not know: the same wherever you write the same variable, and never equal to a plain word you typed, even the one the variable holds today, because a run can set it to something else. So `status = <variable> AND status = 'paid'` is not called empty, and a table that filters on the variable is not merged with one that filters on `'paid'`. The variable is written back exactly as you wrote it, quotes included.
+
+The proof assumes the variable holds one plain string, with no quote or SQL code in it. A variable inside a longer string (`"pre_${...}"`), or in a raw or triple-quoted string, is still kept as written, and the reason is listed.
 
 ## Limits
 

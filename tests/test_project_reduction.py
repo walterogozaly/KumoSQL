@@ -431,3 +431,24 @@ def test_declarations_stay_while_something_names_them(tmp_path):
     result = reduce_project(root, ["rpt"])
     assert result.verified
     assert [entry["model"] for entry in result.removed] == ["shop.raw.unused"]
+
+
+def test_only_a_string_that_is_exactly_one_token_becomes_an_unknown_value():
+    from kumosql import project_reduction as pr
+
+    a, b = pr._token("${vars.a}"), pr._token("${vars.b}")
+    tokens = {a: "${vars.a}", b: "${vars.b}"}
+    sql = f"""SELECT x FROM t WHERE s = "{a}" AND u = '{a}' AND v = '{b}' AND w = 'p_{a}' AND z = r'{a}'
+AND y = '''{a}''' AND q = '{a}' '{b}' AND d IN ('{b}')"""
+    out, atoms = pr._value_atoms(sql, tokens)
+    d_a, s_a, s_b = (f"__kumo_v_{a[9:-2]}_d()", f"__kumo_v_{a[9:-2]}_s()", f"__kumo_v_{b[9:-2]}_s()")
+    assert atoms == {d_a: '"${vars.a}"', s_a: "'${vars.a}'", s_b: "'${vars.b}'"}  # quote style is part of the value
+    assert f"s = {d_a} AND u = {s_a} AND v = {s_b}" in out and f"d IN ({s_b})" in out
+    # a token inside a longer string, a raw or triple-quoted string and adjacent literals stay as they are, and are refused
+    assert f"'p_{a}'" in out and f"r'{a}'" in out and f"'''{a}'''" in out and f"'{a}' '{b}'" in out
+    assert pr._value_tokens(out)
+    assert not pr._value_tokens(f"SELECT x FROM {a}.t WHERE s = {s_a}")  # a name is not a value
+    # each is restored byte for byte; an atom the reduction does not know is never written out
+    assert pr._restore_tokens(f"s = {d_a} AND u = {s_a}", {**tokens, **atoms}) == "s = \"${vars.a}\" AND u = '${vars.a}'"
+    with pytest.raises(pr._WriteBackError):
+        pr._restore_tokens(f"s = {s_a}", tokens)
