@@ -179,41 +179,53 @@ def _pins(select: exp.Select, join: exp.Join, alias: str, earlier: set[str]) -> 
     return found
 
 
-def _visible(column: exp.Column, branch: exp.Select, needed: set[str]) -> bool:
-    """Can an expression over the ``needed`` aliases of ``branch`` be written where ``column`` stands?"""
+def _crossing(column: exp.Column, scope: exp.Select) -> exp.Select | None:
+    """The outermost derived table of ``scope`` that ``column`` sits in (None when it sits in ``scope`` itself)."""
+
+    found = None
+    node = column.parent
+    while node is not None and node is not scope:
+        if isinstance(node, exp.Select) and _is_source_select(node):
+            found = node
+        node = node.parent
+    return found
+
+
+def _is_source_select(select: exp.Select) -> bool:
+    """A select that is a FROM or JOIN item (derived table or lateral), which cannot see its siblings."""
+
+    parent = select.parent
+    if isinstance(parent, exp.Subquery) and not isinstance(parent.parent, (exp.Subquery, exp.Exists, exp.In, exp.Union)):
+        parent = parent.parent
+        return isinstance(parent, (exp.From, exp.Join, exp.Lateral))
+    return False
+
+
+def _shadows(column: exp.Column, scope: exp.Select, needed: set[str]) -> bool:
+    node = column.parent
+    while node is not None and node is not scope:
+        if isinstance(node, exp.Select) and _scope_aliases(node) & needed:
+            return True
+        node = node.parent
+    return False
+
+
+def _on_allows(column: exp.Column, scope: exp.Select, needed: set[str]) -> bool:
+    """An ON clause of an outer join decides which rows are padded: the value may only read sources that
+    come before that join, none of them null-extended by it."""
 
     node = column.parent
-    while node is not None and node is not branch:
-        if isinstance(node, exp.Select):
-            parent = node.parent
-            # a derived table or a nested lateral cannot see the siblings of the select around it
-            if isinstance(parent, (exp.From, exp.Join, exp.Lateral)) or (isinstance(parent, exp.Subquery) and isinstance(parent.parent, (exp.From, exp.Join, exp.Lateral))):
-                return False
-            if _scope_aliases(node) & needed:
-                return False
-        node = node.parent
-    return node is branch
-
-
-def _replaceable(column: exp.Column, branch: exp.Select, value: exp.Expression, needed: set[str]) -> bool:
-    if not _visible(column, branch, needed):
-        return False
-    # An ON clause of an outer join decides which rows are padded: the value may only read sources that
-    # come before that join, none of them null-extended by it.
-    join = column.find_ancestor(exp.Join)
-    if join is not None and join.find_ancestor(exp.Select) is branch:
-        on = join.args.get("on")
-        if on is not None and any(a is on for a in _chain(column, join)):
-            side = (join.args.get("side") or "").upper()
+    while node is not None and node is not scope:
+        if isinstance(node, exp.Join) and node.parent is scope and any(a is node.args.get("on") for a in _chain(column, node)):
+            side = (node.args.get("side") or "").upper()
             if side in ("RIGHT", "FULL"):
                 return False
             if side == "LEFT":
-                if _alias(join.this) in needed:
+                joins = scope.args["joins"]
+                preceding = {_alias(s) for s in [_from(scope).this] + [j.this for j in joins[: joins.index(node)]]}
+                if _alias(node.this) in needed or not needed <= preceding:
                     return False
-                joins = branch.args["joins"]
-                preceding = {_alias(s) for s in [(_from(branch)).this] + [j.this for j in joins[: joins.index(join)]]}
-                if not needed <= preceding:
-                    return False
+        node = node.parent
     return True
 
 
@@ -223,20 +235,85 @@ def _chain(node: exp.Expression, stop: exp.Expression):
         node = node.parent
 
 
+def _plain_scope(scope: exp.Select) -> bool:
+    return (
+        not any(scope.args.get(k) for k in _BLOCKING)
+        and scope.find(exp.AggFunc) is None
+        and scope.find(exp.Window) is None
+        and _from(scope) is not None
+        and not any((j.args.get("side") or "").upper() in ("RIGHT", "FULL") for j in scope.args.get("joins") or [])
+    )
+
+
+def _pin_into_scope(scope: exp.Select, value: exp.Expression, owner: str, name: str, depth: int = 0) -> bool | None:
+    """Replace the free ``owner.name`` in ``scope`` by ``value`` (an expression over the sources of ``scope``).
+
+    Returns True when something changed, False when ``scope`` never reads the column, None when it must be left alone
+    (a read where ``value`` cannot be written, or a shape the argument does not cover).
+    """
+
+    if depth > 6 or not _plain_scope(scope):
+        return None
+    free = _free_columns(scope)
+    if free is None:
+        return None
+    uses = [c for c in free if c.table.lower() == owner and c.name.lower() == name]
+    if not uses:
+        return False
+    reads = list(value.find_all(exp.Column))
+    if not reads or any(not c.table or isinstance(c.this, exp.Star) for c in reads):
+        return None
+    needed = {c.table.lower() for c in reads}
+    if not needed <= _scope_aliases(scope):
+        return None
+    direct, nested = [], {}
+    for column in uses:
+        derived = _crossing(column, scope)
+        if derived is None:
+            direct.append(column)
+        else:
+            nested.setdefault(id(derived), (derived, []))[1].append(column)
+    for column in direct:
+        if _shadows(column, scope, needed) or not _on_allows(column, scope, needed):
+            return None
+    plans = []
+    for derived, _ in nested.values():
+        # the value must be a plain read of one output of that derived table, which then pins its own source
+        if not (isinstance(value, exp.Column) and isinstance(derived.parent, exp.Subquery) and _alias(derived.parent) == value.table.lower()):
+            return None
+        names = _clean_outputs(derived)
+        if names is None or value.name.lower() not in names:
+            return None
+        source = derived.parent.parent
+        join = source if isinstance(source, exp.Join) else None
+        if join is not None and (join.args.get("side") or "").upper() in ("RIGHT", "FULL"):
+            return None
+        if join is not None and (join.args.get("side") or "").upper() == "LEFT":
+            return None  # rows of a padded side: the value reaches the derived table only through its own ON
+        plans.append((derived, _unaliased(derived.expressions[names.index(value.name.lower())])))
+    results = []
+    for derived, inner_value in plans:
+        if any(isinstance(n, (exp.Subquery, exp.Exists, exp.Select, exp.Anonymous, exp.Rand)) for n in inner_value.walk()):
+            return None
+        done = _pin_into_scope(derived, inner_value, owner, name, depth + 1)
+        if done is None:
+            return None
+        results.append(done)
+    for column in direct:
+        column.replace(value.copy())
+    return bool(direct) or any(results)
+
+
 def _pin_into_branch(branch: exp.Select, position: int, owner: str, name: str, outer_type, types) -> bool | None:
     """Replace the free ``owner.name`` in ``branch`` by its output at ``position``; None when it must be left alone."""
 
-    if any(branch.args.get(k) for k in _BLOCKING) or branch.find(exp.AggFunc) is not None or branch.find(exp.Window) is not None:
-        return None
-    if _from(branch) is None or any((j.args.get("side") or "").upper() in ("RIGHT", "FULL") for j in branch.args.get("joins") or []):
-        return None
     names = _clean_outputs(branch)
-    if names is None or position >= len(names):
+    if names is None or position >= len(names) or not _plain_scope(branch):
         return None
     value = _unaliased(branch.expressions[position])
     if any(isinstance(n, (exp.Subquery, exp.Exists, exp.Select, exp.Anonymous, exp.Rand)) for n in value.walk()):
         return None
-    reads = [c for c in value.find_all(exp.Column)]
+    reads = list(value.find_all(exp.Column))
     if not reads or any(not c.table or isinstance(c.this, exp.Star) for c in reads):
         return None
     if any(c.table.lower() not in _scope_aliases(branch) for c in reads):  # reads the outer row: not a pin
@@ -244,17 +321,7 @@ def _pin_into_branch(branch: exp.Select, position: int, owner: str, name: str, o
     inner_type = expression_type(value, branch, types)
     if not inner_type or inner_type[0] != "int" or not outer_type or outer_type[0] != "int":
         return None
-    needed = {c.table.lower() for c in reads}
-    uses = [c for c in (_free_columns(branch) or []) if c.table.lower() == owner and c.name.lower() == name]
-    if _free_columns(branch) is None:
-        return None
-    if not uses:
-        return False
-    if any(not _replaceable(c, branch, value, needed) for c in uses):
-        return None
-    for column in uses:
-        column.replace(value.copy())
-    return True
+    return _pin_into_scope(branch, value, owner, name)
 
 
 def pin_lateral_outputs(select: exp.Select, types: dict | None) -> exp.Select | None:

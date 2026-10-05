@@ -3753,6 +3753,10 @@ def _lateral_joins(tree: exp.Expression) -> exp.Expression:
             if not inner_from or (body.args.get("group") is not None):
                 if correlated:
                     continue
+            # a reference to the outer row anywhere else (a join's ON, a derived table, a subquery) cannot move to an ON clause
+            moved = {id(c) for part in correlated for c in part.find_all(exp.Column)}
+            if any(c.table.lower() in (outer_names - inner_names) and id(c) not in moved for c in body.find_all(exp.Column)):
+                continue
             conditions, ok = [], True
             for part in correlated:
                 part = part.copy()
