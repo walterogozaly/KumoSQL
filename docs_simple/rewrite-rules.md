@@ -75,3 +75,16 @@ Supply multiple `-r` options to run rules in that order. Put formatting last: ot
 For Dataform SQLX, the driver protects config, JavaScript, operation blocks, and `${...}` expressions. Formatting with `format_sql` is for SQL, not SQLX. Every formatting change is re-checked by a separate checker that requires the same words, comments and parse tree, so only whitespace and keyword case may differ; selecting sqlfluff rules that change more than layout makes the result `unproven` ([how](proof-safeguards.md#formatting)). A `${...}` expression comes back exactly as written, even when it holds a backslash such as `r'\d'` or `\1`. Unsupported syntax and parse recovery are reported in diagnostics. See [Dataform preservation](evals/dataform-bench.md).
 
 KumoSQL runs on several versions of the SQL parser it is built on (the oldest supported one is 26.0.0, and the tests run on it and on two newer ones). Those versions sometimes give the same piece of SQL different internal names, and code that knew only one name could quietly miss a clause. One example found this way: a `SELECT * EXCEPT (b)` could look like a plain `SELECT *`, so a prover said the two were the same query. The code now reads each construct through shared helpers that know every version's spelling, and where the oldest parser cannot read a piece of SQL at all, the matching test is skipped and says why. The limit: a skipped test means that combination was not checked on the oldest version, not that it passes there. See [Rewrite rules](../docs/rewrite-rules.md) for the helper names.
+
+## Running totals and frames
+
+A window such as a running total can be written with an explicit frame (`ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`) or without one. They give the same answer when no two rows of a group can tie on the `ORDER BY` columns, because "rows up to this one" and "rows up to and including every row that ties with this one" are then the same rows. When two rows do tie, they differ.
+
+Example: with `id` declared as the table's key, these two return the same running total, and the prover now says so:
+
+```sql
+SUM(amount) OVER (PARTITION BY customer ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+SUM(amount) OVER (PARTITION BY customer ORDER BY id)
+```
+
+Limits: KumoSQL does this only when you have told it a key (a unique column that is never NULL) and the window orders by it. Without that fact, or when the frame counts rows by an offset such as `1 PRECEDING`, it stays "unknown" because a tie could change the answer. It trusts the declared key; if your data breaks it, the rewrite can be wrong. The same change teaches the prover a few more spellings of the default frame (`COUNTIF`, `LOGICAL_AND`, `LOGICAL_OR`, `BIT_AND`, `BIT_OR`, `BIT_XOR`, and `FIRST_VALUE` or `LAST_VALUE` without an `ORDER BY`). It was checked on small DuckDB databases with ties and NULLs, which shows no counterexample there and is not a proof for every query. See the [full reference](../docs/rewrite-rules.md#window-frames-over-a-unique-order).

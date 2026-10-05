@@ -3,8 +3,9 @@
 The prover keeps window computations whole and compares them by their text (``_isolate_windows``). These
 rewrites, run just before that, give equal windows equal text. Each one keeps every row and every value.
 
-* ``canonical_frame``: on ``SUM``, ``COUNT``, ``MIN``, ``MAX`` and ``AVG`` (whose value depends only on the
-  set of rows in the frame, not their order):
+* ``canonical_frame``: on ``SUM``, ``COUNT``, ``MIN``, ``MAX``, ``AVG``, ``COUNTIF``, ``LOGICAL_AND``,
+  ``LOGICAL_OR`` and ``BIT_AND``/``BIT_OR``/``BIT_XOR`` (whose value depends only on the set of rows in the
+  frame, not their order):
 
   - a literal ``PARTITION BY`` key, or one repeated, splits nothing and is dropped;
   - an ``ORDER BY`` key that is a literal, a ``PARTITION BY`` key or an earlier ``ORDER BY`` key is equal on
@@ -18,7 +19,10 @@ rewrites, run just before that, give equal windows equal text. Each one keeps ev
 
   ``ROWS`` frames bounded by ``CURRENT ROW`` are never touched: they depend on the order among peers.
   ``FIRST_VALUE``, ``LAST_VALUE`` and ``NTH_VALUE`` only lose the explicit default frame next to an
-  ``ORDER BY`` (the same frame spelled out).
+  ``ORDER BY`` (the same frame spelled out), and, with no ``ORDER BY``, a ``RANGE`` frame bounded by
+  ``UNBOUNDED`` or ``CURRENT ROW`` or a ``ROWS`` frame from ``UNBOUNDED PRECEDING`` to ``UNBOUNDED FOLLOWING``
+  (every row is a peer, so each is the whole partition, the default). ``unique_order_frames`` reads a ``ROWS``
+  frame as ``RANGE`` before this runs when the order keys cannot tie.
 * ``WHERE c = 5`` on an integer column ``c`` of the select's only table makes ``c`` the literal 5 on every
   row its windows see, so those windows read 5 for ``c`` (then the rules above drop it as a key).
 * ``merge_grouped_source``: windows over ``(SELECT k, agg AS a .. GROUP BY k) AS d`` read the grouped rows;
@@ -40,7 +44,11 @@ from sqlglot import exp
 
 from .ast_utils import FROM_KEY
 
-_ORDER_BLIND = (exp.Sum, exp.Count, exp.Min, exp.Max, exp.Avg)
+_ORDER_BLIND = (exp.Sum, exp.Count, exp.Min, exp.Max, exp.Avg) + tuple(
+    getattr(exp, name)
+    for name in ("CountIf", "LogicalAnd", "LogicalOr", "BitwiseAndAgg", "BitwiseOrAgg", "BitwiseXorAgg")
+    if hasattr(exp, name)
+)
 _NAVIGATION = (exp.FirstValue, exp.LastValue, exp.NthValue)
 _INTEGER_TYPES = {"INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "MEDIUMINT", "INT64", "INT32", "INT16", "INT8", "INT4", "INT2"}
 _COUNTER = itertools.count()
@@ -115,9 +123,13 @@ def canonical_frame(window: exp.Window, constants: dict | None = None) -> bool:
             value = constants.get(key)
             if value is not None:
                 column.replace(value.copy())
-    if isinstance(function, _NAVIGATION) and window.args.get("order") and window.args.get("spec") is not None:
-        if _bound(window.args["spec"]) == ("RANGE", "UP", "CR"):
-            window.set("spec", None)
+    if isinstance(function, _NAVIGATION) and window.args.get("spec") is not None:
+        shape = _bound(window.args["spec"])
+        if window.args.get("order"):
+            if shape == ("RANGE", "UP", "CR"):
+                window.set("spec", None)
+        elif shape is not None and (shape[0] == "RANGE" or shape[1:] == ("UP", "UF")):
+            window.set("spec", None)  # no ORDER BY: every row is a peer, so these frames are the whole partition
         return window.sql() != before
     if not isinstance(function, _ORDER_BLIND):
         return window.sql() != before

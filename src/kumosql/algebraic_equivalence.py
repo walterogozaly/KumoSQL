@@ -55,6 +55,7 @@ from .having_rules import key_having_to_where
 from .isolated_window_columns import prune_window_sources
 from .lag_lead_joins import lag_lead_joins
 from .window_aggregate_joins import windowed_aggregate_joins
+from .unique_order_frames import unique_order_frames
 from .window_canonical import canonical_windows
 from .unread_windows import drop_unread_windows
 from .window_rules import window_rules
@@ -4872,6 +4873,7 @@ def normalize(
     if schema:
         tree = _using_to_on(_expand_stars(tree, schema), schema)  # USING over a derived table read once its stars are known
     tree = _except_of_same_table_filters(tree, schema, dialect)
+    tree = unique_order_frames(tree, keys, not_null)
     tree = _probe_and_nth_value(tree)
     tree = _name_derived_columns(_lateral_joins(tree))
     if schema:
