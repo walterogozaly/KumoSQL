@@ -457,6 +457,131 @@ def _apply_edits(sql: str, edits: list[tuple[int, int, str]]) -> str:
     return "".join(pieces) + sql[position:] if pieces else sql
 
 
+_CLAUSE_ENDS = (
+    TokenType.COMMA, TokenType.SEMICOLON, TokenType.WHERE, TokenType.JOIN, TokenType.ON, TokenType.USING, TokenType.HAVING,
+    TokenType.QUALIFY, TokenType.LIMIT, TokenType.ORDER_BY, TokenType.GROUP_BY, TokenType.UNION, TokenType.SELECT, TokenType.FROM,
+)
+
+
+def _swap_sample_and_version(sql: str, tokens: list) -> str:
+    """``t FOR SYSTEM_TIME AS OF ts TABLESAMPLE SYSTEM (10 PERCENT)``, the order BigQuery wants, with the sample written first.
+
+    sqlglot reads the sample after a time-travel clause as the sample of the whole ``SELECT``, so the table lost it and the
+    query was written back with ``TABLESAMPLE`` after its ``LIMIT``. With the clauses the other way round sqlglot reads both on
+    the table; the tree is right and only the written-back text has the clauses in an order BigQuery would not accept.
+    """
+
+    edits: list[tuple[int, int, str]] = []
+    for index, token in enumerate(tokens[:-3]):
+        if not (token.token_type == TokenType.FOR and tokens[index + 1].text.upper() == "SYSTEM_TIME"):
+            continue
+        depth, sample = 0, None
+        for after in range(index + 2, len(tokens)):
+            kind = tokens[after].token_type
+            if kind == TokenType.L_PAREN:
+                depth += 1
+            elif kind == TokenType.R_PAREN:
+                depth -= 1
+                if depth < 0:
+                    break
+            elif depth == 0 and (kind in _CLAUSE_ENDS or tokens[after].text.upper() == "FOR"):
+                break
+            elif depth == 0 and tokens[after].text.upper() == "TABLESAMPLE":
+                sample = after
+                break
+        if sample is None or sample + 1 >= len(tokens):
+            continue
+        close = next((c for o, c in _call_groups(tokens) if o > sample and tokens[sample + 1 : o] and all(t.token_type == TokenType.VAR for t in tokens[sample + 1 : o])), None)
+        if close is None:
+            continue
+        start, middle, stop = token.start, tokens[sample].start, tokens[close].end + 1
+        edits.append((start, stop, f"{sql[middle:stop]} {sql[start:middle].rstrip()}"))
+    return _apply_edits(sql, edits)
+
+
+AI_CALL = "__KUMO_AI_"
+
+
+def _rewrite_ai_scalar_calls(sql: str, tokens: list) -> str:
+    """``AI.GENERATE_BOOL('prompt')`` and ``AI.IF(..)``, the scalar forms of functions sqlglot only knows as table functions or as
+    ``IF``, written ``AI.__KUMO_AI_GENERATE_BOOL(..)``: sqlglot read the prompt as a table (``MODEL prompt``) and refused ``AI.IF``.
+    A call whose first argument is ``TABLE``, ``MODEL`` or a subquery, or that follows ``FROM``/``JOIN``, is the table function."""
+
+    known = set(BigQuery.Parser.FUNCTIONS) | set(BigQuery.Parser.FUNCTION_PARSERS)
+    edits: list[tuple[int, int, str]] = []
+    for index in range(len(tokens) - 5):
+        if tokens[index].text.upper() != "AI" or tokens[index + 1].token_type != TokenType.DOT:
+            continue
+        name, opened, first = tokens[index + 2], tokens[index + 3], tokens[index + 4]
+        if opened.token_type != TokenType.L_PAREN or name.text.upper() not in known:
+            continue
+        if index and (tokens[index - 1].token_type == TokenType.FROM or tokens[index - 1].text.upper() == "JOIN"):
+            continue
+        if first.token_type == TokenType.TABLE or first.text.upper() == "MODEL":
+            continue
+        if first.token_type == TokenType.L_PAREN and tokens[index + 5].token_type in (TokenType.SELECT, TokenType.WITH):
+            continue
+        edits.append((name.start, name.end + 1, AI_CALL + name.text))
+    return _apply_edits(sql, edits)
+
+
+def _resolve_ai_calls(tree: exp.Expression) -> exp.Expression:
+    for call in list(tree.find_all(exp.Anonymous)):
+        if isinstance(call.this, str) and call.this.startswith(AI_CALL):
+            call.set("this", call.this[len(AI_CALL) :])
+    return tree
+
+
+# Calls sqlglot reads into a node of its own, keeping the named arguments it knows and silently dropping the rest.
+_FIXED_ARGUMENT_CALLS = {"FORECAST": ("AIForecast", "AI"), "VECTOR_SEARCH": ("VectorSearch", None), "FEATURES_AT_TIME": ("FeaturesAtTime", "ML")}
+
+
+def _rewrite_calls_that_drop_arguments(sql: str, tokens: list) -> str:
+    """``AI.FORECAST(TABLE t, connection_id => 'c')`` has the call renamed to the marker ``__KUMO_AI_FORECAST`` when it names an
+    argument sqlglot's node for it does not have: sqlglot dropped that argument without a word, so two calls that differed
+    in it read alike. As a marker the call is a plain function that keeps every argument and prints back as written."""
+
+    edits: list[tuple[int, int, str]] = []
+    for index, token in enumerate(tokens[:-2]):
+        entry = _FIXED_ARGUMENT_CALLS.get(token.text.upper())
+        node = getattr(exp, entry[0], None) if entry else None
+        if node is None or tokens[index + 1].token_type != TokenType.L_PAREN:
+            continue
+        if entry[1] is not None and not (index >= 2 and tokens[index - 1].token_type == TokenType.DOT and tokens[index - 2].text.upper() == entry[1]):
+            continue
+        close = next((c for o, c in _call_groups(tokens) if o == index + 1), None)
+        if close is None:
+            continue
+        names = {
+            tokens[position - 1].text.lower()
+            for position, inner in _top_level(tokens, index + 2, close)
+            if inner.token_type == TokenType.FARROW and position - 1 > index + 1
+        }
+        if names - set(node.arg_types):
+            edits.append((token.start, token.end + 1, AI_CALL + token.text))
+    return _apply_edits(sql, edits)
+
+
+_ML_NAMES = (
+    "PREDICT", "FORECAST", "GENERATE_EMBEDDING", "GENERATE_TEXT_EMBEDDING", "GENERATE_TEXT", "GENERATE_TABLE", "GENERATE_BOOL",
+    "GENERATE_INT", "GENERATE_DOUBLE", "FEATURES_AT_TIME",
+)
+
+
+def _rewrite_own_ml_names(sql: str, tokens: list) -> str:
+    """``forecast(a)``, ``my_dataset.predict(x)``: a function of the project's own that shares a name with an ``ML.`` or ``AI.``
+    function is renamed to the marker, because sqlglot read its arguments as ``TABLE a`` and so as a read of a table ``a``."""
+
+    edits: list[tuple[int, int, str]] = []
+    for index, token in enumerate(tokens[:-1]):
+        if token.text.upper() not in _ML_NAMES or tokens[index + 1].token_type != TokenType.L_PAREN:
+            continue
+        if index >= 2 and tokens[index - 1].token_type == TokenType.DOT and tokens[index - 2].text.upper() in ("ML", "AI"):
+            continue
+        edits.append((token.start, token.end + 1, AI_CALL + token.text))
+    return _apply_edits(sql, edits)
+
+
 def _rewrite_like_quantifiers(sql: str, tokens: list) -> str:
     """``x LIKE ALL UNNEST(arr)`` becomes ``x LIKE ANY UNNEST(__KUMO_LIKE_ALL__(arr))``, which every build reads; the marker
     turns the ``ANY`` back into ``ALL`` once parsed. ``LIKE SOME`` is ``LIKE ANY``."""
@@ -630,6 +755,7 @@ def _resolve_markers(trees):
         if tree is not None:
             tree = _resolve_like_all(tree)
             tree = _resolve_with_expressions(tree)
+            tree = _resolve_ai_calls(tree)
         yield tree
 
 
@@ -727,6 +853,19 @@ def install() -> None:
         try:
             _check_literals(sql, tokens)
             _check_empty_struct(sql, tokens)
+            lowered = sql.lower()
+            if (
+                ("ai" in lowered and (plain := _rewrite_ai_scalar_calls(sql, tokens)) != sql)
+                or (("forecast" in lowered or "vector_search" in lowered or "features_at_time" in lowered)
+                    and (plain := _rewrite_calls_that_drop_arguments(sql, tokens)) != sql)
+                or (("predict" in lowered or "generate_" in lowered or "forecast" in lowered or "features_at_time" in lowered)
+                    and (plain := _rewrite_own_ml_names(sql, tokens)) != sql)
+            ):
+                return list(_resolve_markers(self.parse(plain, **opts)))
+            if "tablesample" in lowered:
+                swapped = _swap_sample_and_version(sql, tokens)
+                if swapped != sql:
+                    return self.parse(swapped, **opts)
             if pipe_syntax.has_pipe(tokens):
                 plain = pipe_syntax.rewrite(sql, tokens)
                 if plain != sql:
