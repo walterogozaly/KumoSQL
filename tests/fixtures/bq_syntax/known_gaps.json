@@ -327,14 +327,6 @@
   "owner": "prover",
   "reason": "unsupported: WINDOW is not modeled"
  },
- "query/object_table_function::cleanup": {
-  "owner": "kumosql",
-  "reason": "parse_error; parse_error; parse_error; parse_error; parse_error; parse_error"
- },
- "query/object_table_function::parse": {
-  "owner": "sqlglot",
-  "reason": "ParseError: Expecting ). Line 1, Col: 87."
- },
  "query/partition_pseudo_columns::prover": {
   "owner": "prover",
   "reason": "unsupported: LIMIT is not modeled"
@@ -358,6 +350,10 @@
  "query/pipe_distinct::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 40."
+ },
+ "query/pipe_distinct_window_group_and_order::format": {
+  "owner": "sqlfluff",
+  "reason": "parse_error"
  },
  "query/pipe_extend_set_drop::cleanup": {
   "owner": "kumosql",
@@ -442,6 +438,14 @@
  "query/tablesample_with_join::prover": {
   "owner": "prover",
   "reason": "unsupported: nondeterministic: TABLESAMPLE SYSTEM (50 PERCENT)"
+ },
+ "query/time_travel_tablesample::format": {
+  "owner": "sqlfluff",
+  "reason": "parse_error"
+ },
+ "query/time_travel_tablesample::prover": {
+  "owner": "prover",
+  "reason": "unsupported: Table.version is not modeled"
  },
  "query/unquoted_dashed_project::prover": {
   "owner": "prover",

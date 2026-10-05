@@ -75,6 +75,14 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
   `ROUNDING_MODE` was on the list too, but `ROUND(x, 0, 'ROUND_HALF_EVEN')` already parses on every build, and the cast form `CAST(x AS NUMERIC ROUNDING_MODE ...)` is a syntax error in BigQuery. The bitwise operator precedence (`2 | 1 & 0`) and non-associative comparison (`a > 10 IS TRUE`) misreads are left to the parser trust boundary work ([#500](https://github.com/walterogozaly/KumoSQL/issues/500)), which declines them when it lands instead of re-associating the tree, because re-associating would change the printed SQL everywhere. Until then a prover can equate `a > 10 IS TRUE` with `(a > 10) IS TRUE`, which BigQuery rejects.
   The new cases are `query/like_all_any_unnest`, `query/aggregate_where_filter`, `query/with_expression` and `query/unnest_path_with_offset` in the manifest (all four dry-run valid; sqlfluff cannot format the first three, listed as `format` gaps), plus four entries in the checklist file and `tests/test_bigquery_grammar.py`.
 - sqlglot read a string, bytes literal or backticked name that runs onto a second line without triple quotes (`'a<line break>b'`), which BigQuery rejects as an unclosed literal, so the provers equated it with `'a\nb'`. `bigquery_syntax.py` now rejects it as BigQuery does; triple-quoted literals still span lines.
+- Round two of the syntax sweep ([#520](https://github.com/walterogozaly/KumoSQL/issues/520)): about 800 probes written from the GoogleSQL reference (pipe operators, literals, special-syntax functions, set operators, table clauses, table-valued functions) were run through `parse_statements` on sqlglot 26.0.0, 30.20, 30.21 and compiled 30.21, each ParseError and each round trip that changed meaning checked against a BigQuery dry run. What it found, now handled the same way on every build:
+  - Table-valued function arguments next to a `TABLE` argument: `EXTERNAL_OBJECT_TRANSFORM(TABLE t, ['SO_UNKNOWN'])` failed ("Expecting )") because an array literal followed the table. `TABLE` arguments are now marked wherever they stand among other arguments (arrays, `STRUCT`s, subqueries, several tables, `name => TABLE t`), and `MODEL m` arguments of any named function are kept as text (`tests/test_table_function_argument_shapes.py`). `TABLE t AS s`, `TABLE t FOR SYSTEM_TIME ...` and `fn(...) WITH OFFSET` stay refused: BigQuery rejects them. sqlglot 26 also crashed with an `AttributeError` once it had read past the error; that is now reported as a parse error.
+  - Pipe operators sqlglot read as a different query (`bigquery_syntax.py` hands them to `pipe_syntax.py`, tokens only): sqlglot folds `|> a |> b` into one `SELECT`, so `FROM t |> LIMIT 1 |> ORDER BY x` became `ORDER BY x LIMIT 1` (the smallest row of all, not the sorted single row), and a `|> WHERE`, `|> JOIN`, `|> DISTINCT` or second `|> LIMIT` after a `|> LIMIT`, a `|> JOIN` after `|> DISTINCT`, and a `RIGHT`/`FULL` `|> JOIN` after `|> WHERE` were all read as acting in the wrong order. `|> PIVOT`, the `DISTINCT` of `|> SELECT DISTINCT`, the `AS STRUCT`/`AS VALUE` of `|> SELECT`, the ordering of `GROUP AND ORDER BY` and a `WINDOW` clause were dropped without a word, and `|> AGGREGATE ... GROUP BY ROLLUP (x)` became a column called `ROLLUP`. `|> WINDOW e` is written `|> EXTEND e` (BigQuery defines it so), `|> SELECT DISTINCT items` is `|> SELECT items |> DISTINCT`, `GROUP AND ORDER BY a, b DESC` is `GROUP BY a ASC, b DESC`; everything else above is refused as a parse error naming the operator. A `|> TABLESAMPLE` is read only as the first operator, followed by an operator that starts a new `SELECT`. Orders a single `SELECT` can say (`|> ORDER BY |> LIMIT`, `|> WHERE |> JOIN`, anything after a `|> SELECT`, `|> EXTEND`, `|> AGGREGATE`, `|> AS`) are read as before (`tests/test_pipe_operator_misreads.py`). Pipe `CALL`, `RENAME` and `|> AGGREGATE ... GROUP BY GROUPING SETS` are valid BigQuery and still refused.
+  - A string escape sqlglot keeps undecoded was read as the same text as a backslash and the characters after it, so the structural prover proved `'\x41'` (the letter A) equal to `'\\x41'` (four characters). `canonical_literals` now decodes `\xhh` and octal escapes below 128, `\uhhhh`, `\Uhhhhhhhh` and `\a \b \f \v`, and a literal with an escape whose value is not certain (`\xE9`, which BigQuery may read as a byte) is declined by every prover (`invalid_literal`; [provers](../provers.md)).
+  - Scalar `AI.GENERATE_BOOL('prompt')`, `AI.GENERATE_INT`, `AI.GENERATE_DOUBLE`, `AI.GENERATE_TEXT` were read as the table functions of the same name, so the prompt became a table read (`MODEL 'prompt'`), and `AI.IF(...)` was refused. A call whose first argument is not `TABLE`, `MODEL` or a subquery is now a plain function. A function of the project's own named `forecast`, `predict` or `generate_*` (`forecast(a)`, `my_dataset.predict(b)`) was read as the `ML` function and its argument as a table; it is a plain function now.
+  - `AI.FORECAST`, `VECTOR_SEARCH` and `ML.FEATURES_AT_TIME` silently dropped a named argument sqlglot has no slot for, so two calls that differed in it read alike. A call that names such an argument is read as a plain function that keeps every argument.
+  - `FROM t FOR SYSTEM_TIME AS OF ts TABLESAMPLE SYSTEM (10 PERCENT)` attached the sample to the whole `SELECT`, so the table lost it and the query printed with `TABLESAMPLE` after its `LIMIT`; the sample now stays with the table.
+  - `query/pipe_distinct_window_group_and_order`, `query/string_escape_sequences`, `query/ai_scalar_functions` and `query/time_travel_tablesample` are new manifest cases (dry-run checked; the `AI` one names a connection that does not exist in the test project), and `query/object_table_function` passes.
 - Fixtures themselves: the dry run caught 20 fixtures that were not valid GoogleSQL (qualifying a backticked table by its short name, unsupported `DEFAULT` arguments, `JSON_KEYS` on a string, and so on); they were corrected and re-checked.
 
 ## Gaps that are not fixed here
@@ -85,6 +93,8 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 - **Project layouts**: `actions.yaml` is not read (`tests/test_bq_syntax_projects.py`, as xfail). `projectSuffix`/`datasetSuffix`/`namePrefix` are applied as the compiler does, and a literal `publish(...).query(...)` in a `.js` file is read; `operate()`, `assert()` and publishes inside loops or functions are not.
 - **Computed references**: a `ref()` whose argument is computed in JavaScript is reported as unresolved rather than guessed.
 - **Prover** (owned by the SQLSolver work): unknown, never wrong, for `LIMIT`, window functions, `TABLESAMPLE`, unaliased subqueries and nondeterministic aggregates.
+- **Valid in BigQuery, still refused** (round-two sweep): pipe `CALL`, `RENAME` (on purpose) and `|> AGGREGATE ... GROUP BY GROUPING SETS`; the pipe forms listed above that a single `SELECT` cannot say (`|> LIMIT` before `|> WHERE`, `|> ORDER BY`, `|> JOIN`, `|> DISTINCT` or another `|> LIMIT`; `|> PIVOT`; `|> SELECT AS STRUCT/VALUE`; `ROLLUP`/`CUBE` in `|> AGGREGATE`); `WITH DEPTH` on a recursive CTE (BigQuery parses it and reports it unsupported); `@{hint}` statement and table hints; `HASH JOIN`/`LOOKUP JOIN` join methods; `SAFE.` in front of a namespaced function (BigQuery rejects `SAFE.NET.IP_FROM_STRING`).
+- **Read, though BigQuery rejects it** (the trust boundary of [#500](https://github.com/walterogozaly/KumoSQL/issues/500), not fixed here): `NATURAL JOIN`, `BETWEEN SYMMETRIC`, `x = ANY (subquery)`, `CAST(x AS NUMERIC(10, 2))` and `STRING(n)` (parameterized types are refused by the provers), `WITH t(n) AS (...)` column lists, and a nested `/* /* */ */` comment (sqlglot 26 reads the nesting).
 
 ## Coverage
 
@@ -95,10 +105,10 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 | dcl | 5 | 4 ✅ 1 ⚪ | 5 ✅ | 5 ✅ | n/a | 5 ✅ | 0 ✅ 5 ⚪ | n/a | 0 ✅ 5 – |
 | ddl | 74 | 45 ✅ 29 ⚪ | 74 ✅ | 74 ✅ | n/a | 73 ✅ 1 ⚪ | 65 ✅ 9 ⚪ | n/a | 48 ✅ 20 ⚠ 6 – |
 | dml | 16 | 16 ✅ | 16 ✅ | 16 ✅ | n/a | 16 ✅ | 16 ✅ | n/a | 16 ✅ |
-| query | 138 | 136 ✅ 2 ⚪ | 138 ✅ | 138 ✅ | 135 ✅ | 136 ✅ 2 ⚪ | 132 ✅ 6 ⚪ | 112 ✅ 23 ⚪ | 119 ✅ 16 ⚠ 3 – |
+| query | 142 | 140 ✅ 2 ⚪ | 142 ✅ | 142 ✅ | 139 ✅ | 140 ✅ 2 ⚪ | 134 ✅ 8 ⚪ | 115 ✅ 24 ⚪ | 122 ✅ 17 ⚠ 3 – |
 | script | 22 | 6 ✅ 16 ⚪ | 22 ✅ | 21 ✅ 1 ⚪ | n/a | 22 ✅ | 21 ✅ 1 ⚪ | n/a | 20 ✅ 2 ⚠ |
 | transaction | 2 | 1 ✅ 1 ⚪ | 2 ✅ | 2 ✅ | n/a | 2 ✅ | 2 ✅ | n/a | 2 ✅ |
-| **all GoogleSQL** | 265 | 213 ✅ 52 ⚪ | 265 ✅ | 264 ✅ 1 ⚪ | 135 ✅ | 259 ✅ 6 ⚪ | 243 ✅ 22 ⚪ | 112 ✅ 23 ⚪ | 206 ✅ 45 ⚠ 14 – |
+| **all GoogleSQL** | 269 | 217 ✅ 52 ⚪ | 269 ✅ | 268 ✅ 1 ⚪ | 139 ✅ | 263 ✅ 6 ⚪ | 245 ✅ 24 ⚪ | 115 ✅ 24 ⚪ | 209 ✅ 46 ⚠ 14 – |
 
 | Dataform | Cases | parse | load | refs | graph | cleanup | format | dry run |
 |---|---:|---|---|---|---|---|---|---|
@@ -117,10 +127,10 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 | parse | sqlglot | sqlglot keeps EXECUTE as an opaque command | 3 | `script/execute_immediate`, `script/execute_immediate_concat`, `script/execute_immediate_using_positional` |
 | parse | sqlglot | AttributeError: 'NoneType' object has no attribute 'name' | 2 | `data/load_data`, `data/load_data_temp_table` |
 | parse | sqlglot | sqlglot keeps END as an opaque command | 2 | `ddl/create_procedure_options`, `script/for_in` |
-| parse | sqlglot | ParseError: Expecting ). | 2 | `ddl/create_procedure_sql`, `query/object_table_function` |
 | parse | sqlglot | sqlglot keeps CALL as an opaque command | 2 | `script/call_procedure`, `script/call_with_dml` |
 | parse | sqlglot | ParseError: Required keyword: 'options' missing for <class 'sqlglot.expressions.dml.Export | 1 | `data/export_model` |
 | parse | sqlglot | sqlglot keeps GRANT as an opaque command | 1 | `dcl/grant_project` |
+| parse | sqlglot | ParseError: Expecting ). | 1 | `ddl/create_procedure_sql` |
 | parse | sqlglot | ParseError: Unsupported pipe syntax operator: 'SET'.. | 1 | `query/pipe_extend_set_drop` |
 | parse | sqlglot | ParseError: Required keyword: 'expression' missing for <class 'sqlglot.expressions.Union'> | 1 | `query/set_corresponding` |
 | parse | sqlglot | ParseError: Required keyword: 'true' missing for <class 'sqlglot.expressions.functions.If' | 1 | `script/case_when` |
@@ -130,11 +140,11 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 | load | kumosql | ref() with a computed argument is not resolved | 1 | `dataform/table_dynamic_dependencies` |
 | graph | kumosql | reads of this DML, script or non-query statement are not extracted | 1 | `script/assert` |
 | cleanup | kumosql | recovered_parse | 4 | `data/export_model`, `data/load_data_overwrite`, `ddl/undrop_schema` |
-| cleanup | kumosql | parse_error | 4 | `data/load_data`, `data/load_data_partition_columns`, `data/load_data_temp_table` |
+| cleanup | kumosql | parse_error | 3 | `data/load_data`, `data/load_data_partition_columns`, `data/load_data_temp_table` |
 | cleanup | kumosql | recovered_parse; output_parse_error; recovered_parse; output_parse_error; recovered_parse; | 1 | `dataform/operations_export` |
 | cleanup | kumosql | equivalence could not be proven for every changed statement | 1 | `dataform/table_with_qualify_cte` |
 | cleanup | kumosql | recovered_parse; pipe_syntax_kept; recovered_parse; pipe_syntax_kept; recovered_parse; pip | 1 | `query/pipe_extend_set_drop` |
-| format | sqlfluff | parse_error | 22 | `data/export_model`, `dcl/grant_project`, `dcl/grant_schema` |
+| format | sqlfluff | parse_error | 24 | `data/export_model`, `dcl/grant_project`, `dcl/grant_schema` |
 | prover | prover | unsupported: LIMIT is not modeled | 9 | `query/backtick_dashed_project`, `query/backtick_dataset_only`, `query/backtick_whole_path` |
 | prover | prover | unsupported: WINDOW is not modeled | 7 | `query/ml_feature_functions`, `query/pipe_select_window_qualify`, `query/pseudo_columns_row_number` |
 | prover | prover | unsupported: nondeterministic: TABLESAMPLE SYSTEM (10 PERCENT) | 2 | `query/pipe_call_tablesample`, `query/tablesample` |
@@ -143,5 +153,6 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 | prover | prover | unsupported: nondeterministic: ARRAY_AGG(first_name IGNORE NULLS) | 1 | `query/aggregate_where_filter` |
 | prover | prover | unsupported: unaliased subquery in FROM | 1 | `query/pipe_pivot_unpivot` |
 | prover | prover | unsupported: nondeterministic: TABLESAMPLE SYSTEM (50 PERCENT) | 1 | `query/tablesample_with_join` |
+| prover | prover | unsupported: Table.version is not modeled | 1 | `query/time_travel_tablesample` |
 | refs | kumosql | ref() inside a js block is not resolved: raw_users | 1 | `dataform/js_block_with_ref_in_helper` |
 <!-- coverage-table:end -->

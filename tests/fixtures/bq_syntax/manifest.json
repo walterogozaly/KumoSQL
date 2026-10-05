@@ -3111,6 +3111,44 @@
     "query",
     "function"
    ]
+  },
+  {
+   "id": "query/pipe_distinct_window_group_and_order",
+   "kind": "sql",
+   "file": "sql/query/pipe_distinct_window_group_and_order.sql",
+   "tags": [
+    "query",
+    "pipe",
+    "window"
+   ]
+  },
+  {
+   "id": "query/string_escape_sequences",
+   "kind": "sql",
+   "file": "sql/query/string_escape_sequences.sql",
+   "tags": [
+    "query",
+    "literal"
+   ]
+  },
+  {
+   "id": "query/ai_scalar_functions",
+   "kind": "sql",
+   "file": "sql/query/ai_scalar_functions.sql",
+   "tags": [
+    "query",
+    "ml"
+   ]
+  },
+  {
+   "id": "query/time_travel_tablesample",
+   "kind": "sql",
+   "file": "sql/query/time_travel_tablesample.sql",
+   "tags": [
+    "query",
+    "tablesample",
+    "time-travel"
+   ]
   }
  ]
 }

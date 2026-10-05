@@ -706,6 +706,12 @@
   "message": "Not found: Connection some_connection",
   "category": "needs_objects"
  },
+ "query/ai_scalar_functions": {
+  "status": "error",
+  "reason": "notFound",
+  "message": "Not found: Connection conn",
+  "category": "needs_objects"
+ },
  "query/anon_differential_privacy": {
   "status": "ok"
  },
@@ -971,6 +977,10 @@
   "status": "ok",
   "bytes": 115676
  },
+ "query/pipe_distinct_window_group_and_order": {
+  "status": "ok",
+  "bytes": 0
+ },
  "query/pipe_extend_set_drop": {
   "status": "ok",
   "bytes": 735596
@@ -1107,6 +1117,10 @@
   "status": "ok",
   "bytes": 302165
  },
+ "query/string_escape_sequences": {
+  "status": "ok",
+  "bytes": 0
+ },
  "query/string_functions": {
   "status": "ok",
   "bytes": 359387
@@ -1162,6 +1176,10 @@
   "reason": "invalidQuery",
   "message": "Function not found: `kumosql.kumosql_messy.some_udf` at [1:8]",
   "category": "needs_objects"
+ },
+ "query/time_travel_tablesample": {
+  "status": "ok",
+  "bytes": 1332943
  },
  "query/unnest_generate_array": {
   "status": "ok",
