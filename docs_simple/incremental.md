@@ -28,12 +28,15 @@ python -m kumosql incremental-report path/to/project
 
 The scan checks incremental Dataform actions under the three contracts. By default it infers source columns and assumes an `id` key and timestamp-shaped columns. These are assumptions to review. Use `--source-schema` to supply real source information; see command help for the file format.
 
+For each model that diverges, the scan also lists the repairs it could prove (see [Suggested repairs](#suggested-repairs)); add `--diffs` to print them as patches of the `.sqlx` file, or `--no-repairs` to skip them. It prints how many diverging models have one. The full guide has the counts on the generated test project, before and after, and what they do and do not show.
+
 ## Read the verdict
 
 - **safe**: a proof rule applies under the stated contract and assumptions.
 - **diverges**: a tested change sequence makes the incremental table differ from a full rebuild or fail. The report includes a replayable example.
+- **nondeterministic**: even the full rebuild can give different tables, because rows that tie in a window or an `ORDER BY` can be picked either way. A witness shows it, and there is no single table for the incremental run to match.
 - **unknown**: no proof applies and the search found no difference.
-- **unsupported** or **timeout**: the model could not be checked within the available support or time.
+- **unsupported** or **timeout**: the model could not be checked within the available support or time. A model that could not run on any generated source state is reported here, not as unknown.
 
 An unknown is not a safety guarantee.
 

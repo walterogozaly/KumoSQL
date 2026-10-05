@@ -97,10 +97,40 @@ Tests: `tests/test_incremental_repairs.py` (the dev cases of `tests/fixtures/inc
 
 ## Scanning a project
 
-`python -m kumosql incremental-report PROJECT` (`kumosql-incremental-report`) checks every `type: "incremental"` action under `definitions/` against three contracts: `append_only`, `late_and_duplicate` and `mutable` (updates and deletes). Source columns are inferred from what the query reads (`id` taken as the unique key, `*_at` / `ts` as event time), so each answer is about the model on those assumed sources; `--source-schema` supplies real columns. Models it cannot simulate (JavaScript helpers in the query, `pre_operations` that run on every run, unparsable SQL) are listed as unsupported, never guessed.
+`python -m kumosql incremental-report PROJECT` (`kumosql-incremental-report`) checks every `type: "incremental"` action under `definitions/` against three contracts: `append_only`, `late_and_duplicate` and `mutable` (updates and deletes). Source columns are inferred from what the query reads (see below), so each answer is about the model on those assumed sources; `--source-schema` supplies real columns. Models it cannot simulate (JavaScript helpers in the query, `pre_operations` that run on every run, unparsable SQL) are listed as unsupported, never guessed.
 
-On the generated fixture project (`python tools/make_dataform_fixture.py OUT --models 600 --seed 11`): 64 incremental models, 54 simulated and 10 unsupported (7 always-run `pre_operations`, 2 JavaScript date helpers, 1 unparsable). Their definition re-runs the full query and merges on `id`. Under `append_only` all 54 are unknown (no proof rule covers merges of a full re-run). Under `late_and_duplicate`, 19 diverge: delivering a row again makes the `MERGE` match one target row twice, which BigQuery rejects. Under `mutable`, 40 diverge: a deleted or changed source row leaves its old row in the table. This is a scan, not a scored eval: the sources are inferred, so there are no labels.
+Each row has one of six outcomes: `safe` (a proof rule applies), `diverges` (a replayable counterexample), **`nondeterministic`** (the full refresh itself depends on tie-breaking, shown by a witness, so there is no single table for the incremental run to equal; it is listed with the window or aggregate that can tie), `unknown` (no divergence found and no proof), `unsupported` and `timeout`. A `diverges` row also carries the **repairs** of the [Repairs](#repairs) section that could be proven, as SQLX patches that are never applied: `--diffs` prints them, `--json` includes them with the proof rule and the full-refresh argument, `--no-repairs` skips the search for them. The summary adds a line per contract: how many diverging models have a proven repair. A diverging model with none lists why each single edit was refused.
 
-On the real fixture repository (`kumosql-dataform-fixture`, commit f056260, read-only): 316 incremental models, 267 simulated and 49 unsupported (35 always-run `pre_operations`, 13 JavaScript `dateFilter` helpers, 1 unparsable). `append_only`: 265 unknown, 2 timeout (no proof rule covers the fixture's merge-of-a-full-re-run definition). `late_and_duplicate`: 105 diverge (a re-delivered row makes the `MERGE` match one target row twice), 162 unknown. `mutable`: 206 diverge (a deleted or changed source row leaves its old row), 61 unknown. Run took about 17 minutes. Unscored, for the same reason.
+**Source inference.** A table is the unit: each table the full query reads gets the columns the query reads from it, a type guessed from the column name, `id` as its unique key and the first timestamp-shaped column as its event time. Columns are found per `SELECT`, so a bare column belongs to the one table its own `SELECT` reads, not only when the whole query reads a single table. A `WITH base AS (SELECT * FROM t)` re-exposes `t`, so columns read from `base` are `t`'s; `a.*` names no column; and `FROM t AS a, UNNEST(a.items) AS item` with `item.qty` and `item.price` makes `items` an `ARRAY<STRUCT<qty INT64, price INT64>>`, which the simulator generates and loads (`kumosql.incremental_sources`, `kumosql.incremental_types`). Before this, a column read through a pass-through CTE was dropped and an unnested column was a scalar, so the model failed to run on every generated state. The search used to skip such a failing state and report `unknown` ("no divergence in 20 sequences") when not one state had run; it now reports `unsupported` ("could not run on any of 20 generated source states", with the first error).
 
-Known limits: a model whose result depends on tie-breaking (an `ORDER BY` or `ROW_NUMBER` with equal keys) can differ between two evaluations; the simulator compares what DuckDB returns and does not detect that.
+**On the generated fixture project** (`python tools/make_dataform_fixture.py OUT --models 600 --seed 11`; 62 incremental models, every one with `updatePartitionFilter` and a merge on `id`, written by the generator, not a real project). Counts are the same for the three contracts; `repaired` counts diverging models with at least one proven repair.
+
+| | before (R7 merged, no repairs) | after (this change) |
+| --- | --- | --- |
+| diverges | 33 | 47 |
+| unknown | 25 | 0 |
+| unsupported | 4 | 15 |
+| nondeterministic | 0 | 0 |
+| `late_and_duplicate` diverging models with a proven repair | none offered | 38 of 47 (81%) |
+| `append_only` diverging models with a proven repair | none offered | 38 of 47 |
+| `mutable` diverging models with a proven repair | none offered | 0 of 47 |
+
+What moved. The 25 `unknown` rows were models the simulator could not run, not models it had checked: 9 with an `UNNEST` of an array column inferred as a scalar, 11 reading a struct through `*`, 5 over a pass-through CTE. With the inference above, the 9 `UNNEST` models and the 5 CTE models run and diverge (the unnest fans one `id` out into several rows, so the `MERGE` sees one `id` twice); the 11 struct models stay out of reach (the BigQuery-on-DuckDB layer refuses a `STRUCT` read by `*`) and are now reported `unsupported`, which is what they are. So the fall in `unknown` is mostly a relabelling of models that were never tested, and the 14 new divergences are real findings of the better inference, not a looser test. The success measures set for this work were at most 5 `append_only` unknown (0 here) and repairs for at least 80% of `late_and_duplicate` divergences (81% here: the 9 without one are the `UNNEST` models, whose output has no unique key for any of the four edits to merge on; the other 38 take "drop `updatePartitionFilter`" alone (23) or "drop it and de-duplicate" (15), the latter proven by R7). The inference and the repairs were developed with this fixture in view, so these counts are optimistic; the unseen fixtures below were generated with other seeds and scanned once, afterwards.
+
+Two other generated projects, scanned once after the code was fixed (`--models 600`, seeds 7 and 23), give the same picture:
+
+| | seed 7 before | seed 7 after | seed 23 before | seed 23 after |
+| --- | --- | --- | --- | --- |
+| incremental models | 64 | 64 | 55 | 55 |
+| diverges (any contract) | 39 | 55 | 23 | 39 |
+| unknown | 23 | 0 | 29 | 0 |
+| unsupported | 2 | 9 | 3 | 16 |
+| `late_and_duplicate` diverging models with a proven repair | none offered | 47 of 55 (85%) | none offered | 28 of 39 (72%) |
+
+`unknown` is 0 on all three. The 80% repair share is met on two of the three: the models with no repair are all `UNNEST` fan-outs, so the share follows how many of the project's models the generator made that shape (11 of 39 diverging models for seed 23, 9 of 47 for seed 11). Adding the element offset to the merge key would repair them, but it adds a column, so it would change the full refresh, which a repair may not do.
+
+This is a scan, not a scored eval: the sources are inferred, so there are no labels.
+
+On the real fixture repository (`kumosql-dataform-fixture`, commit f056260, read-only): 316 incremental models, 267 simulated and 49 unsupported (35 always-run `pre_operations`, 13 JavaScript `dateFilter` helpers, 1 unparsable). `append_only`: 265 unknown, 2 timeout (no proof rule covers the fixture's merge-of-a-full-re-run definition). `late_and_duplicate`: 105 diverge (a re-delivered row makes the `MERGE` match one target row twice), 162 unknown. `mutable`: 206 diverge (a deleted or changed source row leaves its old row), 61 unknown. Run took about 17 minutes. Unscored, for the same reason. These counts were taken before R7, the tie witness and the changes above and have not been re-run.
+
+Known limits: a model whose result depends on tie-breaking is `nondeterministic` only when a witness shows it (the same rows stored in a different order give a different result); a tie the simulator cannot provoke stays `unknown` or `diverges`.

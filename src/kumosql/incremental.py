@@ -38,6 +38,7 @@ from sqlglot import exp
 
 from .ast_utils import spell_for_duckdb
 from .duckdb_load import small_database
+from .incremental_types import duck_array_type, random_array
 from .sqlx import _find_interpolation_end, split_sqlx_sections
 
 
@@ -686,7 +687,8 @@ class Simulation:
         self.failed: str | None = None
         for name, table in sources.items():
             cols = ", ".join(
-                f'"{c}" {_DUCK_TYPES.get(t.upper(), t)}' + (f" DEFAULT {table.defaults[c]}" if c in table.defaults else "")
+                f'"{c}" {_DUCK_TYPES.get(t.upper()) or duck_array_type(t, _DUCK_TYPES) or t}'
+                + (f" DEFAULT {table.defaults[c]}" if c in table.defaults else "")
                 for c, t in table.columns.items()
             )
             if table.defaults:
@@ -892,6 +894,10 @@ def _literal(value: Any) -> str:
         return f"DATE '{value:%Y-%m-%d}'"
     if isinstance(value, str):
         return "'" + value.replace("'", "''") + "'"
+    if isinstance(value, list):
+        return "[" + ", ".join(_literal(v) for v in value) + "]"
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{_literal(k)}: {_literal(v)}" for k, v in value.items()) + "}"
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"
     return repr(value)
@@ -899,6 +905,8 @@ def _literal(value: Any) -> str:
 
 def _random_value(rng: random.Random, sql_type: str) -> Any:
     t = sql_type.upper()
+    if t.startswith("ARRAY<"):
+        return random_array(rng, sql_type, _random_value)
     if t in ("INT64", "INTEGER"):
         return rng.randint(0, 3)
     if t in ("FLOAT64", "NUMERIC"):
@@ -1105,13 +1113,15 @@ def search_divergence(
     if unknown:
         raise IncrementalError(f"unknown change kinds: {sorted(unknown)}")
     deadline = None if time_limit is None else time.monotonic() + time_limit
+    failures: list[str] = []
     for s in range(seeds):
         if deadline is not None and time.monotonic() > deadline:
             raise TimeoutError("counterexample search ran out of time")
         initial, plan = random_sequence(sources, kinds, seed * 100003 + s, batches, tables)
         try:
             result = first_divergence(replay(model, sources, initial, plan))
-        except IncrementalError:
+        except IncrementalError as exc:
+            failures.append(str(exc))
             continue
         if result is not None:
             small_i, small_b = minimize(model, sources, initial, plan)
@@ -1120,6 +1130,9 @@ def search_divergence(
                 continue
             detail = final.error or f"incremental has {len(final.only_incremental)} extra and {len(final.only_full)} missing rows"
             return Counterexample(tuple(small_i), tuple(tuple(b) for b in small_b), final.index, final.status, detail)
+    if seeds and len(failures) == seeds:
+        # not one sequence ran, so "no divergence" would claim a search that never happened
+        raise IncrementalError(f"the model could not run on any of {seeds} generated source states: {failures[0][:160]}")
     return None
 
 
