@@ -144,6 +144,17 @@ def _install_lazy_rows() -> None:
     engine.Generator._bounded_lazy_rows = True
 
 
+def _naive(value):
+    """A TIMESTAMPTZ value (sqlglot writes MySQL's TIMESTAMP so) as the same instant in UTC without a zone, so a
+    zone-aware and a naive datetime of one wall-clock value do not read as a difference (the session zone is UTC)."""
+
+    import datetime as _dt
+
+    if isinstance(value, _dt.datetime) and value.tzinfo is not None:
+        return value.astimezone(_dt.timezone.utc).replace(tzinfo=None)
+    return value
+
+
 def _install_watchdog() -> None:
     """One watchdog thread per runner instead of a ``threading.Timer`` per query (under load, starting a
     thread per query took half of the search time); same interrupt after ``query_seconds``, checked
@@ -175,7 +186,7 @@ def _install_watchdog() -> None:
             threading.Thread(target=_watch, args=(self,), daemon=True).start()
         self._watch_deadline = time.time() + self.query_seconds
         try:
-            return self.db.execute(sql).fetchall()
+            return [tuple(_naive(v) for v in row) for row in self.db.execute(sql).fetchall()]
         except self.duckdb.Error as error:
             raise engine.QueryError(f"{type(error).__name__}: {str(error).splitlines()[0][:300]}") from None
         finally:
@@ -273,7 +284,8 @@ class Legal:
         for name, table in schema.tables.items():
             for position, column in enumerate(table.columns):
                 if be.kind_of(column.type) == "real":
-                    domain = be._REAL_DOMAINS.get(be._base_type(column.type))
+                    # the encoding's own domain (a declared NUMERIC(p, s) is read since 2026-10-04; DECIMAL stays unrestricted)
+                    domain = be._real_domain(column.type) if hasattr(be, "_real_domain") else be._REAL_DOMAINS.get(be._base_type(column.type))
                     if domain is not None:
                         self.domains[(name, position)] = domain
 
