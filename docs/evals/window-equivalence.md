@@ -56,6 +56,20 @@ Labels of `derived`, `idiom` and `slt` cases are checked by execution, not only 
 
 Held-out quarter (62 of the 250 cases): 16/26 equivalent proved (hand-written 1/10), 7/7 non-equivalent refuted, 0 wrong.
 
+### Re-measured after merging master
+
+Master moved 27 commits after the baseline (none of them a window rule: eval tooling and test policy, a normalization and proof-call cleanup, the SQLGlot 30.21 pin, an advisor). The same 250 cases were rerun on the merge `73fefbb2` (no case, label or fixture edited, nothing tuned on the held-out quarter):
+
+| | Baseline (`04af1a9e`) | After merging master (`73fefbb2`) |
+| --- | --- | --- |
+| Equivalent proved | 64/100 | 64/100 (hand-written 6/38, sqllogictest 58/62) |
+| Non-equivalent refuted | 55/59, none proved | 55/59, none proved (tie-dependent 17/20) |
+| Unlabelled VeriEQL pairs proved / refuted / unknown | 6 / 9 / 76 | 14 / 9 / 68 |
+| Wrong | 0 | 0 |
+| Held-out quarter, unlabelled proved | 3 of 29 | 5 of 29 (the rest of the held-out numbers unchanged) |
+
+Every labelled number is unchanged. The only movement is eight more of the 15 VeriEQL Calcite window pairs proved, which comes from something else that landed on master (not bisected) and not from a rule for windows; those pairs count for coverage and for wrong only, and the harness's further executed search contradicts none of the 14 proofs. The results file records the re-measured numbers.
+
 Read the 64/100 with care: 58 of the 64 proofs are the sqllogictest pairs, which are mostly a query against itself wrapped in a subquery or an unused CTE. On the hand-written pairs the baseline proves 6 of 38 equivalent pairs (16%): QUALIFY against the same window in a derived table (with a total order and, because both sides keep an arbitrary tied row, with ties), `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` against the default frame, the BigQuery default NULL order of `DESC`, and an unused window. None of the rank-one forms (`ROW_NUMBER`, `RANK`, join to the grouped `MAX`, `NOT EXISTS`, `MAX_BY`), the windowed aggregate against its join form, `ROWS` against `RANGE` over unique keys, `LAG` against `LEAD`, a filter pushed through a window, or the sessionisation and islands idioms is proved yet; they are the targets of the rule PRs. The tie traps hold: none of the 20 tie-dependent non-equivalent pairs is proved, 17 are refuted by a replayed database and 3 stay unknown (Spark pair 50, `RANK() <= 2` against `DENSE_RANK() <= 2`, and an `ARRAY_AGG .. LIMIT` pair DuckDB cannot run). No equivalent pair is refuted, including the two equivalent pairs that are nondeterministic on both sides (`MAX_BY` against `ROW_NUMBER() = 1`) and the ones that only look tie-dependent (only `ts` is read after the window).
 
 Of the 91 unlabelled VeriEQL pairs the harness proves 6 (all Calcite), refutes 9 by an executed counterexample and leaves 76 unknown; none of its proofs is contradicted by a further search.

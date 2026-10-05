@@ -2,16 +2,16 @@
   "suite": "Window equivalence (windows and ties)",
   "order": 60,
   "size": 250,
-  "score": "64/100 equivalent proved (hand-written 6/38, sqllogictest 58/62), 55/59 non-equivalent refuted (tie-dependent 17/20, 0 proved), 6 proved and 9 refuted of 91 unlabelled, 0 wrong",
+  "score": "64/100 equivalent proved (hand-written 6/38, sqllogictest 58/62), 55/59 non-equivalent refuted (tie-dependent 17/20, 0 proved), 14 proved and 9 refuted of 91 unlabelled, 0 wrong",
   "metric": "Query pairs around window functions and ties (latest row per key, sessions, running totals, gaps and islands, rank-one forms, frames, filters through a window; pairs from the DuckDB sqllogictest suite and window pairs of other benchmarks' development splits): equivalent pairs proved, non-equivalent pairs refuted or left unknown, never proved, and no wrong answer.",
   "evidence": "proof",
   "correctness": "Wrong is a proof of a pair not labelled equivalent, or a claim (replayed or not) that an equivalent pair differs. Hand-written and sqllogictest labels are executed on DuckDB (one thread) over every row order of tie-heavy databases; non-equivalent ones carry a witness whose sets of results differ; a refutation counts only when its database keeps the declared keys and NOT NULL columns and separates the queries in DuckDB. Corpus pairs have no label (VeriEQL's files carry none): they are only checked for a proof that the harness's executed search contradicts.",
   "coverage": {
-    "proven": 70,
+    "proven": 78,
     "refuted": 64,
-    "unknown": 116
+    "unknown": 108
   },
-  "held_out": "16/26 equivalent proved (hand-written 1/10, sqllogictest 15/16), 7/7 non-equivalent refuted (tie-dependent 2/2, 0 proved), 3 proved and 4 refuted of 29 unlabelled, 0 wrong (62 cases)",
+  "held_out": "16/26 equivalent proved (hand-written 1/10, sqllogictest 15/16), 7/7 non-equivalent refuted (tie-dependent 2/2, 0 proved), 5 proved and 4 refuted of 29 unlabelled, 0 wrong (62 cases)",
   "docs": "docs/evals/window-equivalence.md",
   "command": "python tools/window_equivalence_bench.py --write-results",
   "date": "2026-10-05",
@@ -22,6 +22,6 @@
     "duckdb": "1.5.6",
     "z3-solver": "5.1.0.0",
     "sqlfluff": "4.4.0",
-    "commit": "04af1a9e+changes"
+    "commit": "73fefbb2"
   }
 }
