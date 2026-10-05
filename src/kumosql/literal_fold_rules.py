@@ -67,12 +67,20 @@ def _constant_row(select: exp.Expression) -> tuple | None:
     return tuple(("n", Decimal(lit.name)) if isinstance(lit, exp.Literal) and not lit.is_string else ("s", lit.name) if isinstance(lit, exp.Literal) else ("null",) for lit in (item.unalias() for item in select.expressions))
 
 
+_TAIL = ("order", "limit", "offset")
+
+
 def _union_rows(node: exp.Expression) -> list[exp.Select] | None:
     """The branches of a union of constant rows that holds each row once, else ``None``."""
 
+    # a LIMIT, OFFSET or ORDER BY on the parentheses or on the union keeps some of its rows: the rows are not the whole union
     while isinstance(node, exp.Subquery):
+        if node.alias or any(node.args.get(k) for k in _TAIL):
+            return None
         node = node.this
     if isinstance(node, exp.Union):
+        if any(node.args.get(k) for k in _TAIL + ("with_", "with", "by_name", "side", "kind", "on")):
+            return None
         left, right = _union_rows(node.left), _union_rows(node.right)
         if left is None or right is None:
             return None
