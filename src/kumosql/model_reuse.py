@@ -1118,6 +1118,25 @@ ORDER_ASSUMPTION = "the rows are compared as a bag; ORDER BY keys are carried ov
 _SHAPE_MISMATCH = ("no row-preserving mapping between the queries was found", "a derived table is not joined on all of its columns")
 
 
+def _keys_in_play(declared, *sqls: str) -> bool:
+    """Whether a declared key or foreign key could have changed how the prover read these queries.
+
+    A key matters when its table is read, a foreign key when its child and its parent both are; without
+    either the retry would reproduce the first attempt, so it is skipped (about half its cost on Calcite's
+    cases). A query that does not parse keeps the retry."""
+
+    try:
+        read = {t.name.lower() for sql in sqls for t in sqlglot.parse_one(sql, read="postgres").find_all(exp.Table)}
+    except sqlglot.errors.SqlglotError:
+        return True
+    for table, constraints in declared.items():
+        if table.lower() in read and constraints.keys:
+            return True
+        if table.lower() in read and any(parent.rsplit(".", 1)[-1].lower() in read for _, parent, _ in constraints.foreign_keys):
+            return True
+    return False
+
+
 def _prove(query_sql, replacement_sql, schema, constraints, types, timeout_ms, dialect, exact_arithmetic):
     """The prover's verdict on ``query == replacement``, or None when it crashed.
 
@@ -1147,7 +1166,7 @@ def _prove(query_sql, replacement_sql, schema, constraints, types, timeout_ms, d
     declared = dict(constraints) if constraints else None
     result = attempt(declared)
     keyed = declared and any(c.keys or c.foreign_keys for c in declared.values())
-    if keyed and result is not None and result.status is SmtStatus.NOT_PROVEN and result.reason in _SHAPE_MISMATCH:
+    if keyed and result is not None and result.status is SmtStatus.NOT_PROVEN and result.reason in _SHAPE_MISMATCH and _keys_in_play(declared, query_sql, replacement_sql):
         plain = attempt({t: TableConstraints(not_null=c.not_null) for t, c in declared.items()})
         if plain is not None and plain.status is SmtStatus.PROVEN_EQUIVALENT:
             return plain

@@ -31,4 +31,14 @@ Averages need the sum and count: averaging daily averages gives the wrong weight
 
 This rebuilding is called aggregate decomposition. The report checks whether the existing summary kept enough information, then proves a supported replacement or declines it.
 
+## How the reuse check is tested
+
+The reuse check is scored on four sets of materialized-view cases: Calcite's own tests, cases written for shared models, Apache Doris's outer-join view tests, and a set written for KumoSQL about outer joins, declared keys, views that cover only part of a query's range, and set operations. In each case the question is the same: can the query be answered from the view, and is the replacement really the same query?
+
+For example, a view that lists every order with its customer (a left join) can answer a query that only wants orders that have a customer, by keeping the view rows where a customer was found. Reading the view without that filter would give extra rows, so the check must refuse it. Every proposed replacement is proven, and then also run against the original on many random small databases.
+
+Those random databases respect declared foreign keys: a child row's key is copied from a real parent row, or left empty when the column allows it. Without that, a rewrite that is valid only because every order has a customer would be wrongly refuted by a made-up orphan order. When declared keys make the proof fail only because the two sides were simplified differently, the check tries again assuming just the NOT NULL columns, which is a weaker and therefore still safe assumption.
+
+The limits: the Calcite and Doris verdicts only say what those systems did, not what is possible, and most outer-join cases are not answered yet. The cases written for KumoSQL carry a checked answer (a replacement that works, or a counterexample for each tempting replacement that does not), but they are small. See the [full reference](../docs/model-reuse.md) for the recorded scores.
+
 These checks depend on the schema, declared constraints, and the features the prover supports. The full guide contains API signatures and regression examples. [Pipeline analysis](pipeline-analysis.md) explains how to find candidate overlaps and rollups across a project.
