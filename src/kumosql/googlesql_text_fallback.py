@@ -491,6 +491,25 @@ def _multiway_unnest(sql: str, dialect: str) -> str | None:
     return _cut(sql, spans) if spans else None
 
 
+def _new_proto(sql: str, dialect: str) -> str | None:
+    """``NEW pkg.Message(1 AS field)``: a protocol buffer constructor, a type the typer does not model."""
+
+    tokens = _tokens(sql, dialect)
+    pairs = _pairs(tokens) if tokens is not None else None
+    if tokens is None or pairs is None:
+        return None
+    spans: list[tuple[int, int, str]] = []
+    for i, t in enumerate(tokens):
+        if t.upper != "NEW":
+            continue
+        j = i + 1
+        while j < len(tokens) and tokens[j].type in ("VAR", "IDENTIFIER", "DOT"):
+            j += 1
+        if j > i + 1 and j < len(tokens) and tokens[j].type == "L_PAREN":
+            spans.append((t.start, tokens[pairs[j]].end, f"{UNKNOWN_FUNCTION}()"))
+    return _cut(sql, spans) if spans else None
+
+
 _REWRITES = (
     ("privacy clause", _privacy_clause),
     ("aggregate filter or group", _aggregate_clauses),
@@ -498,6 +517,7 @@ _REWRITES = (
     ("multiway unnest", _multiway_unnest),
     ("match recognize", _match_recognize),
     ("quantified comparison over an array", _quantified_unnest),
+    ("protocol buffer constructor", _new_proto),
     ("unknown cast type", _unknown_casts),
     ("unknown typed constructor", _unknown_typed_arrays),
 )
