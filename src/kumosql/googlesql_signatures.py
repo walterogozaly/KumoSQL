@@ -191,7 +191,8 @@ ARRAY_OF_STRING_OR_BYTES = {"SPLIT", "REGEXP_EXTRACT_ALL"}
 SUPERTYPE_OF_ALL = {"COALESCE", "IFNULL", "GREATEST", "LEAST", "IFERROR", "NULLIF"}
 # Functions that keep the argument's type only for some input types.
 DATE_PART_FUNCTIONS = {
-    "DATE_ADD": {"DATE"}, "DATE_SUB": {"DATE"}, "DATETIME_ADD": {"DATETIME"}, "DATETIME_SUB": {"DATETIME"},
+    "DATE_ADD": {"DATE", "DATETIME"}, "DATE_SUB": {"DATE", "DATETIME"},
+    "DATETIME_ADD": {"DATETIME", "TIMESTAMP"}, "DATETIME_SUB": {"DATETIME", "TIMESTAMP"},
     "TIMESTAMP_ADD": {"TIMESTAMP"}, "TIMESTAMP_SUB": {"TIMESTAMP"}, "TIME_ADD": {"TIME"}, "TIME_SUB": {"TIME"},
     "DATE_TRUNC": {"DATE", "DATETIME", "TIMESTAMP"}, "DATETIME_TRUNC": {"DATETIME", "DATE", "TIMESTAMP"},
     "TIMESTAMP_TRUNC": {"TIMESTAMP", "DATE", "DATETIME"}, "TIME_TRUNC": {"TIME"},
@@ -199,6 +200,13 @@ DATE_PART_FUNCTIONS = {
     # The bucket functions keep their input's type (DATE_BUCKET of a DATETIME is a DATETIME).
     "DATE_BUCKET": {"DATE", "DATETIME", "TIMESTAMP"}, "DATETIME_BUCKET": {"DATE", "DATETIME", "TIMESTAMP"},
     "TIMESTAMP_BUCKET": {"DATE", "DATETIME", "TIMESTAMP"},
+}
+# Date-part functions whose first argument is a string literal or NULL (it coerces to the function's home type):
+# name -> (home type, literal kinds that take it). NULL is left out where the function has several overloads.
+LITERAL_HOME = {
+    "ADD_MONTHS": (DATE, {"string"}), "TIMESTAMP_TRUNC": (TIMESTAMP, {"string"}),
+    "DATE_BUCKET": (DATE, {"string", "null"}), "DATETIME_BUCKET": (DATETIME, {"string", "null"}),
+    "TIMESTAMP_BUCKET": (TIMESTAMP, {"string", "null"}),
 }
 
 # Node classes sqlglot builds from special syntax (no written function name), each with a single BigQuery source.
@@ -405,6 +413,9 @@ def _named(typer, node, name: str, scope, ctes) -> T:
         first = call.first()
         if first.lit is None and first.type is not None and first.type.kind in DATE_PART_FUNCTIONS[name]:
             return T(first.type)
+        home = LITERAL_HOME.get(name)
+        if home is not None and first.lit in home[1]:
+            return T(home[0])
         return UNKNOWN
     return UNKNOWN
 
