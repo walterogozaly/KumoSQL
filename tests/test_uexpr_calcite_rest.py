@@ -75,3 +75,16 @@ def test_existence_inside_existence_merges():
         "SELECT deptno FROM emp GROUP BY deptno",
         "SELECT t.deptno FROM (SELECT ename, deptno FROM emp WHERE sal > 1 GROUP BY ename, deptno) AS t GROUP BY t.deptno",
     )
+
+
+def test_sum_of_an_outside_value_over_a_join_is_the_value_times_the_count():
+    left = (
+        "SELECT t.ename, SUM(t.sal) FROM (SELECT * FROM emp WHERE empno = 10) AS t "
+        "INNER JOIN dept AS d ON t.ename = d.name GROUP BY t.ename, d.name"
+    )
+    right = (
+        "SELECT t1.ename, CAST(t1.sal * t2.c AS SIGNED) FROM (SELECT ename, sal FROM emp WHERE empno = 10) AS t1 "
+        "INNER JOIN (SELECT name, COUNT(*) AS c FROM dept GROUP BY name) AS t2 ON t1.ename = t2.name"
+    )
+    assert proves(left, right)
+    assert not proves(left, right.replace("t1.sal * t2.c", "t1.sal + t2.c"))

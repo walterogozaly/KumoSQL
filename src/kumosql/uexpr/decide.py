@@ -556,10 +556,14 @@ class Problem:
             if not t.vars:
                 total.append(self._closed_term(t))
             else:
-                ct = canon_term(t)
-                groups.setdefault(signature(ct), []).append(t)
-        for sig, members in sorted(groups.items()):
-            total.append(self.sum_atom(members))
+                outer, rest = _split_outer(t)
+                ct = canon_term(rest)
+                groups.setdefault((signature(ct), tuple(sorted(map(repr, outer)))), ([], outer))[0].append(rest)
+        for sig, (members, outer) in sorted(groups.items(), key=lambda kv: kv[0]):
+            atom = self.sum_atom(members)
+            for f in outer:
+                atom = atom * self.factor(f)
+            total.append(atom)
         return z3.Sum(*total) if len(total) > 1 else (total[0] if total else z3.RealVal(0))
 
     def _closed_term(self, t: Term):
@@ -854,6 +858,25 @@ class Problem:
         self.prover.checks += 1
         result = solver.check()
         return result == z3.unsat
+
+
+def _split_outer(t: Term) -> tuple:
+    """``(outer, rest)``: the conditions and values of ``t`` that do not read its summed variables.
+
+    ``Σx. c·f(x) = c·Σx. f(x)`` when ``c`` does not mention ``x``, so ``val(e)·Σx.f(x)`` is one product of
+    an outside value and the same atom the sum without ``val(e)`` gives.
+    """
+
+    bound = set(t.vars)
+    outer, kept = [], []
+    for f in t.factors:
+        if isinstance(f, (NInd, NVal)) and not (free_vars(f) & bound):
+            outer.append(f)
+        else:
+            kept.append(f)
+    if not outer:
+        return (), t
+    return tuple(outer), Term(t.vars, t.coef, tuple(kept))
 
 
 def _canonical_agg(v: Agg) -> bool:
