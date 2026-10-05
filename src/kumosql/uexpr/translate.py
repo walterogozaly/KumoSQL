@@ -254,6 +254,21 @@ class Query:
     single: tuple | None = None  # values, when the query returns exactly one row (global aggregate)
 
 
+def _is_lateral_join(node) -> bool:
+    """``JOIN LATERAL (subquery) alias``: a derived table that may read the rows to its left."""
+
+    return (
+        isinstance(node, exp.Lateral)
+        and isinstance(node.parent, exp.Join)
+        and node.parent.this is node
+        and isinstance(node.this, exp.Subquery)
+        and not node.args.get("view")
+        and not node.args.get("outer")
+        and not node.args.get("cross_apply") is False
+        and all(not node.args.get(k) for k in ("ordinality", "expressions", "offset"))
+    )
+
+
 def _whole_number(node) -> int | None:
     if isinstance(node, exp.Literal) and not node.is_string and node.this.isdigit():
         return int(node.this)
@@ -360,6 +375,8 @@ class Translator:
                 raise Unsupported(f"{name} is not modeled")
             if isinstance(sub, exp.Anonymous) and (sub.name or "").upper() in _NONDETERMINISTIC:
                 raise Unsupported(f"{sub.name} is not modeled")
+            if isinstance(sub, exp.Lateral) and _is_lateral_join(sub):
+                continue
             if isinstance(sub, (exp.Pivot, exp.Unnest, exp.Lateral)):
                 raise Unsupported(f"{name} is not modeled")
         return self.query(tree, None, {})
@@ -575,7 +592,22 @@ class Translator:
         side = (join.args.get("side") or "").upper()
         if kind in ("SEMI", "ANTI", "STRAIGHT_JOIN") or kind not in ("", "INNER", "CROSS", "OUTER"):
             raise Unsupported(f"{kind} join")
-        right = self.item_rows(join.this, outer, ctes)
+        lateral = isinstance(join.this, exp.Lateral)
+        if lateral:
+            # A LATERAL derived table reads the columns of the rows to its left, so each left row sees its own
+            # right rows. Only an inner or left join can: nothing on the left may depend on the right.
+            if side not in ("", "LEFT") or not _is_lateral_join(join.this):
+                raise Unsupported("LATERAL")
+            inner = join.this.this
+            alias_node = join.this.args.get("alias")
+            q = self.query(inner.this, Scope(left.sources, outer, left.using, ctes), ctes)
+            if alias_node is not None and alias_node.columns:
+                if len(alias_node.columns) != len(q.out):
+                    raise Unsupported("derived table column list")
+                q.names = [c.name.lower() for c in alias_node.columns]
+            right = self._derived_rows(alias_node.name.lower() if alias_node is not None and alias_node.name else f"$anon{fresh_id()}", q)
+        else:
+            right = self.item_rows(join.this, outer, ctes)
         overlap = set(left.sources) & set(right.sources)
         if overlap:
             raise Unsupported(f"duplicate alias {sorted(overlap)[0]}")
@@ -624,6 +656,8 @@ class Translator:
             (lbody, lv2), m1 = freshen_free((left.body, tuple(lvals)), left.vars)
             (rbody, on2), m2 = freshen_free((right.body, on_t), right.vars)
             on2 = subst(on2, m1)
+            if lateral:
+                rbody = subst(rbody, m1)  # the right rows read this left row's columns
             unmatched = ind(neg(Exists(nsum(tuple(m2[v] for v in right.vars), nmul(rbody, ind(on2))))))
             parts.append(nsum(tuple(m1[v] for v in left.vars), nmul(lbody, unmatched, bind(list(lv2) + pad_r))))
         if side in ("RIGHT", "FULL"):
