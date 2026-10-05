@@ -96,6 +96,10 @@ Proofs may depend on declared keys, non-NULL columns, arithmetic assumptions, or
 
 If you tell KumoSQL that column `x` of table `t` is never NULL, that promise is about `t`, not about `other_ds.t`, which is another table that only happens to share the name. A rewrite such as "this `EXISTS` test is always true because every row matches itself" is only safe when `x` cannot be NULL, so it now checks the promise under the same spelling the query uses. A promise made for `ds.t` is used for `ds.t`, and a foreign key may name its parent table with fewer leading parts than were declared, never with more. The evidence is a few pairs checked against DuckDB with data that breaks the promise; the details are in [provers](../docs/provers.md) and `tests/test_declared_fact_spelling.py`.
 
+## Moving a test onto a column of another type
+
+`x IN (SELECT c FROM t WHERE c IN other)` can be rewritten as two tests on `x`, because a row only counts when `c` equals `x`. That holds only if `x` and `c` are the same kind of number. A floating-point column compared with a whole-number column is compared as floating-point numbers, and a test written for the whole number (`c = 9007199254740993`) then accepts a neighbouring value that the whole number would not. KumoSQL therefore moves such tests only between the same column of the same table. This is a deliberately cautious rule: it gives up some proofs it could make if column types were passed to it. Details and the DuckDB witness are in [provers](../docs/provers.md).
+
 ## Numbers and errors
 
 BigQuery numbers have traps. A whole number past about nine quadrillion loses its last digits once it meets a decimal, `0.1 + 0.2` is not `0.3`, and dividing by zero is an error. Worse, BigQuery does not promise to filter rows before it computes the select list, so `SELECT x / y FROM t WHERE y <> 0` can still divide by zero.
