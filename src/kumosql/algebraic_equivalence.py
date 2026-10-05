@@ -51,6 +51,7 @@ from .constraint_normalization import keyed_join_to_exists, normalize_key_counts
 from .grouping_expansion import collapse_grouping_expansion
 from .grouping_sets import expand_grouping_sets, grouping_sets_to_union
 from .named_windows import inline_named_windows
+from .nested_in_unnest import rewrite_in_unnest
 from .having_rules import key_having_to_where
 from .window_canonical import canonical_windows
 from .unread_windows import drop_unread_windows
@@ -4880,6 +4881,7 @@ def normalize(
         )
 
     types_map = {k.lower(): {c.lower(): t for c, t in v.items()} for k, v in (types or {}).items()}
+    tree = rewrite_in_unnest(tree, types, not_null, _assumptions)
 
     def qualify(select: exp.Select) -> exp.Expression | None:
         if not schema:

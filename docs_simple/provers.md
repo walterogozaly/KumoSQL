@@ -121,3 +121,11 @@ A database that compares a whole number with a decimal column first converts the
 ## Example: a DISTINCT that can move outward
 
 A query that removes duplicates inside a subquery, then joins it to a table on whole-number key columns, can have its duplicate removal moved to the outside when the join already makes every output row unique. KumoSQL's prover applies that move only when the columns are declared whole numbers and the joined tables' keys are fully pinned down; any grouping, limit, outer join or other twist makes it decline and leave the pair unproven. The evidence is a handful of textbook query pairs, so treat it as a narrow rule. The reference page has the exact conditions and the recorded scores: [Full reference](../docs/provers.md).
+
+## Is this value in the array?
+
+`x IN UNNEST(arr)` asks whether a value is one of the items of an array. KumoSQL's prover now treats it the way it treats a membership test against a subquery, including BigQuery's three-valued answer (a NULL value against a non-empty array is "unknown", not "no"). A list written inline (`x IN UNNEST([1, 2])`) is the same as `x IN (1, 2)`.
+
+Example: `WHERE NOT 'sale' IN UNNEST(tags)` and `WHERE NOT EXISTS (SELECT 1 FROM UNNEST(tags) AS t WHERE t = 'sale')` are proved equal when `tags` is an array column of a stored table, because a stored array cannot contain NULL. The proof lists that fact as an assumption. If the value on the left can be NULL, or the array is built by an expression that might contain a NULL, the two are not the same and the prover says so (or says unknown). It also never treats "is in the array" as "the array is not empty".
+
+Limits: the evidence is the unit tests (each trap next to the pairs that are proved, and a DuckDB run of both sides on small data) and a few hand-written pairs. Struct arrays and values read out of structs are not covered here. Details and the exact conditions: [Full reference](../docs/provers.md#membership-over-unnest).
