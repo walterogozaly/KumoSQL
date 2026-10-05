@@ -11,7 +11,7 @@ python tools/proof_recheck.py singh --pairs KEY1,KEY2 --budget 20000
 python tools/proof_recheck.py verieql --every 40 --budget 150 --seconds 30 --out /tmp/rc
 ```
 
-`--out` takes a folder for one `<eval>.jsonl` per eval, one record per pair; a rerun skips pairs already written unless `--fresh`. A machine with 4 cores is oversubscribed by more than about `--jobs 2` of the heavier evals. The raw output is large, so it is not committed.
+`--out` takes a folder for one `<eval>.jsonl` per eval, one record per pair; a rerun skips pairs already written unless `--fresh`. `--since <folder>` skips the pairs an earlier run already re-checked (survived or differs) and runs only the rest: pairs it did not prove then, timeouts, unrunnable ones and pairs added since, which is how to re-check what a prover change newly proves. A machine with 4 cores is oversubscribed by more than about `--jobs 2` of the heavier evals. The raw output is large, so it is not committed.
 
 ## The search
 
