@@ -411,6 +411,8 @@ def infer(sql_or_tree, catalog: Catalog | None = None, dialect: str = "bigquery"
         return TypedQuery(tree, None, (), {}, {}, "not a query")
     if any(_TEMPLATE_MASK.search(i.name) for i in tree.find_all(exp.Identifier)):
         return TypedQuery(tree, None, (), {}, {}, "Dataform placeholder in the query")  # a mask can stand for anything
+    if text is not None and _KEYWORD_FIELD.search(_without_strings(text)):
+        return TypedQuery(tree, None, (), {}, {}, "a type keyword after a dot is read differently by older sqlglot")
     typer = _Typer(catalog, text if text is not None else tree.sql(dialect))
     try:
         rel = typer.query(tree, None, {})
@@ -425,6 +427,24 @@ def infer(sql_or_tree, catalog: Catalog | None = None, dialect: str = "bigquery"
 
 
 _TEMPLATE_MASK = re.compile(r"__sqlx_token_\d+__")
+# `x.array[0]`: sqlglot 26.0.0 drops the `x.` and reads an array literal; newer sqlglot rejects it. Either way the
+# query is not typed.
+_KEYWORD_FIELD = re.compile(r"\.\s*(?:ARRAY|STRUCT)\s*[\[<(]", re.I)
+
+
+def _pivot_fields(pivot: exp.Pivot) -> list:
+    """The ``FOR x IN (..)`` of a PIVOT: sqlglot 30 keeps a list in ``fields``, sqlglot 26 one node in ``field``."""
+
+    fields = pivot.args.get("fields")
+    if fields is None and pivot.args.get("field") is not None:
+        fields = [pivot.args["field"]]
+    return fields or []
+
+
+def _is_plain_name(node) -> bool:
+    """An identifier, or (sqlglot 26 reads the UNPIVOT name column so) a column with no qualifier."""
+
+    return isinstance(node, exp.Identifier) or (isinstance(node, exp.Column) and not node.table)
 
 
 def _without_strings(sql: str) -> str:
@@ -847,7 +867,7 @@ class _Typer:
         """PIVOT: the input columns no aggregate and no FOR expression reads, then one column per IN value and
         aggregate (value-major), typed as the aggregate and named ``prefix_value``."""
 
-        fields = pivot.args.get("fields") or []
+        fields = _pivot_fields(pivot)
         if len(fields) != 1 or not isinstance(fields[0], exp.In):
             return None
         scope = _Scope(outer)
@@ -886,8 +906,8 @@ class _Typer:
         """UNPIVOT: the input columns not unpivoted, then the value columns (typed as the first column set; the
         sets must have equal types) and the name column (STRING, or INT64 for integer labels)."""
 
-        fields = pivot.args.get("fields") or []
-        if len(fields) != 1 or not isinstance(fields[0], exp.In) or not isinstance(fields[0].this, exp.Identifier):
+        fields = _pivot_fields(pivot)
+        if len(fields) != 1 or not isinstance(fields[0], exp.In) or not _is_plain_name(fields[0].this):
             return None
         targets = pivot.expressions[0].expressions if len(pivot.expressions) == 1 and isinstance(
             pivot.expressions[0], exp.Tuple) else pivot.expressions

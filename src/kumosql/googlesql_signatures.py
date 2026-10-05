@@ -301,13 +301,26 @@ _ARITHMETIC = {exp.Add: "+", exp.Sub: "-", exp.Mul: "*", exp.Div: "/", exp.IntDi
 _BITWISE = (exp.BitwiseAnd, exp.BitwiseOr, exp.BitwiseXor, exp.BitwiseLeftShift, exp.BitwiseRightShift)
 
 
+# sqlglot before 30 has no SafeFunc / NetFunc: it reads SAFE.f(x) and NET.f(x) as a Dot, which type_call handles below.
+_SAFE_FUNC = getattr(exp, "SafeFunc", ())
+_NET_FUNC = getattr(exp, "NetFunc", ())
+
+
+def _is_json_literal(node: exp.ParseJSON) -> bool:
+    """``JSON '...'``: sqlglot 30 flags it ``is_literal``; sqlglot 26 gives a ParseJSON of a string with no written name."""
+
+    return bool(node.args.get("is_literal")) or (
+        node._meta is None and isinstance(node.this, exp.Literal) and node.this.is_string and len(node.args) == 1  # noqa: SLF001
+    )
+
+
 def type_call(typer, node: exp.Expression, scope, ctes) -> T:
     if isinstance(node, _COMPARISONS):
         _visit_children(typer, node, scope, ctes)
         return T(BOOL)
     if isinstance(node, exp.Exists):
         return T(BOOL)
-    if isinstance(node, exp.ParseJSON) and node.args.get("is_literal"):
+    if isinstance(node, exp.ParseJSON) and _is_json_literal(node):
         return T(JSON)
     if isinstance(node, (exp.ByteString,)):
         return T(BYTES, "bytes")
@@ -338,9 +351,9 @@ def type_call(typer, node: exp.Expression, scope, ctes) -> T:
         return case(typer, node, scope, ctes)
     if isinstance(node, exp.If):
         return if_(typer, node, scope, ctes)
-    if isinstance(node, exp.SafeFunc):
+    if isinstance(node, _SAFE_FUNC):
         return typer.expr(node.this, scope, ctes)
-    if isinstance(node, exp.NetFunc):
+    if isinstance(node, _NET_FUNC):
         inner = node.this
         name = function_name(inner)
         if name is None:
