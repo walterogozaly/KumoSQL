@@ -3,8 +3,8 @@
 The advisor in :mod:`kumosql.materialization` chooses which joins to store. This module
 supplies the evidence a real warehouse would supply: it stores each candidate join view in
 DuckDB, runs every query the prover lets read it before and after, and keeps the measured
-before/after pairs. Everything else (the runtime model, the advisor, the held-out total) is
-computed from those pairs by :mod:`.materialize_model`.
+before/after pairs. The runtime model (:mod:`kumosql.joinorder.runtime_model`), the advisor and the held-out
+totals are computed from those pairs.
 
 Stages, each cached under ``KUMOSQL_BENCH_DATA`` (nothing is written into the repository):
 
@@ -258,9 +258,11 @@ def _reader_timeout(base: float | None) -> float:
 
 
 def measure_view(con: Any, view: View, readers: Mapping[str, str], baselines: Mapping[str, dict], work: Workload, *,
-                 reps: int = 3, built: dict | None = None) -> dict:
+                 reps: int = 3, previous: Mapping | None = None) -> dict:
     """Store ``view`` as a table, run its ``readers`` (query -> rewritten SQL), drop it.
 
+    ``previous`` is an earlier record of the same view: its build time and readers are kept and
+    only readers not in it are run, so a later pass (held-out queries) adds to the first.
     The result of each reader is compared with the original's; a difference is rechecked with
     DuckDB's optimizer off (``duckdb_load.run_unoptimized``) and counts as ``wrong`` only if that
     run also differs. A reader that runs past five times the original (at most 30 s) is recorded
@@ -268,20 +270,23 @@ def measure_view(con: Any, view: View, readers: Mapping[str, str], baselines: Ma
     """
 
     table = f"mv_{view.id}"
-    out = {"id": view.id, "build": None, "rows": None, "readers": {}} if built is None else built
+    out = {"id": view.id, "build": None, "rows": None, "readers": {}}
+    if previous:
+        out.update({k: previous[k] for k in ("build", "rows")})
+        out["readers"] = dict(previous["readers"])
+    todo = {q: sql for q, sql in readers.items() if q not in out["readers"]}
+    if not todo:
+        return out
+    con.execute(f'DROP TABLE IF EXISTS "{table}"')
+    start = time.perf_counter()
+    con.execute(f'CREATE TABLE "{table}" AS {duckdb_sql(view.sql)}')
+    build = time.perf_counter() - start
     if out["build"] is None:
-        con.execute(f'DROP TABLE IF EXISTS "{table}"')
-        start = time.perf_counter()
-        con.execute(f'CREATE TABLE "{table}" AS {duckdb_sql(view.sql)}')
-        out["build"] = time.perf_counter() - start
+        out["build"] = build
         out["rows"] = int(con.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
-        con.execute("CHECKPOINT")
-    else:
-        con.execute(f'DROP TABLE IF EXISTS "{table}"')
-        con.execute(f'CREATE TABLE "{table}" AS {duckdb_sql(view.sql)}')
-        con.execute("CHECKPOINT")
+    con.execute("CHECKPOINT")
     try:
-        for q, rewritten in readers.items():
+        for q, rewritten in todo.items():
             base = baselines.get(q) or {}
             if base.get("time") is None:
                 out["readers"][q] = {"skipped": "original timed out"}
@@ -307,3 +312,60 @@ def measure_view(con: Any, view: View, readers: Mapping[str, str], baselines: Ma
         con.execute(f'DROP TABLE IF EXISTS "{table}"')
         con.execute("CHECKPOINT")
     return out
+
+
+# ----------------------------------------------------------------------------- measurements on disk
+
+
+@dataclass
+class Measurements:
+    """Everything stages 1-3 produced for one workload."""
+
+    work: Workload
+    views: list[View]
+    proofs: dict[str, dict]
+    baselines: dict[str, dict]
+    records: dict[str, dict]  # view id -> measured record (build, rows, readers)
+
+    def pairs(self, *, held_out: bool) -> list[dict]:
+        """Measured before/after pairs of development queries, or of held-out queries (``held_out``).
+
+        Pairs whose original timed out or whose reader was skipped are left out; a censored reader
+        stays (its ``after`` is the limit it hit, so the saving is an upper bound).
+        """
+
+        out = []
+        for view in self.views:
+            record = self.records.get(view.id) or {"readers": {}}
+            for q, r in sorted(record["readers"].items()):
+                base = self.baselines.get(q) or {}
+                if is_held_out(q) != held_out or r.get("time") is None or base.get("time") is None:
+                    continue
+                out.append({"query": q, "view": view.id, "before": base["time"], "after": r["time"],
+                            "censored": bool(r.get("censored")), "wrong": bool(r.get("wrong")),
+                            "plan_before": base.get("plan"), "plan_after": r.get("plan"),
+                            "estimate_before": base.get("plan_estimate"), "estimate_after": r.get("plan_estimate")})
+        return out
+
+
+def cache_dir() -> str:
+    path = os.path.join(data_dir(), "materialize-stats")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def load_measurements(work: Workload, directory: str | None = None) -> Measurements:
+    directory = directory or cache_dir()
+    with open(os.path.join(directory, "views.json")) as fh:
+        views = [View.from_json(v) for v in json.load(fh)]
+    with open(os.path.join(directory, "proofs.json")) as fh:
+        proofs = json.load(fh)
+    with open(os.path.join(directory, "baselines.json")) as fh:
+        baselines = json.load(fh)
+    records = {}
+    for view in views:
+        path = os.path.join(directory, f"view-{view.id}.json")
+        if os.path.exists(path):
+            with open(path) as fh:
+                records[view.id] = json.load(fh)
+    return Measurements(work, views, proofs, baselines, records)
