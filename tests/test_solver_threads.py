@@ -5,6 +5,8 @@ all failed with ``Context mismatch``, and the process stayed broken afterwards. 
 (``kumosql.solver_lock``). Each check runs in a fresh interpreter, since only a cold start shows the failure.
 """
 
+import os
+from pathlib import Path
 import subprocess
 import sys
 import textwrap
@@ -56,7 +58,49 @@ SCRIPT = textwrap.dedent(
 
 @pytest.mark.parametrize("attempt", range(2))
 def test_concurrent_cold_start_proves_in_every_thread(attempt):
-    done = subprocess.run([sys.executable, "-c", SCRIPT], capture_output=True, text=True, timeout=300)
+    # A shared editable venv can point at another checkout: subprocesses must
+    # exercise this exact candidate's prover, not the venv's original checkout.
+    source = str(Path(__file__).resolve().parents[1] / "src")
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [source, os.environ.get("PYTHONPATH")]))}
+    done = subprocess.run([sys.executable, "-c", SCRIPT], capture_output=True, text=True, timeout=300, env=env)
     assert done.returncode == 0, done.stderr[-2000:]
     lines = done.stdout.split()
     assert lines and set(lines) <= {"proven_equivalent", "bounded_equivalent"}, done.stdout
+
+
+def test_solver_lock_preserves_gc_state_on_nesting_and_failure():
+    import gc
+    from kumosql.solver_lock import serialized
+    original = gc.isenabled()
+    try:
+        @serialized
+        def inner():
+            assert not gc.isenabled()
+            raise ValueError("proof failure")
+        @serialized
+        def outer():
+            assert not gc.isenabled()
+            inner()
+        for enabled in (True, False):
+            gc.enable() if enabled else gc.disable()
+            with pytest.raises(ValueError, match="proof failure"):
+                outer()
+            assert gc.isenabled() is enabled
+    finally:
+        gc.enable() if original else gc.disable()
+
+
+def test_pending_cycles_are_finalized_under_solver_lock(monkeypatch):
+    import gc
+    from kumosql.solver_lock import serialized, SOLVER_LOCK
+    seen = []
+    class Probe:
+        def __del__(self):
+            seen.append((gc.isenabled(), SOLVER_LOCK._is_owned()))
+    @serialized
+    def make_cycle():
+        item = Probe()
+        item.cycle = item
+    monkeypatch.setattr(gc, "get_count", lambda: (gc.get_threshold()[0] + 1, 0, 0))
+    make_cycle()
+    assert seen == [(False, True)]

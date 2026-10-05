@@ -1,4 +1,4 @@
-"""Skips for the sqlglot 26.0.0 floor of the supported matrix (26.0.0, 30.20, 30.21).
+"""Historical skips for sqlglot 26.0.0; the supported version is now 30.21.0.
 
 sqlglot 26 cannot parse a few shapes the tests exercise (outer ``BY NAME``, pipe syntax, an empty grouping set
 inside ``GROUPING SETS``, a parenthesised set operation with its own ``ORDER BY ... LIMIT``). Where the test checks

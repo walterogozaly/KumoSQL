@@ -693,8 +693,10 @@ class Adapter:
     def prover_schema(self) -> tuple[dict, dict]:
         schema = self.schema()
         columns = {t.name: list(t.columns) for t in schema.values()}
+        # keep a declared precision (``NUMERIC(5, 2)``): the counterexample synthesis builds values that fit the
+        # type it is told about, and a bare ``NUMERIC`` would let it pick -1.5 for a ``DECIMAL(2, 2)`` column
         types = {
-            t.name.lower(): {c.lower(): prover_type(k) for c, k in t.columns.items()}
+            t.name.lower(): {c.lower(): k for c, k in t.columns.items()}
             for t in schema.values()
         }
         return columns, types

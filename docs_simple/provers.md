@@ -74,6 +74,12 @@ Some writes cannot be compared faithfully, so the check answers `error` instead 
 
 Repeating the same comparison should find the same counterexample regardless of earlier comparisons or unrelated imports. For example, removing a lookup join can lose its treatment of a user whose plan is NULL: the join drops that user, while reading the users table keeps them. The solver isolates its candidate search to avoid changing this witness with process history. The search can still miss a difference or run out of time; returned examples must respect the declared data guarantees and make the query results differ.
 
+## Showing that two queries differ
+
+When the provers cannot prove a pair, KumoSQL can try to build a small database on which the two queries return different rows, and run both queries on it to confirm. For example, `SELECT a FROM t WHERE a NOT IN (SELECT b FROM u)` and `SELECT a FROM t WHERE NOT EXISTS (SELECT 1 FROM u WHERE u.b = a)` look the same, but a NULL in `u.b` makes the first return nothing; the search finds one row in each table with that NULL. Some differences need many rows: a query that keeps groups with more than 1,000 rows only differs from a variant on a database with over 1,000 rows, and a separate search tries rows that stand for many copies.
+
+A database is only returned when it respects the declared NOT NULL columns and keys, both queries run, the results differ in a way that does not depend on row order or an arbitrary pick, and DuckDB with its optimizer off agrees. The same check is applied to a counterexample the solver reports: if both queries return the same rows on it, it is dropped. The limits: it needs the type of every column, it runs on DuckDB (so it can be a few differences short of BigQuery), and finding nothing says nothing. On the project's [refutation-strength eval](evals/refutation-strength.md) it refuted 66 of 68 pairs known to differ; see the [full reference](../docs/provers.md) for the recorded scores and the method.
+
 ## Strings compared with numbers
 
 `WHERE '2' <> 2` looks like a condition that is never true, but engines disagree: MySQL turns the string into a number and finds them equal, DuckDB and PostgreSQL cast it the same way, and BigQuery refuses the query. Treating the two as always different once led the checker to say this query matches one with no filter, when real engines return different rows.
@@ -121,3 +127,11 @@ A database that compares a whole number with a decimal column first converts the
 ## Example: a DISTINCT that can move outward
 
 A query that removes duplicates inside a subquery, then joins it to a table on whole-number key columns, can have its duplicate removal moved to the outside when the join already makes every output row unique. KumoSQL's prover applies that move only when the columns are declared whole numbers and the joined tables' keys are fully pinned down; any grouping, limit, outer join or other twist makes it decline and leave the pair unproven. The evidence is a handful of textbook query pairs, so treat it as a narrow rule. The reference page has the exact conditions and the recorded scores: [Full reference](../docs/provers.md).
+
+## Avoiding repeated work
+
+When a proof tries several fallback rules, it keeps the earlier normalization result for that same proof. It also keeps the assumptions attached to it. A different proof, such as one with different declared keys, starts fresh.
+
+If a query returns two columns and a view returns twenty, returning the entire view cannot answer that query. KumoSQL skips that impossible candidate and still proves any proposed two-column projection. Stars whose width is not settled keep the existing checks. These changes reduce work; they do not relax proof acceptance.
+
+Python can clean up old objects on a different thread from the one using the solver. KumoSQL now keeps that automatic cleanup inside the solver lock as well, and restores the caller's cleanup setting afterwards. This addresses concurrent proof hangs without changing proof acceptance or increasing test timeouts.

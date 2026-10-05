@@ -73,3 +73,11 @@ The rewritten queries replace on average 3.6 joined tables by one view scan. Con
 * The random-database check is a second, bounded check: databases are small, so joins over many tables often return no rows.
 * Samples of 100 queries are fixed by a hash of the query text, not by results.
 * Timestamp literals of the form `'YYYY-MM-DD HH:MM:SS'` are read by the SMT prover (they were declined before, which left STATS at 17 of 100). A proof that mixes date-only and timestamp literals is still declined.
+
+## Parallel test execution
+
+The 24-query JOB floor in `python tools/run_tests.py` dispatches independent query checks to a process pool. View mining still runs once on the same complete development sample, each query receives the same selected views, and the parent aggregates every record before checking the existing global floors. Sampling, the poisoned-view control, DuckDB verification and solver budgets are unchanged.
+
+The default pool uses CPUs left by the outer pytest workers, capped at three: on a six-CPU runner with `-j 4`, it uses three child processes while that pytest worker waits. Other evals retain their existing execution settings. `--eval-jobs 1` forces the serial baseline; `--eval-jobs 3` explicitly selects three processes. Each query is one scheduling chunk, and workers use fresh spawned processes rather than inheriting solver state through a fork. Direct pytest invocation stays serial unless `KUMOSQL_EVAL_JOBS` is set.
+
+Compare the same revision and cached corpus with `python tools/run_tests.py -j 1 --eval-jobs 1 tests/test_mv_workload_bench.py -k job_sample` and the same command with `--eval-jobs 3`. Record the end-to-end full-suite runtime as well; parallelizing this eval does not guarantee a proportional improvement in the whole suite.
