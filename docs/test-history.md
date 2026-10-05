@@ -4,6 +4,19 @@
 
 Every test run in this repository is recorded, so a report can show which tests break most often and which of them break changes that otherwise work.
 
+## Merge testing procedure
+
+Walter fully approved intermittent full-suite coverage on October 5, 2026 to shorten routine feedback by more than 70%. SQLGlot/sqlglotc remains pinned to 30.21.0, one compiled configuration. This replaces the earlier full-suite requirement for every combined merge batch.
+
+1. **Every code candidate:** run targeted regressions, then `python tools/run_tests.py --routine --label "candidate <sha>"`. This is `--no-evals --quick`: broad fast regression coverage, not a claim that every eval floor passed. Positional paths select tests; `--target` only labels intended coverage.
+2. **Affected evals before merge:** an eval-score change must run that eval. Shared prover, normalization, parsing or execution changes require broader base/candidate comparisons of case verdicts and soundness guards, not just a net score. Select impacted expensive checks explicitly, including affected `slow` cases. Preserve floors and zero wrong proofs; investigate failures and crashes. A soundness correction must document corrected scores and guards.
+3. **Intermittent broad coverage:** run `python tools/run_tests.py --label "periodic full <sha>"` nightly on the current integration revision, and before a release. GitHub's scheduled and manually dispatched workflow uses this full default suite; pull requests and pushes use the routine profile. Actions must be enabled for GitHub to execute either workflow. The Dell can supply the same commands. Full coverage includes eval floors and excludes `slow`; run affected slow checks explicitly. Diagnose a full-suite regression promptly and block affected merges until resolved; do not describe routine results as full validation.
+4. **Evidence:** record exact candidate SHA, commands, tests, failures and elapsed time. A new candidate needs its relevant checks again. SQLSolver's optional [execution cache](evals/sqlsolver.md#reusing-sample-execution-checks) never bypasses the current prover or targeted difference search; `--eval-cache off` forces fresh sample execution.
+
+On this Dell, the same compiled candidate `e684f16461`, four workers, took 635.69 seconds for the routine profile (10,853 passed) and 3,897.96 seconds for the full default run (11,645 passed and one subprocess-exit timeout). That is **83.7% shorter pytest runtime**; runner wall time including setup was approximately 12 versus 71 minutes. The full-run timeout is a separate failure, not a passing result: all ten cold-start proof verdicts printed, and both affected cases passed an isolated compiled recheck. These timings show the coverage-profile difference, not a prover algorithm speed claim or a guarantee on every machine.
+
+The merge operator must inspect relevant candidate evidence. GitHub branch protection presently does not enforce it; post-merge Dell monitoring is not pre-merge validation.
+
 ## What is recorded
 
 `tests/conftest.py` installs the recorder from `tools/test_history.py`. After any `python tools/run_tests.py` or `python -m pytest` run it writes one JSON line to its own file under `runs/` in the history folder, so runs on different threads never collide. The folder is `$KUMOSQL_TEST_HISTORY`, or `/mnt/project-files/test-history` when `/mnt/project-files` exists; `KUMOSQL_TEST_HISTORY=off` turns recording off. Without a shared folder (a laptop checkout) nothing is written.

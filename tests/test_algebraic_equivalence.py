@@ -1656,3 +1656,35 @@ def test_check_modeled_names_the_flag():
         check_modeled(sqlglot.parse_one("SELECT a FROM t FOR SYSTEM_TIME AS OF CURRENT_TIMESTAMP()", read="bigquery"))
     plain = sqlglot.parse_one("SELECT a FROM t WHERE a IS NOT NULL", read="mysql")
     assert check_modeled(plain) is plain
+
+
+def test_level_retries_reuse_normalization_without_losing_assumptions(monkeypatch):
+    import kumosql.algebraic_equivalence as ae
+    from kumosql.smt_equivalence import SmtEquivalenceResult, SmtStatus
+
+    calls = []
+    def normalize(sql, **kwargs):
+        calls.append((sql, kwargs["keyed_distinct"]))
+        kwargs["_assumptions"].add("normalization evidence")
+        return sql
+    monkeypatch.setattr(ae, "normalize", normalize)
+    monkeypatch.setattr(ae, "prove_equivalent_smt", lambda *a, **k:
+                        SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "declined"))
+    from kumosql.smt_equivalence import TableConstraints
+    result = ae._prove_algebraic_levels("SELECT 1", "SELECT 2", False,
+                                       constraints={"t": TableConstraints()})
+    assert result.status is SmtStatus.NOT_PROVEN
+    assert "normalization evidence" in result.assumptions
+    assert len(calls) == 6
+    assert len(set(calls)) == 6
+
+
+def test_normalization_reuse_is_isolated_between_constraint_contexts():
+    from kumosql.smt_equivalence import TableConstraints
+    from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+    pair = ("SELECT DISTINCT id FROM t", "SELECT id FROM t")
+    options = dict(schema={"t": ["id"]}, types={"t": {"id": "INT"}})
+    keyed = {"t": TableConstraints(keys=[("id",)], not_null=frozenset({"id"}))}
+    assert prove_equivalent_algebraic(*pair, constraints=keyed, **options).proven
+    assert not prove_equivalent_algebraic(*pair, **options).proven
+    assert prove_equivalent_algebraic(*pair, constraints=keyed, **options).proven
