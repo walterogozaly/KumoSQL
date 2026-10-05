@@ -24,6 +24,7 @@ from sqlglot.errors import ParseError
 from sqlglot.generator import Generator
 from sqlglot.tokens import Token, TokenType
 
+from . import pipe_syntax
 from .string_literals import _bytes_literal, _decode_bytes, _string_end
 
 
@@ -726,8 +727,13 @@ def install() -> None:
         try:
             _check_literals(sql, tokens)
             _check_empty_struct(sql, tokens)
+            if pipe_syntax.has_pipe(tokens):
+                plain = pipe_syntax.rewrite(sql, tokens)
+                if plain != sql:
+                    return self.parse(plain, **opts)
+                pipe_syntax.check(sql, tokens)
             return self.parser(**opts).parse(tokens, sql)  # what the dialect's own parse does
-        except UnclosedLiteral:
+        except (UnclosedLiteral, pipe_syntax.MisreadPipe):
             raise
         except _PARSE_FAILURES as caught:
             error = _as_parse_error(caught)
