@@ -643,6 +643,7 @@ class _Typer:
 
         if not isinstance(body, exp.Union):
             return _Rel(None)
+        ctes = self.with_clause(body, outer, ctes)  # a WITH on the whole union is visible to both terms
         base = self.query(body.this, outer, ctes)
         if base is None or base.columns is None:
             return _Rel(None)
@@ -663,6 +664,10 @@ class _Typer:
             return _Rel(None)
         if mode is not None:
             return self.by_name(node, rels, mode)
+        if all(r.value is not None for r in rels):
+            return self.set_operation_values(node, rels)
+        if any(r.value is not None for r in rels) or any(r.as_struct for r in rels) != all(r.as_struct for r in rels):
+            return _Rel(None)
         widths = {len(r.columns) for r in rels}
         if len(widths) > 1:
             self.finding("set_operation_width", f"set operation branches have {sorted(widths)} columns", node)
@@ -671,7 +676,16 @@ class _Typer:
         for position, first in enumerate(rels[0].columns):
             label = first.name or f"#{position + 1}"
             columns.append(_Col(first.name, self._set_output([r.columns[position].t for r in rels], label, node)))
-        return _Rel(columns)
+        return _Rel(columns, as_struct=all(r.as_struct for r in rels))
+
+    def set_operation_values(self, node: exp.SetOperation, rels: list[_Rel]) -> _Rel | None:
+        """UNION of value tables (SELECT AS VALUE): the rows are combined as values, so the output is a value table of
+        their common type."""
+
+        common = self._set_output([r.value for r in rels], "value", node)
+        if common.type is None:
+            return _Rel(None)
+        return _Rel([_Col(None, common)], value=common)
 
     def _set_output(self, branch: list[T], label: str, node) -> T:
         """One output column of a set operation: the supertype of its branches, no longer a literal."""
