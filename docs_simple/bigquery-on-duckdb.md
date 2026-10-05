@@ -22,7 +22,7 @@ Google's GoogleSQL compliance tests list the rows each query must return. [One e
 
 ## Keeping the guards fast
 
-Each guard wraps an operation, such as a division, and runs inside the query. When guards were nested (a division inside a division), the local engine used to copy the inner part several times, so a few queries became much slower to plan and could run out of time in the evals. Each guard now looks at its inputs once. The answers do not change; the queries just plan quickly again.
+Each guard wraps an operation, such as a division, and runs inside the query. Nested checks and expressions with functions use a form that evaluates each input once, so the local engine does not copy a checked operation many times. Outside `HAVING`, simple arithmetic guards over columns, numbers, casts, addition, subtraction or negation use a cheaper form without that extra binding step. `HAVING` keeps its existing form because the engine cannot bind the lambda around aggregate expressions. Both forms keep the same error and overflow checks. The answers do not change, and nested queries still avoid exponential growth.
 
 ## Read the limits
 

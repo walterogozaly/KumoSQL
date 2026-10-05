@@ -503,6 +503,27 @@ def _sums(node: exp.Expression) -> bool:
     return isinstance(node, exp.Sum)
 
 
+def _repeatable_guard_operand(node: exp.Expression) -> bool:
+    """Whether duplicating this arithmetic operand is cheap and cannot change its value."""
+
+    if isinstance(node, (exp.Column, exp.Literal)):
+        return True
+    if isinstance(node, (exp.Paren, exp.Neg, exp.Cast)):
+        return _repeatable_guard_operand(node.this)
+    if isinstance(node, (exp.Add, exp.Sub)):
+        return _repeatable_guard_operand(node.this) and _repeatable_guard_operand(node.expression)
+    # Functions, aggregates, subqueries, and already-guarded arithmetic stay packed. In particular,
+    # don't duplicate a volatile function such as RAND() just to avoid the one-element lambda.
+    return False
+
+
+def _arithmetic_guard(name: str, left: exp.Expression, right: exp.Expression) -> exp.Expression:
+    """Use the cheaper plain macro for simple operands, packing complex/nested operands once."""
+
+    macro = name if not (_repeatable_guard_operand(left) and _repeatable_guard_operand(right)) else f"{name}_plain"
+    return _call(macro, left, right)
+
+
 def _escaped(like: exp.Expression) -> exp.Expression:
     return exp.Escape(this=like, expression=exp.Literal.string("\\"))
 
@@ -513,13 +534,13 @@ def _rewrite(node: exp.Expression) -> exp.Expression | None:
     if isinstance(node, exp.DataType) and node.this == exp.DataType.Type.DECIMAL and not node.expressions:
         return exp.DataType.build("DECIMAL(38, 9)", dialect="duckdb")
     if isinstance(node, exp.Div) and not node.args.get("safe"):
-        return _call("kumo_bq_div", node.this, node.expression)
+        return _arithmetic_guard("kumo_bq_div", node.this, node.expression)
     if isinstance(node, exp.CountIf):  # DuckDB's count_if is NULL over no rows or only NULLs, BigQuery's 0
         return exp.Count(this=exp.Case(ifs=[exp.If(this=node.this, true=exp.Literal.number(1))]))
     if isinstance(node, exp.SafeDivide):
-        return _call("kumo_bq_safe_div", node.this, node.expression)
+        return _arithmetic_guard("kumo_bq_safe_div", node.this, node.expression)
     if isinstance(node, exp.Mul):
-        return _call("kumo_bq_mul", node.this, node.expression)
+        return _arithmetic_guard("kumo_bq_mul", node.this, node.expression)
     if isinstance(node, exp.Mod):
         return _call("kumo_bq_mod", node.this, node.expression)
     if isinstance(node, exp.IntDiv):

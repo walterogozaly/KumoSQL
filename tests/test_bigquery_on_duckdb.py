@@ -111,6 +111,25 @@ def test_row5_division_by_zero_fails(db):
     assert one(db, "SELECT SAFE_DIVIDE(x, 0) FROM UNNEST([1]) x") is None
 
 
+def test_simple_arithmetic_guards_skip_lambda_packing():
+    leaf = faithful(sqlglot.parse_one("SELECT a * (1 - b), a / b, SAFE_DIVIDE(a, b) FROM t", read="bigquery")).sql(
+        dialect="duckdb"
+    ).lower()
+    assert "kumo_bq_mul_plain(" in leaf
+    assert "kumo_bq_div_plain(" in leaf
+    assert "kumo_bq_safe_div_plain(" in leaf
+    assert "list_transform" not in leaf
+
+
+def test_nested_or_volatile_arithmetic_guards_stay_packed():
+    nested = faithful(sqlglot.parse_one("SELECT x * (y / z) FROM t", read="bigquery")).sql(dialect="duckdb").lower()
+    assert "kumo_bq_div_plain(" in nested
+    assert "kumo_bq_mul(" in nested
+
+    volatile = faithful(sqlglot.parse_one("SELECT RAND() * x FROM t", read="bigquery")).sql(dialect="duckdb").lower()
+    assert "kumo_bq_mul(" in volatile
+
+
 def test_nested_guarded_operations_are_planned_in_time(db):
     # a macro that pastes its argument in several times makes each level of nesting several times larger: a
     # division nested 14 deep was never planned (a variance written with divisions took 0.15 s at depth 3)
