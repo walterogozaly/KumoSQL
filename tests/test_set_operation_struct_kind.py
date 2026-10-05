@@ -1,9 +1,11 @@
-"""A false proof from ``set_operation_to_exists`` on ``SELECT AS STRUCT`` operands (issue #518).
+"""False proofs from set-operation rules that read ``SELECT AS STRUCT`` operands as separate columns (issue #518).
 
 ``SELECT AS STRUCT x, y FROM t INTERSECT DISTINCT SELECT AS STRUCT k, w FROM u`` returns one STRUCT column. The rule
 turned a set operation into ``SELECT DISTINCT s.x, s.y FROM t AS s WHERE EXISTS (...)`` and, reading the struct's
 fields as columns, returned two plain columns, so the prover called both shapes equal. The pairs below return
 different rows (DuckDB, optimizer off); the same pair without ``AS STRUCT`` is the rule's intended case and stays proven.
+``output_names`` read the same operands as the columns ``x`` and ``y`` too, so ``X EXCEPT DISTINCT <empty>`` became
+``SELECT DISTINCT`` of two columns where the query returns one struct.
 """
 
 from collections import Counter
@@ -63,3 +65,14 @@ def test_the_rule_declines_struct_operands_only():
     parse = lambda sql: sqlglot.parse_one(sql, read="bigquery")
     assert set_operation_to_exists(parse("SELECT AS STRUCT x, y FROM t INTERSECT DISTINCT SELECT AS STRUCT k, w FROM u")) is None
     assert set_operation_to_exists(parse("SELECT x, y FROM t INTERSECT DISTINCT SELECT k, w FROM u")) is not None
+
+
+def test_a_struct_minus_nothing_is_still_a_struct():
+    struct = "SELECT AS STRUCT x, y FROM t EXCEPT DISTINCT SELECT AS STRUCT k, w FROM u WHERE FALSE"
+    plain = "SELECT DISTINCT x, y FROM t"
+    assert _differ(struct, plain), "the database must separate the pair"
+    assert not _proven(struct, plain)
+
+
+def test_a_plain_select_minus_nothing_is_still_its_distinct():
+    assert _proven("SELECT x, y FROM t EXCEPT DISTINCT SELECT k, w FROM u WHERE FALSE", "SELECT DISTINCT x, y FROM t")

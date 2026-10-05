@@ -54,8 +54,8 @@ def output_names(node: exp.Expression) -> list[str] | None:
     node = _unwrap(node)
     while isinstance(node, exp.SetOperation):
         node = _unwrap(node.this)
-    if not isinstance(node, exp.Select):
-        return None
+    if not isinstance(node, exp.Select) or node.args.get("kind"):
+        return None  # ``SELECT AS STRUCT a, b`` outputs one struct column, not the columns ``a`` and ``b``
     names = []
     for item in node.expressions:
         if isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star)):
