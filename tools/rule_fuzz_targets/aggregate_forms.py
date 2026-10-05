@@ -86,6 +86,7 @@ TEMPLATES = [
     "SELECT t.y, {COUNTIF(t.x > 1)|AVG(t.x)|COUNT(DISTINCT t.x)|SUM(DISTINCT t.x)|COUNTIF(t.s = 'a')} AS a FROM t {|WHERE t.x > 0} GROUP BY t.y",
     "SELECT COUNT(*) AS a, MAX(1) AS b, MIN(NULL) AS c, SUM(2) AS d, COUNT(7) AS e",
     "SELECT SUM(CASE WHEN t.x > 0 THEN t.x END) AS a, COUNT(CASE WHEN t.x > 0 THEN 1 END) AS b, COUNT(CASE WHEN t.x > 0 THEN t.id END) AS c FROM t",
+    "SELECT {COUNTIF(t.x > 1)|COUNT(CASE WHEN t.x > 1 THEN 1 END)|AVG(CASE WHEN t.x > 1 THEN t.x END)|SUM(CASE WHEN t.x > 1 THEN t.y END)|MAX(CASE WHEN t.x > 1 THEN t.y END)|COUNT(DISTINCT CASE WHEN t.x > 1 THEN t.y END)|SUM(IF(t.x > 1, t.y))} AS a{|, SUM(CASE WHEN t.x > 1 THEN t.y END) AS b|, COUNT(CASE WHEN t.x > 1 THEN 1 END) AS c|, MIN(CASE WHEN t.x > 1 AND t.y > 0 THEN t.y END) AS d|, COUNT(*) AS e|, SUM(CASE WHEN t.x > 1 THEN t.y ELSE 0 END) AS f} FROM t {|WHERE t.s = 'a'|WHERE FALSE} {|GROUP BY t.s}",
     "SELECT t.y, SUM(CASE WHEN t.x > 0 AND t.y > 1 THEN t.x END) AS a, COUNT(CASE WHEN t.x > 0 AND t.y > 1 THEN t.x END) AS b FROM t {|WHERE t.id > 1} GROUP BY t.y",
     "SELECT SUM(CASE WHEN t.x > 0 THEN t.x END) AS a, COUNT(CASE WHEN t.x > 1 THEN 1 END) AS b FROM t",
     "SELECT t.y, COUNT(t.x) AS a FROM t WHERE {t.x = t.y|t.x > 2|t.x IS NOT NULL|t.x IN (1, 2)|t.x IS NULL} GROUP BY t.y",
