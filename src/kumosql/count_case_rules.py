@@ -6,7 +6,7 @@ are only used in searched CASE WHEN, where FALSE and UNKNOWN both skip an arm.
 
 from sqlglot import exp
 
-from .ast_utils import extended_grouping
+from .ast_utils import declared_key, extended_grouping
 
 
 def fold_grouped_count_cases(tree, not_null):
@@ -25,7 +25,7 @@ def fold_grouped_count_cases(tree, not_null):
                     or inner.args.get("joins") or base is None or not isinstance(base.this, exp.Table)):
                 continue
             table = base.this
-            nn = {n.lower() for n in (not_null or {}).get(table.name.lower(), ())}
+            nn = {n.lower() for n in (not_null or {}).get(declared_key(table), ())}
             for item in inner.expressions:
                 value = item.this if isinstance(item, exp.Alias) else item
                 if not isinstance(value, exp.Count) or value.expressions:

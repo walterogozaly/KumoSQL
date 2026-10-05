@@ -68,17 +68,6 @@ def _drop_witnessed_exists(select: exp.Select, schema, not_null, foreign_keys) -
     return copy
 
 
-def _names_parent(parent: exp.Table, declared: str) -> bool:
-    """Whether the table read as ``parent`` is the one a foreign key declares as ``declared``.
-
-    The spelling read may leave out leading parts of the declared name (``t`` for ``ds.t``), but it may not
-    add any: ``other_ds.t`` is not the table declared as ``t``.
-    """
-
-    spelled, named = declared_key(parent).split("."), declared.lower().split(".")
-    return len(spelled) <= len(named) and _same_table(declared_key(parent), declared)
-
-
 def _witnesses(child: exp.Table, body: exp.Expression, schema, not_null, foreign_keys) -> bool:
     """Whether every row of ``child`` makes ``EXISTS (body)`` TRUE."""
 
@@ -105,7 +94,7 @@ def _witnesses(child: exp.Table, body: exp.Expression, schema, not_null, foreign
     child_not_null = {c.lower() for c in (not_null or {}).get(declared_key(child), ())}
     referenced = set()
     for cols, fk_parent, parent_cols in foreign_keys.get(declared_key(child)) or []:
-        if _names_parent(parent, fk_parent) and cols and all(c.lower() in child_not_null for c in cols):
+        if _same_table(declared_key(parent), fk_parent) and cols and all(c.lower() in child_not_null for c in cols):
             referenced = {c.lower() for c in parent_cols}
             break
     else:

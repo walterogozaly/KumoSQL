@@ -2,6 +2,8 @@
 
 from sqlglot import exp
 
+from .ast_utils import declared_key
+
 
 def _parts(node):
     if isinstance(node, exp.Paren):
@@ -21,7 +23,7 @@ def normalize_key_counts(select, keys):
     if source is None or not isinstance(source.this, exp.Table) or select.args.get("joins"):
         return None
     table = source.this
-    singles = {k[0].lower() for k in (keys or {}).get(table.name.lower(), []) if len(k) == 1}
+    singles = {k[0].lower() for k in (keys or {}).get(declared_key(table), []) if len(k) == 1}
     copy = select.copy()
     changed = False
     for count in copy.find_all(exp.Count):
@@ -70,13 +72,13 @@ def keyed_join_to_exists(select, keys, not_null):
         if not isinstance(value, exp.Column) or value.table.lower() != alias:
             return None
         outputs.add(value.name.lower())
-    nonnull = {c.lower() for c in (not_null or {}).get(left.name.lower(), ())}
+    nonnull = {c.lower() for c in (not_null or {}).get(declared_key(left), ())}
     for part in _parts(join.args["on"]):
         if isinstance(part, exp.EQ):
             nonnull.update(c.name.lower() for c in (part.left, part.right)
                            if isinstance(c, exp.Column) and c.table.lower() == alias)
     if not any(set(c.lower() for c in k) <= outputs & nonnull
-               for k in (keys or {}).get(left.name.lower(), []) if k):
+               for k in (keys or {}).get(declared_key(left), []) if k):
         return None
     copy = select.copy()
     probe = exp.select("1").from_(join.this.copy()).where(join.args["on"].copy())

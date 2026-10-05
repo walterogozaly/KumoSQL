@@ -7,6 +7,7 @@ zero-or-one-row relation preserves both empty cardinality and NULL values;
 the existing weighted-count rule can subsequently flatten it.
 """
 from sqlglot import exp
+from .ast_utils import declared_key
 import re
 
 _INTEGER = ("INT","INTEGER","INT64","BIGINT","SMALLINT","TINYINT")
@@ -73,12 +74,12 @@ def singleton_count_sum(select, keys, types, assumptions=None):
         if not isinstance(predicate,exp.EQ):continue
         for column,literal in ((predicate.this,predicate.expression),(predicate.expression,predicate.this)):
             if isinstance(column,exp.Column) and column.table.lower() in ("",table.alias_or_name.lower()) and isinstance(literal,exp.Literal) and not literal.is_string:
-                kind=types.get(table.name.lower(),{}).get(column.name.lower(),"").upper()
+                kind=types.get(declared_key(table),{}).get(column.name.lower(),"").upper()
                 # In particular, a MySQL STRING key compared to a number can
                 # coerce many distinct keys to the same numeric value.
                 if kind in _INTEGER and re.fullmatch(r"\d+",literal.this) and int(literal.this)<=2**31-1:
                     fixed.add(column.name.lower())
-    declared={k.lower():v for k,v in keys.items()}.get(table.name.lower(),[])
+    declared={k.lower():v for k,v in keys.items()}.get(declared_key(table),[])
     if not any(key and {c.lower() for c in key}<=fixed for key in declared):
         return None
     group=b.args.get("group")
@@ -104,8 +105,8 @@ def singleton_count_sum(select, keys, types, assumptions=None):
         if not isinstance(predicate,exp.EQ):return None
         for x,y in ((predicate.this,predicate.expression),(predicate.expression,predicate.this)):
             if isinstance(x,exp.Column) and isinstance(y,exp.Column) and x.table.lower()==right.alias.lower() and x.name.lower() in named_keys and y.table.lower()==left.alias.lower() and y.name.lower() in passed:
-                lkind=types.get(table.name.lower(),{}).get(passed[y.name.lower()],"").upper()
-                rkind=types.get(other.name.lower(),{}).get(key_columns[x.name.lower()],"").upper()
+                lkind=types.get(declared_key(table),{}).get(passed[y.name.lower()],"").upper()
+                rkind=types.get(declared_key(other),{}).get(key_columns[x.name.lower()],"").upper()
                 if not _same_comparison_type(lkind,rkind):return None
                 string_keys |= lkind not in _INTEGER
                 matched.add(x.name.lower());break
@@ -120,7 +121,7 @@ def singleton_count_sum(select, keys, types, assumptions=None):
         for weight,count in ((value.this,value.expression),(value.expression,value.this)):
             if (isinstance(weight,exp.Column) and weight.table.lower()==left.alias.lower() and weight.name.lower() in passed
                     and isinstance(count,exp.Column) and count.table.lower()==right.alias.lower() and count.name.lower()==count_name):
-                kind=types.get(table.name.lower(),{}).get(passed[weight.name.lower()],"").upper()
+                kind=types.get(declared_key(table),{}).get(passed[weight.name.lower()],"").upper()
                 if kind not in _INTEGER:return None
                 products.append(index);break
         else:return None

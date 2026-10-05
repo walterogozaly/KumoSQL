@@ -14,13 +14,18 @@ from __future__ import annotations
 
 from sqlglot import exp
 
-from .ast_utils import conjuncts as _conjuncts
+from .ast_utils import conjuncts as _conjuncts, declared_key
 
 
 def _same_table(spelled: str, declared: str) -> bool:
+    """Whether the table read as ``spelled`` is the one a foreign key declares as ``declared``.
+
+    The spelling read may leave out leading parts of the declared name (``t`` for ``ds.t``), but it may not add
+    any: ``other_ds.t`` is not the table declared as ``t``.
+    """
+
     a, b = spelled.lower().split("."), declared.lower().split(".")
-    short = min(len(a), len(b))
-    return a[-short:] == b[-short:]
+    return len(a) <= len(b) and a == b[-len(a):]
 
 
 def drop_fk_join(select: exp.Select, keys, not_null, foreign_keys) -> exp.Expression | None:
@@ -80,7 +85,7 @@ def _drop_fk_join(select: exp.Select, keys, not_null, foreign_keys) -> exp.Expre
         child = sources.get(child_alias or "")
         if not ok or child is None or not pairs:
             continue
-        child_name, parent_name = child.name.lower(), parent.name.lower()
+        child_name, parent_name = declared_key(child), declared_key(parent)  # facts name one spelling
         declared = {c.lower() for c in (not_null or {}).get(child_name, frozenset())}
         where = select.args.get("where")
         for part in (_conjuncts(where.this) if where is not None else []):
@@ -90,11 +95,13 @@ def _drop_fk_join(select: exp.Select, keys, not_null, foreign_keys) -> exp.Expre
                 if isinstance(column, exp.Column) and column.table.lower() == child_alias:
                     declared.add(column.name.lower())
         wanted = {child_col: parent_col for parent_col, child_col in pairs.items()}
-        covered = any(
-            _same_table(parent_name, fk_parent) and {c.lower(): p.lower() for c, p in zip(cols, parent_cols)} == wanted
+        # the keys are those of the table the foreign key declares as the parent, which the join must name
+        parents = [
+            fk_parent.lower()
             for cols, fk_parent, parent_cols in (foreign_keys.get(child_name) or [])
-        )
-        if not covered or not set(pairs.values()) <= declared or not any(k <= set(pairs) for k in key_sets.get(parent_name, [])):
+            if _same_table(parent_name, fk_parent) and {c.lower(): p.lower() for c, p in zip(cols, parent_cols)} == wanted
+        ]
+        if not parents or not set(pairs.values()) <= declared or not any(k <= set(pairs) for p in parents for k in key_sets.get(p, [])):
             continue
         copy = select.copy()
         copy_join = copy.args["joins"][index]

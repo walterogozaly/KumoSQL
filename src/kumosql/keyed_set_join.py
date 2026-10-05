@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from sqlglot import exp
 
+from .ast_utils import declared_key
+
 # Any other SELECT argument (GROUP BY, HAVING, QUALIFY, ORDER BY, LIMIT, windows, WITH, laterals,
 # samples, CONNECT BY, INTO, ...) declines the rewrite.
 _PLAIN_SELECT_ARGS = {"expressions", "from", "from_", "joins", "where", "distinct"}
@@ -42,7 +44,7 @@ def _inner_join(join):
 
 
 def _declared_integer(types, table, name):
-    declared = types.get(table.name.lower(), {}).get(name)
+    declared = types.get(declared_key(table), {}).get(name)
     if declared is None:
         return False
     try:
@@ -173,10 +175,10 @@ def lift_keyed_set_join(select: exp.Select, keys: dict | None,
     output_classes = {representative(c) for c in outputs}
     if not output_classes <= {representative(c) for c in projected}:
         return None
-    nn = {c.lower() for c in (not_null or {}).get(table.name.lower(), ())}
+    nn = {c.lower() for c in (not_null or {}).get(declared_key(table), ())}
     if not any(key and set(c.lower() for c in key) <= nn and all(
         representative((t_alias, c.lower())) in output_classes for c in key)
-        for key in keys.get(table.name.lower(), ())):
+        for key in keys.get(declared_key(table), ())):
         return None
     copy = select.copy()
     copied_sources = [_source(copy), copy.args["joins"][0].this]

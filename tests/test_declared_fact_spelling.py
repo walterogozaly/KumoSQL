@@ -1,8 +1,8 @@
 """Declared facts name one spelling of a table: ``other_ds.t`` does not inherit what is declared for ``t``.
 
-The rules that use NOT NULL columns and foreign keys (a self-witnessed EXISTS, a self domain join, an EXISTS a
-foreign key witnesses) once looked those facts up by the bare table name, so a column declared NOT NULL for
-``t`` was trusted on ``other_ds.t``. Each pair below was accepted as equivalent on that mistake while DuckDB,
+The rules that use NOT NULL columns, keys and foreign keys (a self-witnessed EXISTS, a self domain join, an EXISTS a
+foreign key witnesses, a grouping or DISTINCT over a key, a foreign-key join) once looked those facts up by the
+bare table name, so a column declared NOT NULL (or a key declared) for ``t`` was trusted on ``other_ds.t``. Each pair below was accepted as equivalent on that mistake while DuckDB,
 with the optimizer on and off, returns different rows on data where only the bare table keeps its promises.
 The near misses show the same pair still proves when the facts are declared for the spelling the query uses.
 """
@@ -25,6 +25,11 @@ DDL = [
     "CREATE TABLE t(id BIGINT, x BIGINT)",
     "CREATE TABLE p(id BIGINT, tid BIGINT)",
     "CREATE SCHEMA empty_ds",
+    "CREATE SCHEMA dup_ds",
+    "CREATE TABLE dup_ds.t(id BIGINT, x BIGINT)",
+    "CREATE TABLE dup_ds.p(id BIGINT, tid BIGINT)",
+    "INSERT INTO dup_ds.t VALUES (1, 1), (1, 2), (2, 5), (3, NULL)",
+    "INSERT INTO dup_ds.p VALUES (1, 1), (2, 1), (3, 9), (4, NULL)",
     "CREATE TABLE other_ds.t(id BIGINT, x BIGINT)",
     "CREATE TABLE other_ds.p(id BIGINT, tid BIGINT)",
     "INSERT INTO t VALUES (1, 1), (2, 2)",
@@ -81,11 +86,43 @@ PAIRS = {
         "SELECT p.id FROM {p} AS p WHERE EXISTS (SELECT 1 FROM {t} AS t)",
         "SELECT p.id FROM {p} AS p",
     ),
+    "GROUP BY a declared key": (
+        "SELECT t.id, MAX(t.x) AS m FROM {t} AS t GROUP BY t.id",
+        "SELECT t.id, t.x AS m FROM {t} AS t",
+    ),
+    "DISTINCT over a declared key": (
+        "SELECT DISTINCT t.id FROM {t} AS t",
+        "SELECT t.id FROM {t} AS t",
+    ),
+    "foreign-key join": (
+        "SELECT p.id FROM {p} AS p JOIN {t} AS t ON t.id = p.tid",
+        "SELECT p.id FROM {p} AS p",
+    ),
+    "COUNT(DISTINCT key)": (
+        "SELECT COUNT(DISTINCT t.id) AS c FROM {t} AS t",
+        "SELECT COUNT(t.id) AS c FROM {t} AS t",
+    ),
+    "DISTINCT key join to EXISTS": (
+        "SELECT DISTINCT t.id FROM {t} AS t JOIN {p} AS p ON p.tid = t.id",
+        "SELECT t.id FROM {t} AS t WHERE EXISTS (SELECT 1 FROM {p} AS p WHERE p.tid = t.id)",
+    ),
+    "SUM grouped by a declared key": (
+        "SELECT t.id, SUM(t.x) AS s FROM {t} AS t GROUP BY t.id",
+        "SELECT t.id, t.x AS s FROM {t} AS t",
+    ),
 }
 
 
 # the foreign-key pair needs a parent table that is empty while its child is not
-DATASET = {"foreign-key witnessed EXISTS": "empty_ds"}
+DATASET = {
+    "foreign-key witnessed EXISTS": "empty_ds",
+    "GROUP BY a declared key": "dup_ds",
+    "DISTINCT over a declared key": "dup_ds",
+    "foreign-key join": "dup_ds",
+    "SUM grouped by a declared key": "dup_ds",
+    "COUNT(DISTINCT key)": "dup_ds",
+    "DISTINCT key join to EXISTS": "dup_ds",
+}
 
 
 def spelled(name, **tables):
@@ -105,5 +142,6 @@ def test_facts_declared_for_a_bare_table_do_not_apply_to_a_qualified_one(name):
 
 @pytest.mark.parametrize("name", PAIRS)
 def test_the_same_pair_proves_on_the_spelling_the_facts_name(name):
+    ds = DATASET.get(name, "other_ds")
     assert prove(*spelled(name, t="t", p="p"))
-    assert prove(*spelled(name, t="other_ds.t", p="other_ds.p"), prefix="other_ds.")
+    assert prove(*spelled(name, t=f"{ds}.t", p=f"{ds}.p"), prefix=f"{ds}.")

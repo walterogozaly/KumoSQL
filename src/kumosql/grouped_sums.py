@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from sqlglot import exp
 
-from .ast_utils import extended_grouping
+from .ast_utils import declared_key, extended_grouping
 
 
 def _branches(node: exp.Expression) -> list[exp.Expression]:
@@ -37,7 +37,7 @@ def _never_null(value: exp.Expression, select: exp.Select, not_null: dict[str, f
             return False  # an outer join could pad the column with NULLs
         for table in tables:
             if isinstance(table, exp.Table) and (table.alias_or_name or "").lower() == value.table.lower():
-                columns = {c.lower() for c in not_null.get(table.name, not_null.get(table.name.lower(), frozenset()))}
+                columns = {c.lower() for c in not_null.get(declared_key(table), frozenset())}
                 return value.name.lower() in columns
     return False
 

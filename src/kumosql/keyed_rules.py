@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from sqlglot import exp
 
-from .ast_utils import extended_grouping, plain_distinct
+from .ast_utils import declared_key, extended_grouping, plain_distinct
 
 _VALUE_AGGREGATES = (exp.Sum, exp.Min, exp.Max, exp.Avg)
 _VALUE_CLASSES = ("BitwiseAndAgg", "BitwiseOrAgg", "BitwiseXorAgg", "AnyValue")
@@ -70,6 +70,7 @@ def remove_keyed_grouping(
     if table is None:
         return None
     name = table.name.lower()
+    fact = declared_key(table)  # declared facts name one spelling of the table
     alias = table.alias_or_name.lower()
     grouped = set()
     for key in group.expressions:
@@ -77,8 +78,8 @@ def remove_keyed_grouping(
             continue
         grouped.add(key.name.lower())
     grouped |= _fixed_columns(select, name, alias)
-    declared = {c.lower() for c in (not_null or {}).get(name, frozenset())}
-    if not any(set(k) <= grouped and set(k) <= declared for k in ((tuple(c.lower() for c in key) for key in keys.get(name, [])))):
+    declared = {c.lower() for c in (not_null or {}).get(fact, frozenset())}
+    if not any(set(k) <= grouped and set(k) <= declared for k in ((tuple(c.lower() for c in key) for key in keys.get(fact, [])))):
         return None
     # A window over the grouped rows would see different rows once the grouping goes.
     if any(w.find_ancestor(exp.Select) is select for w in select.find_all(exp.Window)):
@@ -155,15 +156,15 @@ def drop_keyed_distinct(
     table = _single_table(select)
     if table is None:
         return None
-    name, alias = table.name.lower(), table.alias_or_name.lower()
+    name, alias, fact = table.name.lower(), table.alias_or_name.lower(), declared_key(table)
     outputs = set()
     for projection in select.expressions:
         value = projection.this if isinstance(projection, exp.Alias) else projection
         if isinstance(value, exp.Column) and (not value.table or value.table.lower() in (alias, name)):
             outputs.add(value.name.lower())
     outputs |= _fixed_columns(select, name, alias)
-    declared = {c.lower() for c in (not_null or {}).get(name, frozenset())}
-    if not any(set(k) <= outputs and set(k) <= declared for k in (tuple(c.lower() for c in key) for key in keys.get(name, []))):
+    declared = {c.lower() for c in (not_null or {}).get(fact, frozenset())}
+    if not any(set(k) <= outputs and set(k) <= declared for k in (tuple(c.lower() for c in key) for key in keys.get(fact, []))):
         return None
     copy = select.copy()
     copy.set("distinct", None)
