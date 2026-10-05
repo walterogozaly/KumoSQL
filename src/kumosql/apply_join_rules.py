@@ -46,11 +46,12 @@ def apply_join_rules(select: exp.Select, types: dict | None) -> exp.Select | Non
         or lateral_projection(select)
         or tidy_over_lateral(select)
         or unwrap_lateral_passthrough(select)
-        or read_correlated_derived(select)
-        or flatten_lateral(select)
+        or read_correlated_derived(select, types)
+        or flatten_lateral(select, types)
         or lateral_union_projection(select)
         or exists_over_constant_row(select)
         or exists_read_derived(select)
+        or equate_inside_exists(select, types)
         or carry_range_into_exists(select, types)
         or name_laterals(select)
     )
@@ -110,8 +111,32 @@ def _scope_aliases(select: exp.Select) -> set[str]:
     return {_alias(s) for s in _sources(select)} - {""}
 
 
-def _free_columns(body: exp.Expression) -> list[exp.Column] | None:
-    """Columns of ``body`` whose qualifier no select inside ``body`` declares; None when one has no qualifier."""
+def _bare_bound(column: exp.Column, node: exp.Select, types: dict | None) -> bool:
+    """Does a column written without a qualifier read one of the sources of ``node``?"""
+
+    name = column.name.lower()
+    if not types:
+        return False
+    for source in _sources(node):
+        if isinstance(source, exp.Table):
+            columns = types.get(source.name.lower())
+            if columns is None or source.args.get("db") or source.args.get("catalog"):
+                return False
+            if name in columns:
+                return True
+        elif isinstance(source, exp.Subquery) and isinstance(source.this, exp.Select):
+            names = _clean_outputs(source.this)
+            if names is None:
+                return False
+            if name in names:
+                return True
+        else:
+            return False
+    return False
+
+
+def _free_columns(body: exp.Expression, types: dict | None = None) -> list[exp.Column] | None:
+    """Columns of ``body`` whose qualifier no select inside ``body`` declares; None when one cannot be placed."""
 
     found = []
     for column in body.find_all(exp.Column):
@@ -119,7 +144,10 @@ def _free_columns(body: exp.Expression) -> list[exp.Column] | None:
             return None
         table = column.table.lower()
         if not table:
-            return None
+            select = column.find_ancestor(exp.Select)
+            if select is None or not _bare_bound(column, select, types):
+                return None
+            continue
         node = column.parent
         bound = False
         while node is not None:
@@ -250,7 +278,53 @@ def _plain_scope(scope: exp.Select) -> bool:
     )
 
 
-def _pin_into_scope(scope: exp.Select, value: exp.Expression, owner: str, name: str, depth: int = 0) -> bool | None:
+def _value_inside(derived: exp.Select, value: exp.Expression, scope: exp.Select, types: dict) -> exp.Expression | None:
+    """What ``value`` (written in ``scope``) is inside the derived table ``derived`` of ``scope``, or None.
+
+    * ``value`` reads one output of the derived table: that output's own expression.
+    * ``value`` is equated to an output ``d.c`` by the ON of the join that brings the derived table in (an
+      inner or left join, the derived table on the right): a right row that is kept has ``d.c = value``, so
+      inside it ``value`` is the expression of ``c``. Rows that match nothing never reach the result.
+    """
+
+    holder = derived.parent
+    if not isinstance(holder, exp.Subquery) or not _alias(holder):
+        return None
+    names = _clean_outputs(derived)
+    if names is None:
+        return None
+    pick = None
+    if isinstance(value, exp.Column) and value.table.lower() == _alias(holder):
+        if value.name.lower() in names:
+            pick = value.name.lower()
+    else:
+        join = holder.parent
+        if isinstance(join, exp.Join) and (join.args.get("side") or "").upper() in ("", "LEFT") and (join.args.get("kind") or "").upper() in ("", "INNER", "LEFT") and join.args.get("on") is not None:
+            for part in conjuncts(join.args["on"]):
+                if not isinstance(part, (exp.EQ, exp.NullSafeEQ)):
+                    continue
+                for mine, theirs in ((part.this, part.expression), (part.expression, part.this)):
+                    if (
+                        isinstance(theirs, exp.Column)
+                        and theirs.table.lower() == _alias(holder)
+                        and theirs.name.lower() in names
+                        and isinstance(mine, exp.Column)
+                        and mine.table.lower() != _alias(holder)
+                        and mine.sql() == value.sql()
+                    ):
+                        pick = theirs.name.lower()
+    if pick is None:
+        return None
+    inner_value = _unaliased(derived.expressions[names.index(pick)])
+    if any(isinstance(n, (exp.Subquery, exp.Exists, exp.Select, exp.Anonymous, exp.Rand)) for n in inner_value.walk()):
+        return None
+    if value.sql() != inner_value.sql() and not (isinstance(value, exp.Column) and value.table.lower() == _alias(holder)):
+        if (expression_type(value, scope, types) or ("",))[0] != "int" or (expression_type(inner_value, derived, types) or ("",))[0] != "int":
+            return None
+    return inner_value
+
+
+def _pin_into_scope(scope: exp.Select, value: exp.Expression, owner: str, name: str, types: dict, depth: int = 0) -> bool | None:
     """Replace the free ``owner.name`` in ``scope`` by ``value`` (an expression over the sources of ``scope``).
 
     Returns True when something changed, False when ``scope`` never reads the column, None when it must be left alone
@@ -259,7 +333,7 @@ def _pin_into_scope(scope: exp.Select, value: exp.Expression, owner: str, name: 
 
     if depth > 6 or not _plain_scope(scope):
         return None
-    free = _free_columns(scope)
+    free = _free_columns(scope, types)
     if free is None:
         return None
     uses = [c for c in free if c.table.lower() == owner and c.name.lower() == name]
@@ -283,24 +357,15 @@ def _pin_into_scope(scope: exp.Select, value: exp.Expression, owner: str, name: 
             return None
     plans = []
     for derived, _ in nested.values():
-        # the value must be a plain read of one output of that derived table, which then pins its own source
-        if not (isinstance(value, exp.Column) and isinstance(derived.parent, exp.Subquery) and _alias(derived.parent) == value.table.lower()):
+        inner_value = _value_inside(derived, value, scope, types)
+        if inner_value is None:
             return None
-        names = _clean_outputs(derived)
-        if names is None or value.name.lower() not in names:
-            return None
-        source = derived.parent.parent
-        join = source if isinstance(source, exp.Join) else None
-        if join is not None and (join.args.get("side") or "").upper() in ("RIGHT", "FULL"):
-            return None
-        if join is not None and (join.args.get("side") or "").upper() == "LEFT":
-            return None  # rows of a padded side: the value reaches the derived table only through its own ON
-        plans.append((derived, _unaliased(derived.expressions[names.index(value.name.lower())])))
+        plans.append((derived, inner_value))
     results = []
     for derived, inner_value in plans:
         if any(isinstance(n, (exp.Subquery, exp.Exists, exp.Select, exp.Anonymous, exp.Rand)) for n in inner_value.walk()):
             return None
-        done = _pin_into_scope(derived, inner_value, owner, name, depth + 1)
+        done = _pin_into_scope(derived, inner_value, owner, name, types, depth + 1)
         if done is None:
             return None
         results.append(done)
@@ -326,7 +391,7 @@ def _pin_into_branch(branch: exp.Select, position: int, owner: str, name: str, o
     inner_type = expression_type(value, branch, types)
     if not inner_type or inner_type[0] != "int" or not outer_type or outer_type[0] != "int":
         return None
-    return _pin_into_scope(branch, value, owner, name)
+    return _pin_into_scope(branch, value, owner, name, types)
 
 
 def pin_lateral_outputs(select: exp.Select, types: dict | None) -> exp.Select | None:
@@ -365,16 +430,16 @@ def pin_lateral_outputs(select: exp.Select, types: dict | None) -> exp.Select | 
                 changed = changed or done
             if not ok or not changed:
                 continue
-            _drop_lateral_if_closed(new_join)
+            _drop_lateral_if_closed(new_join, types)
             return copy
     return None
 
 
-def _drop_lateral_if_closed(join: exp.Join) -> None:
+def _drop_lateral_if_closed(join: exp.Join, types: dict | None) -> None:
     lateral = join.this
     if not isinstance(lateral, exp.Lateral):
         return
-    free = _free_columns(lateral.this)
+    free = _free_columns(lateral.this, types)
     if free is None or free:
         return
     join.set("this", exp.Subquery(this=lateral.this.this, alias=lateral.args["alias"].copy()))
@@ -455,7 +520,7 @@ def lateral_projection(select: exp.Select) -> exp.Select | None:
     return None
 
 
-def flatten_lateral(select: exp.Select) -> exp.Select | None:
+def flatten_lateral(select: exp.Select, types: dict | None) -> exp.Select | None:
     """``o JOIN LATERAL (SELECT .. FROM a [LEFT] JOIN c ON p WHERE q)`` is ``o JOIN a ON q [LEFT] JOIN c ON p``.
 
     The body keeps one output row per row of its own join, so its sources can join the enclosing query directly
@@ -486,7 +551,7 @@ def flatten_lateral(select: exp.Select) -> exp.Select | None:
         sources = _sources(body)
         if any(not (isinstance(s, (exp.Table, exp.Subquery)) and _alias(s)) for s in sources) or any(isinstance(s, exp.Table) and (s.args.get("pivots") or s.args.get("joins")) for s in sources):
             continue
-        if any(isinstance(s, exp.Subquery) and _free_columns(s.this) != [] for s in sources):
+        if any(isinstance(s, exp.Subquery) and _free_columns(s.this, types) != [] for s in sources):
             continue  # a derived table that reads the outer row can only stay inside the lateral
         inner_aliases = [_alias(s) for s in sources]
         if len(set(inner_aliases)) != len(inner_aliases) or set(inner_aliases) & (_scope_aliases(select) | {alias}):
@@ -633,7 +698,7 @@ def name_laterals(select: exp.Select) -> exp.Select | None:
     return None
 
 
-def read_correlated_derived(select: exp.Select) -> exp.Select | None:
+def read_correlated_derived(select: exp.Select, types: dict | None) -> exp.Select | None:
     """Read a correlated derived table of one table through: ``(SELECT t.a AS x FROM t WHERE t.b = o.b) AS d``.
 
     A derived table that reads an outer row sits inside a lateral. Its filter moves to the select that reads it
@@ -654,7 +719,7 @@ def read_correlated_derived(select: exp.Select) -> exp.Select | None:
         table = _from(inner).this if _from(inner) is not None else None
         if not isinstance(table, exp.Table) or not _alias(table) or table.args.get("joins") or table.args.get("pivots"):
             continue
-        free = _free_columns(inner)
+        free = _free_columns(inner, types)
         if not free:  # None (unknown) or nothing correlated
             continue
         side = (join.args.get("side") or "").upper() if join is not None else ""
@@ -841,6 +906,57 @@ def exists_read_derived(select: exp.Select) -> exp.Select | None:
 
 def _int_literal(node: exp.Expression) -> bool:
     return isinstance(node, exp.Literal) and not node.is_string and node.is_int
+
+
+def equate_inside_exists(select: exp.Select, types: dict | None) -> exp.Select | None:
+    """Inside ``EXISTS (.. WHERE o.k <=> s.k AND f(o.k))`` the second test reads ``s.k`` (equal values are the same value).
+
+    Only integer columns, where equal means identical, and only conjuncts of the test's own WHERE.
+    """
+
+    if not types:
+        return None
+    here = [_alias(s) for s in _sources(select)]
+    for node in _exists_nodes(select):
+        body = _strip(node.this)
+        if not isinstance(body, exp.Select) or any(body.args.get(k) for k in _BLOCKING + ("distinct",)) or body.args.get("where") is None or _from(body) is None:
+            continue
+        inner_aliases = _scope_aliases(body)
+        parts = conjuncts(body.args["where"].this)
+        for part in parts:
+            if not isinstance(part, (exp.EQ, exp.NullSafeEQ)):
+                continue
+            for outer, inner in ((part.this, part.expression), (part.expression, part.this)):
+                if not (isinstance(outer, exp.Column) and isinstance(inner, exp.Column) and isinstance(outer.this, exp.Identifier) and isinstance(inner.this, exp.Identifier)):
+                    continue
+                if outer.table.lower() not in here or here.count(outer.table.lower()) != 1 or outer.table.lower() in inner_aliases or inner.table.lower() not in inner_aliases:
+                    continue
+                if (expression_type(outer, select, types) or ("",))[0] != "int" or (expression_type(inner, body, types) or ("",))[0] != "int":
+                    continue
+                others = [p for p in parts if p is not part]
+                uses = [
+                    c
+                    for p in others
+                    for c in p.find_all(exp.Column)
+                    if c.table.lower() == outer.table.lower() and c.name.lower() == outer.name.lower() and c.find_ancestor(exp.Select) is body
+                ]
+                if not uses or any(outer.table.lower() in _scope_aliases(n) or inner.table.lower() in _scope_aliases(n) for n in body.find_all(exp.Select) if n is not body):
+                    continue
+                copy = select.copy()
+                target = _exists_nodes(copy)[_exists_nodes(select).index(node)]
+                new_body = _strip(target.this)
+                new_parts = conjuncts(new_body.args["where"].this)
+                skip = new_parts[parts.index(part)]
+                for p in new_parts:
+                    if p is skip:
+                        continue
+                    for c in list(p.find_all(exp.Column)):
+                        if c.table.lower() == outer.table.lower() and c.name.lower() == outer.name.lower() and c.find_ancestor(exp.Select) is new_body:
+                            if c is p:
+                                continue
+                            c.replace(inner.copy())
+                return copy
+    return None
 
 
 def carry_range_into_exists(select: exp.Select, types: dict | None) -> exp.Select | None:
