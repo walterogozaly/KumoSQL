@@ -40,3 +40,33 @@ def test_a_union_that_collapses_equal_rows_is_not_distributed():
         assert distribute_over_constant_union(select) is None
     # the collapsed rows still count once
     assert not _proven("SELECT d.x FROM (SELECT 'a' AS x UNION SELECT 'a') AS d", "SELECT 'a' UNION ALL SELECT 'a'")
+
+
+def _bigquery_select(source):
+    return sqlglot.parse_one(f"SELECT x FROM ({source}) AS d", read="bigquery")
+
+
+def test_a_union_whose_numbers_are_one_double_is_not_distributed():
+    # BigQuery reads a decimal or exponent literal as a FLOAT64, so these pairs are one row of a UNION
+    for source in (
+        "SELECT 0.1 AS x UNION DISTINCT SELECT 0.10000000000000000555",
+        "SELECT 1e0 AS x UNION DISTINCT SELECT 1.0000000000000001e0",
+        "SELECT 'k' AS s, 0.1 AS x UNION DISTINCT SELECT 'k', 0.10000000000000000555",
+    ):
+        assert distribute_over_constant_union(_bigquery_select(source)) is None
+
+
+def test_a_union_of_distinct_doubles_and_integers_is_still_distributed():
+    for source in (
+        "SELECT 0.1 AS x UNION DISTINCT SELECT 0.2",
+        "SELECT 9007199254740993 AS x UNION DISTINCT SELECT 9007199254740992",  # INT64 literals stay exact
+    ):
+        assert distribute_over_constant_union(_bigquery_select(source)) is not None
+
+
+def test_the_prover_keeps_two_literals_of_one_double_as_one_row():
+    one_row = "SELECT d.x FROM (SELECT 0.1 AS x UNION DISTINCT SELECT 0.10000000000000000555) AS d"
+    assert not prove_equivalent_algebraic(one_row, "SELECT 0.1 AS x UNION ALL SELECT 0.10000000000000000555", dialect="bigquery", compare_names=False).proven
+    assert prove_equivalent_algebraic(
+        "SELECT d.x FROM (SELECT 0.1 AS x UNION DISTINCT SELECT 0.2) AS d", "SELECT 0.1 AS x UNION ALL SELECT 0.2", dialect="bigquery", compare_names=False
+    ).proven

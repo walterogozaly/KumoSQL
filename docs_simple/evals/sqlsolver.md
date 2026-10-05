@@ -24,6 +24,10 @@ The samples use a fixed random seed, so they repeat across unchanged runs. Remem
 
 `(a UNION b) ORDER BY k LIMIT 1` keeps one row of the combined result. An earlier version of the prover lost that `LIMIT` when it looked inside the parentheses and called the query equal to `a UNION b`, which keeps every row. For example, over the values 3, 3, 3, 4 and NULL, the first returns one row and the second returns three. Both provers now keep the cut, in a derived table, a CTE, a subquery or at the top. When two cuts are stacked in a way that cannot be combined, the answer is "not proven". This covers only the shapes that were tested; the full guide lists them and the regression tests.
 
+## Rows that look different but are one number
+
+`SELECT 0.1 UNION DISTINCT SELECT 0.10000000000000000555` returns one row in BigQuery, because both decimal literals are the same FLOAT64. A rule that turns a select over a union of constant rows into a union of selects used to compare the digits as written, thought there were two rows and could "prove" the two-row form equal. It now treats numbers that are one double as one row and leaves that query to the general path. Integer literals are still compared exactly. See the [full reference](../../docs/evals/sqlsolver.md) for the rule.
+
 ## Read the caveats
 
 Some rules were built while inspecting failing corpus cases, so those scores are “tuned on test.” A case once held out ceases to be an untouched test if it is later used in development. The full guide tracks that exposure.

@@ -67,6 +67,17 @@ def _constant_row(select: exp.Expression) -> tuple | None:
     return tuple(("n", Decimal(lit.name)) if isinstance(lit, exp.Literal) and not lit.is_string else ("s", lit.name) if isinstance(lit, exp.Literal) else ("null",) for lit in (item.unalias() for item in select.expressions))
 
 
+def _double_row(select: exp.Expression) -> tuple:
+    """:func:`_constant_row` with each decimal or exponent number read as the double nearest to it, as BigQuery holds it.
+
+    An integer literal is an INT64 and stays exact.
+    """
+
+    row = _constant_row(select)
+    inexact = [isinstance(item.unalias(), exp.Literal) and not item.unalias().is_string and any(c in item.unalias().name for c in ".eE") for item in select.expressions]
+    return tuple(("n", float(cell[1])) if flag and cell[0] == "n" else cell for cell, flag in zip(row, inexact))
+
+
 def _union_rows(node: exp.Expression) -> list[exp.Select] | None:
     """The branches of a union of constant rows that holds each row once, else ``None``."""
 
@@ -77,8 +88,8 @@ def _union_rows(node: exp.Expression) -> list[exp.Select] | None:
         if left is None or right is None:
             return None
         rows = left + right
-        if node.args.get("distinct", True) and len({_constant_row(r) for r in rows}) != len(rows):
-            return None  # a repeated row would collapse; leave it to the general path
+        if node.args.get("distinct", True) and (len({_constant_row(r) for r in rows}) != len(rows) or len({_double_row(r) for r in rows}) != len(rows)):
+            return None  # a repeated row would collapse (so would FLOAT64 rows like 0.1 and 0.10000000000000000555); leave it to the general path
         return rows
     return [node] if _constant_row(node) is not None else None
 
