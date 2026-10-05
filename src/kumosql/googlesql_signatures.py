@@ -357,6 +357,8 @@ def _named(typer, node, name: str, scope, ctes) -> T:
         return UNKNOWN
     if name in ("ARRAY_TRANSFORM",) or (name in ("ARRAY_FILTER",) and _has_lambda(node)):
         return lambda_call(typer, node, name, scope, ctes)
+    if name in ARRAY_LAMBDA_RESULTS and _has_lambda(node):
+        return array_lambda_call(typer, node, name, scope, ctes)
     if _has_lambda(node):
         _visit_children(typer, node, scope, ctes)
         return UNKNOWN
@@ -641,6 +643,32 @@ def lambda_call(typer, node, name: str, scope, ctes) -> T:
     if body.type is None:
         return UNKNOWN
     return T(GType.array(body.type))
+
+
+# Array functions that take a predicate lambda: their result depends on the array argument only (array_functions.md).
+ARRAY_LAMBDA_RESULTS = {"ARRAY_FIND", "ARRAY_FIND_ALL", "ARRAY_OFFSET", "ARRAY_OFFSETS", "ARRAY_INCLUDES"}
+
+
+def array_lambda_call(typer, node, name: str, scope, ctes) -> T:
+    """ARRAY_FIND(array, e -> cond [, mode]) is the element type, ARRAY_FIND_ALL the array type, ARRAY_OFFSET an INT64,
+    ARRAY_OFFSETS an ARRAY<INT64> and ARRAY_INCLUDES a BOOL. The first argument must be a typed ARRAY."""
+
+    args = list(node.expressions) if isinstance(node, exp.Anonymous) else _arguments(node)
+    if not args or isinstance(args[0], exp.Lambda) or not any(isinstance(a, exp.Lambda) for a in args[1:]):
+        _visit_children(typer, node, scope, ctes)
+        return UNKNOWN
+    array = typer.expr(args[0], scope, ctes)
+    if array.type is None or array.lit is not None or array.type.kind != "ARRAY" or array.type.element is None:
+        return UNKNOWN
+    if name == "ARRAY_FIND":
+        return known(array.type.element)
+    if name == "ARRAY_FIND_ALL":
+        return T(array.type)
+    if name == "ARRAY_OFFSET":
+        return T(INT64)
+    if name == "ARRAY_OFFSETS":
+        return T(GType.array(INT64))
+    return T(BOOL)
 
 
 def _generate_array(call: Call) -> T:
