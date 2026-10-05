@@ -40,3 +40,7 @@ An unknown is not a safety guarantee.
 The simulator models appends and merges. A merge can fail if several source rows match one target row; NULL keys do not match and can be inserted repeatedly. It runs adapted SQL in DuckDB, so it only claims the BigQuery behavior explicitly modeled.
 
 The full guide covers watermark rules, lookback windows, deduplication, grouped summaries, unchanged joined tables, pre-operations, and adapted pg_ivm workloads. Always read the contract alongside the verdict.
+
+## Delete-then-reload windows
+
+Some models protect against late rows by deleting the newest hours of the target table before every run and then re-reading everything after what is left. For example, delete the last two hours, then load all source rows newer than the table's new maximum. This is safe when new rows only arrive at or after the source's newest time, and it is unsafe when a row arrives later than the window, is delivered twice, or is updated after being loaded. The checker proves the safe versions and keeps the others as refuted or unproven. A model that appends and reloads with `>=` repeats the rows at the new maximum, so it is refused. The proof assumes event times are never NULL and always later than the fallback date in the `COALESCE`. The details, including the variable form (`DECLARE w ...`), are in the [full guide](../docs/incremental.md#r8-delete-then-reload-windows).

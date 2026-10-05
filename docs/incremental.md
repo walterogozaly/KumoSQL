@@ -42,6 +42,23 @@ A contract is the set of source-change kinds allowed: `insert_new`, `insert_late
 * **diverges**: a random search over change sequences allowed by the contract found one on which the model differs from a full refresh (or fails), shrunk by dropping batches and statements while it still diverges. It is returned with the verdict and replays on its own.
 * **unknown**: no proof rule applies and the search found nothing. This is bounded evidence, not a proof.
 
+## R8: delete-then-reload windows
+
+Many models make late rows safe by deleting the table's newest window in `pre_operations` and reloading it:
+
+```sql
+pre_operations { ${when(incremental(), `DELETE FROM ${self()} WHERE ts >= TIMESTAMP_SUB((SELECT MAX(ts) FROM ${self()}), INTERVAL 2 HOUR)`)} }
+SELECT id, ts, v FROM ${ref("events")}
+${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}
+```
+
+The pre-operation runs in the same script as the table statement, so the watermark reads the table *after* the delete and reloads what the delete took away. `kumosql.incremental_reload` (rule R8, hooked into `prove_more`) proves two shapes over a row-wise single-table query. The theorem, its proof and the near misses are in the module docstring.
+
+* **Watermark read after the delete.** The delete is `tc >= W` (or `tc > W`) with a bound that does not depend on the row: a constant, `(SELECT MAX(tc) FROM self)` minus a non-negative constant interval, or a script variable declared before the delete with such a value. The reload is the R1/R2 watermark. What remains after the delete is exactly the rows of the full output at or below the new maximum, so the run equals the full refresh when every change lies above it. Append: `insert_new` and `empty`, plus `insert_boundary` when the delete provably removes the rows at the maximum (`>=` with a non-negative interval, `>` with a positive one); the reload must be strict `>`, since `>=` repeats the kept rows at the new maximum. Merge on the source key: also `update_touch` (only without a `WHERE`), and `insert_boundary` also when the reload is `>=` or a lookback.
+* **Window reloaded through a variable.** `DECLARE w DEFAULT (COALESCE(MAX(...) - c, <old date>))` before `DELETE ... WHERE tc >= w` and `WHERE tc >= w` in the query. `w` is read before the delete, so `effective_model` does not substitute it and R8 reads the raw `pre_operations`. It needs `w` non-NULL (the `COALESCE`) and `w` at most the table's maximum, and the delete and the reload must cover the same rows (append) or the reload must cover the deleted rows (merge).
+
+Refused: late rows, re-delivered rows, `update` and `delete` of source rows, `update_touch` without a key or with a `WHERE`, `insert_boundary` when the delete bound is a constant or can equal the maximum, a bound or watermark read from the source table instead of the table itself, a delete with a further condition, a variable that can be NULL, and an append that reloads with `>=`. The dev case `pre-operation-reload-own-window` is now proven; `-late-beyond-window`, `-duplicate-old-row` and `-update-touch` stay refuted. Proven shapes are also run through `search_divergence` with many seeds in `tests/test_incremental_reload.py`.
+
 ## Scores
 
 `python tools/incremental_bench.py` runs the corpus in `tests/fixtures/incremental/` and reports counts per outcome; the README scoreboard has two rows (detection, evidence `executed`; proofs, evidence `proof`).
