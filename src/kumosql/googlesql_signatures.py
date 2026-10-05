@@ -815,6 +815,8 @@ def array_zip_call(typer, node: exp.Anonymous, scope, ctes) -> T:
     for arg in arrays:
         value, name = (arg.this, arg.alias) if isinstance(arg, exp.Alias) else (arg, None)
         t = typer.expr(value, scope, ctes)
+        if t.lit == "null":  # each array argument is typed on its own; a bare NULL is an ARRAY<INT64> (compliance)
+            t = T(GType.array(INT64))
         if t.type is None or t.type.kind != "ARRAY" or t.type.element is None or t.lit not in (None, "empty_array"):
             return UNKNOWN
         if name is None and isinstance(value, (exp.Column, exp.Dot)):
