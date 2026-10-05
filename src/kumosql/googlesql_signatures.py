@@ -524,6 +524,9 @@ def _temporal_arithmetic(op: str, left: T, right: T) -> T:
                  ("INTERVAL", "INTERVAL"): INTERVAL}
     elif op == "*":
         pairs = {("INTERVAL", "INT64"): INTERVAL, ("INT64", "INTERVAL"): INTERVAL}
+        # INTERVAL times a FLOAT64 (compliance: interval/multiply_double) is an INTERVAL; the other operand is a number.
+        if {a, b} == {"INTERVAL", "FLOAT64"} and "string" not in (left.lit, right.lit):
+            return T(INTERVAL)
     elif op == "/":
         pairs = {("INTERVAL", "INT64"): INTERVAL}
     else:
