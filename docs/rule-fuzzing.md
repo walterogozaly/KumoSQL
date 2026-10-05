@@ -73,13 +73,13 @@ branch lost its only aggregate and went from one row to a row per input row) and
 About 8,000 template cases over the aggregate, distinct and set, outer-join, grouping and window, and scalar
 generators fired about 70 rules and found nothing else.
 
-The set-operation sweep ([#518](https://github.com/walterogozaly/KumoSQL/issues/518)) found three more, all fixed with
+The set-operation sweep ([#518](https://github.com/walterogozaly/KumoSQL/issues/518)) found five more, all fixed with
 regression tests:
 
 - `merge_same_source` and `set_operation_to_exists` unwrapped the parentheses of an operand and lost an `ORDER BY` /
   `LIMIT` that sqlglot keeps on them (`((SELECT x FROM t) ORDER BY x LIMIT 1) INTERSECT DISTINCT ...` became a plain
-  filter), and `push_filter_into_set_operation` pushed a filter below such a cut
-  (`tests/test_set_operand_tail_rules.py`).
+  filter), `push_filter_into_set_operation` pushed a filter below such a cut, and `collapse_counted_intersection`
+  read a cut `UNION ALL` operand through the same parentheses (`tests/test_set_operand_tail_rules.py`).
 - `split_distinct_select` found the `x IN (SELECT CASE ...)` it had judged by comparing SQL text in its copy, so a
-  look-alike test in a nested select was split instead, where only TRUE counting no longer holds
-  (`tests/test_set_split_scope.py`).
+  look-alike test in a nested select was split instead, where only TRUE counting no longer holds. The same
+  text lookup was replaced in the other `set_split_rules` splits (`tests/test_set_split_scope.py`).

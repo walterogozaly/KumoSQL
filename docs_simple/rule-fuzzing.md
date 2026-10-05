@@ -12,7 +12,7 @@ Before it reports anything, the tool rules out noise: the same difference must a
 
 ## What it has found so far
 
-Four wrong rewrites on the first runs: two in the rules that handle provably empty tables, one in the rule that drops unread columns of a `UNION ALL`, and one that dropped a grand-total grouping inside `EXISTS`. All four are fixed and kept as tests. A later sweep of the set-operation rules (`UNION`, `INTERSECT`, `EXCEPT`) found three more: two rules forgot the `LIMIT` written on the brackets around one side (`((SELECT x FROM t) ORDER BY x LIMIT 1) INTERSECT ...`), and one rewrote a look-alike `IN` test elsewhere in the query instead of the one it had checked. These are fixed too. The running list is on the workstream issue linked from the full reference.
+Four wrong rewrites on the first runs: two in the rules that handle provably empty tables, one in the rule that drops unread columns of a `UNION ALL`, and one that dropped a grand-total grouping inside `EXISTS`. All four are fixed and kept as tests. A later sweep of the set-operation rules (`UNION`, `INTERSECT`, `EXCEPT`) found five more: three rules and the counted-intersection check forgot the `LIMIT` written on the brackets around one side (`((SELECT x FROM t) ORDER BY x LIMIT 1) INTERSECT ...`), and one rewrote a look-alike `IN` test elsewhere in the query instead of the one it had checked. These are fixed too. The running list is on the workstream issue linked from the full reference.
 
 ## Limits
 
