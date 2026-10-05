@@ -124,6 +124,7 @@ def fresh_redactor(monkeypatch):
 # collection order, so starting these first keeps one long benchmark from running alone at the end.
 HEAVY_FILES = [
     "test_qed_benchmarks.py",
+    "test_qed_cockroach_benchmarks.py",
     "test_verieql_benchmarks.py",
     "test_singh_bedathur_benchmark.py",
     "test_spider2_bench.py",
@@ -192,6 +193,7 @@ EVAL_FILES = {
     "test_output_properties.py",
     "test_pipeline_bench.py",
     "test_qed_benchmarks.py",
+    "test_qed_cockroach_benchmarks.py",
     "test_querybooster_bench.py",
     "test_quite_bench.py",
     "test_rbot_benchmarks.py",
