@@ -392,9 +392,18 @@ def _match_recognize(sql: str, dialect: str) -> str | None:
         for lo, hi in _split_commas(tokens, pairs, begin_of["MEASURES"] + 1, end_of["MEASURES"]):
             if hi - lo < 3 or tokens[hi - 2].upper != "AS" or not re.fullmatch(r"[A-Za-z_]\w*", tokens[hi - 1].text):
                 return None
-            if any(tokens[i].upper in variables or tokens[i].upper in _MR_PATTERN_FUNCTIONS for i in range(lo, hi - 2)):
+            if any(tokens[i].upper in _MR_PATTERN_FUNCTIONS or tokens[i].upper == "SELECT" for i in range(lo, hi - 2)):
                 return None
-            measures.append(sql[tokens[lo].start:tokens[hi - 2].start].strip() + " AS " + tokens[hi - 1].text)
+            base = tokens[lo].start
+            cuts = []
+            for i in range(lo, hi - 2):
+                if tokens[i].upper in variables:
+                    # only the qualifier of a column (A.x) is understood: A.x has the type of the relation's column x
+                    if i + 1 >= hi - 2 or tokens[i + 1].type != "DOT" or (i > lo and tokens[i - 1].type == "DOT"):
+                        return None
+                    cuts.append((tokens[i].start - base, tokens[i + 1].end - base, ""))
+            expression = _cut(sql[base:tokens[hi - 2].start], cuts).strip()
+            measures.append(f"{expression} AS {tokens[hi - 1].text}")
         keys = []
         if "PARTITION" in names:
             lo = begin_of["PARTITION"] + 1
