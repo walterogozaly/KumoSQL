@@ -33,6 +33,32 @@ def test_python_repr_timing_and_memory_keys_are_masked():
     assert a != c
 
 
+def test_seconds_suffix_fields_are_masked_but_result_counts_are_not():
+    a = eval_diff.normalize('{"queries": 40, "rewrite_seconds": 12.8, "counterexample_seconds": 0.45}')
+    b = eval_diff.normalize('{"queries": 40, "rewrite_seconds": 3.1, "counterexample_seconds": 9.2}')
+    c = eval_diff.normalize('{"queries": 41, "rewrite_seconds": 3.1, "counterexample_seconds": 9.2}')
+    assert a == b
+    assert a != c
+
+
+def test_sampled_commands_require_a_supported_harness():
+    cases = {
+        "python tools/targeted_data_bench.py --split all": "python tools/targeted_data_bench.py --split all --limit 25",
+        "python tools/bounded_bench.py run leetcode --rows 3": "python tools/bounded_bench.py run leetcode --rows 3 --limit 25",
+        "python tools/conditional_bench.py singh": "python tools/conditional_bench.py singh --sample 25",
+        "python tools/conditional_bench.py verieql --every 8": "python tools/conditional_bench.py verieql --every 8 --limit 25",
+        "python tools/engine_suites.py --suite duckdb-slt": "python tools/engine_suites.py --suite duckdb-slt --limit 25",
+        "python tools/singh_bedathur_bench.py": "python tools/singh_bedathur_bench.py --sample 25",
+    }
+    for original, expected in cases.items():
+        command, reason = eval_diff.sampled_command(original, 25)
+        assert command == expected
+        assert reason is None
+    command, reason = eval_diff.sampled_command("python tools/qed_bench.py", 25)
+    assert command is None
+    assert reason == "no deterministic sample mode for this command"
+
+
 def test_commands_come_from_results_files(tmp_path):
     results = tmp_path / "benchmarks" / "results"
     results.mkdir(parents=True)
