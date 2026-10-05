@@ -10,6 +10,10 @@ The helper `rewrite_over_model` proposes a query reading the model and checks it
 
 For example, a model containing all orders with customer IDs might supply a query filtering those orders to one customer. A model that discarded a needed column cannot supply it.
 
+A few more shapes work. A view of events per second can supply events per minute, hour, day, month or year, because cutting a timestamp to a minute after cutting it to a second gives the same result as cutting it once. It cannot supply a finer unit, and a view by week cannot supply months, since a week can span two months. A view that is already filtered to one group (a view per customer name) can supply a total for one named customer, and a view that kept only groups above 10 can supply the groups above 20 by filtering again. A view column that is the same number written as a bigger type can supply a filter on the original column when the column types are known. A `SELECT *` over a join written with `USING` lists the joined column first, as the standard says, and the rewrite keeps that order.
+
+These are only proposals: the prover still has to establish that the replacement and the original give the same rows, and the random-database check still has to agree. The full guide lists the open shapes (outer joins, set operations, joins on keys, unions of a view with base rows).
+
 ## 2. Is one result contained in another?
 
 Containment asks whether every row from query A is also returned by query B.

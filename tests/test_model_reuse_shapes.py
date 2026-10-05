@@ -125,11 +125,17 @@ def test_constant_key_makes_the_grains_equal():
     assert reuse.rewritten and reuse.strategy == "aggregate-same-grain", reuse.reason
 
 
-def test_global_distinct_count_is_not_read_from_a_single_group():
-    """On no rows the query returns one row (0) and the model none, so this stays unrewritten."""
+def test_global_distinct_count_over_a_fixed_key_reads_one_group_and_keeps_zero():
+    """On no rows the query returns one row (0) and the model none: the model's column is read through
+    ``COALESCE(SUM(..), 0)``, which is 0 too (a plain read of the model would return no row)."""
 
     model = "SELECT name, COUNT(DISTINCT deptno) AS cnt FROM emps GROUP BY name"
-    assert not rewrite_over_model("SELECT COUNT(DISTINCT deptno) FROM emps WHERE name = 'hello'", model, schema=EMPS).rewritten
+    query = "SELECT COUNT(DISTINCT deptno) FROM emps WHERE name = 'hello'"
+    reuse = rewrite_over_model(query, model, schema=EMPS)
+    assert reuse.rewritten and "COALESCE" in reuse.sql.upper(), reuse.reason
+    setup = ["CREATE TABLE emps (empid INT, deptno INT, name TEXT, salary DOUBLE, commission INT)"]
+    assert _same_rows(query, reuse, setup)  # no rows: 0 and 0
+    assert _same_rows(query, reuse, [*setup, "INSERT INTO emps VALUES (1, 10, 'hello', 1.0, 1), (2, 20, 'hello', 1.0, 1), (3, 10, 'x', 1.0, 1)"])
 
 
 @pytest.mark.parametrize("grouping", ["CUBE (empid, deptno)", "ROLLUP (deptno, empid)", "GROUPING SETS ((deptno), ())"])
