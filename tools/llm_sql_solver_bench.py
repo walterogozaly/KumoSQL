@@ -262,12 +262,25 @@ def prove(sql1: str, sql2: str, tables: dict[str, dict[str, str]]) -> str:
     return "not_equivalent" if result.status is SmtStatus.NOT_EQUIVALENT else "unknown"
 
 
-def differs_on_random_databases(case: Case, sql1: str, sql2: str, trials: int = TRIALS, seed: int = 7) -> str:
+def differs_on_random_databases(
+    case: Case, sql1: str, sql2: str, trials: int = TRIALS, seed: int = 7, *,
+    null_rate: float | None = None, witness: dict | None = None, databases: list[dict] | None = None, tie_safe: bool = False,
+    unique: dict[str, tuple[str, ...]] | None = None, valid=None,
+) -> str:
     """"differs", "agree" or "error" (SQLite rejects a query or the schema).
 
     Results are compared as Spider does (as lists when the first query ends in ORDER BY). Where a LIMIT
     or the order makes a result depend on how rows happen to be stored, every database is loaded twice,
     in opposite row orders, and is only used when each query returns the same both times.
+
+    ``null_rate`` overrides how often a column that is not a key holds NULL; ``witness``, when given,
+    receives the rows of the first database on which the results differ; ``databases`` replays those
+    databases (table -> rows) instead of random ones. With ``tie_safe`` an order-dependent comparison is
+    only made on a database where neither query's ORDER BY has ties (each query is run again with its
+    ORDER BY keys as extra columns and without its LIMIT): a tie the storage order does not expose, such as
+    one the join order decides, can then never count as a difference. ``unique`` lists, per table, more
+    columns whose values may not repeat (the columns foreign keys point at). ``valid``, a function of the
+    database (table -> rows), skips the generated databases it rejects.
     """
 
     import random
@@ -296,26 +309,93 @@ def differs_on_random_databases(case: Case, sql1: str, sql2: str, trials: int = 
     try:
         for table, columns in case.tables.items():
             connection.execute(f'CREATE TABLE "{table}" ({", ".join(f"{chr(34)}{c}{chr(34)} {k}" for c, k in columns.items())})')
-        for _ in range(trials):
+        for number in range(trials if databases is None else len(databases)):
             made: dict[str, list[list]] = {}
-            for table in sqliq_bench.table_order(pair):
-                made[table] = sqliq_bench.random_rows(pair, table, domains, rng, made)
+            if databases is not None:
+                made = databases[number]
+            else:
+                for table in sqliq_bench.table_order(pair):
+                    made[table] = sqliq_bench.random_rows(pair, table, domains, rng, made, null_rate=null_rate, unique=(unique or {}).get(table, ()))
+            if valid is not None and not valid(made):
+                continue
             load(made, False)
             left, right = sqliq_bench.run_query(connection, sql1), sqliq_bench.run_query(connection, sql2)
             if not limited and bag(left) != bag(right):
+                if witness is not None:
+                    witness.update({t: [list(r) for r in rows] for t, rows in made.items()})
                 return "differs"
             if not (limited or as_list):
                 continue
             load(made, True)
             if sqliq_bench.run_query(connection, sql1) != left or sqliq_bench.run_query(connection, sql2) != right:
                 continue  # ties or a LIMIT without a full order: the rows returned depend on storage
+            if tie_safe and not (_tie_free(connection, sql1) and _tie_free(connection, sql2)):
+                continue
             if (left != right) if as_list else (bag(left) != bag(right)):
+                if witness is not None:
+                    witness.update({t: [list(r) for r in rows] for t, rows in made.items()})
                 return "differs"
     except sqlite3.Error:
         return "error"
     finally:
         connection.close()
     return "agree"
+
+
+def order_keys_query(sql: str) -> str | None:
+    """The query with its ORDER BY keys appended as output columns and without LIMIT or OFFSET, or None.
+
+    None when the query has no ORDER BY at the top (its order is arbitrary) or is a set operation.
+    """
+
+    tree = _tree(sql)
+    top = _top(tree)
+    if not isinstance(top, exp.Select) or top.args.get("order") is None:
+        return None
+    projections = list(top.expressions)
+    aliases = {p.alias.lower(): p.this for p in projections if isinstance(p, exp.Alias)}
+    keys = []
+    for ordered_by in top.args["order"].expressions:
+        key = ordered_by.this
+        if isinstance(key, exp.Literal) and key.is_int and 0 < int(key.name) <= len(projections):
+            key = projections[int(key.name) - 1]
+            key = key.this if isinstance(key, exp.Alias) else key
+        elif isinstance(key, exp.Column) and not key.table and key.name.lower() in aliases:
+            key = aliases[key.name.lower()]
+        keys.append(key.copy())
+    top.set("expressions", projections + keys)
+    top.set("limit", None)
+    top.set("offset", None)
+    return tree.sql(dialect="sqlite")
+
+
+def _tie_free(connection, sql: str) -> bool:
+    """The rows come back in one possible order on the loaded database.
+
+    That holds when no two rows the query sorts share their ORDER BY keys, or when a query without
+    ORDER BY or LIMIT returns at most one row.
+    """
+
+    import sqlite3
+
+    import sqliq_bench
+
+    keyed = order_keys_query(sql)
+    if keyed is None:
+        top = _top(_tree(sql))
+        if top is None or top.args.get("limit") is not None or top.args.get("order") is not None:
+            return False
+        try:
+            return len(sqliq_bench.run_query(connection, sql)) <= 1
+        except sqlite3.Error:
+            return False
+    width = len(_top(_tree(sql)).expressions)
+    try:
+        rows = sqliq_bench.run_query(connection, keyed)
+    except sqlite3.Error:
+        return False
+    keys = [row[width:] for row in rows]
+    return len(set(keys)) == len(keys)
 
 
 def refute(case: Case, sql1: str, sql2: str) -> str:
