@@ -4,7 +4,7 @@
 
 `kumosql.googlesql_types` works out the output schema of a BigQuery query, STRUCT and ARRAY included, without running it or asking BigQuery: which columns the query returns, with which names and which types. It is a conservative type checker: it gives a type only when GoogleSQL's own rules fix one, and answers **unknown** for everything else. A wrong type would be worse than no type, because a caller (a schema-change check, a prover's column model, a lineage view) would build on it.
 
-The checker is a library. Nothing else in KumoSQL calls it yet; the hooks planned for it are [at the end](#planned-hooks). How well it does is scored by the [GoogleSQL type inference eval](evals/googlesql-types.md); the numbers are on that page and in `benchmarks/results/googlesql-types.json`, not here.
+The checker is a library. The schema-change checker uses it to correct output types, and the set-operation checker uses it when its existing reader cannot resolve branch types. Other planned consumers are listed [at the end](#current-and-planned-hooks). How well it does is scored by the [GoogleSQL type inference eval](evals/googlesql-types.md); the numbers are on that page and in `benchmarks/results/googlesql-types.json`, not here.
 
 | Module | What it holds |
 | --- | --- |
@@ -192,11 +192,14 @@ It prints the queries typed, scripts skipped (a script that declares variables c
 - **Names only as written.** Quoting and case follow BigQuery's rules for the cases the eval covers; a collation, a case-insensitive dataset setting or a wildcard-table suffix is not modelled.
 - **The labels are one source.** The eval measures agreement with the reference implementation's printed types on the GoogleSQL compliance tests. It does not show agreement with BigQuery on every query.
 
-## Planned hooks
+## Current and planned hooks
 
-None of these exist yet; this page changes when one lands.
+Two consumers use the checker now:
 
-- **schema_change**: use inferred output columns to tell whether a column retype reaches an output and changes its type, which the [schema-change bench](evals/schema-change-bench.md) lists as a limit today (retypes feeding a `UNION` are not scored because the supertype is not modelled).
-- **set_operation_types**: use the supertype rules to give the output types of `UNION` models in the whole-pipeline views.
-- **prover_schema / prover_context**: give the prover's schema and column model the inferred types of derived tables, so a column without a declared type stops being unknown.
-- **infer_pipeline**: run `infer` over a loaded Dataform project in dependency order, putting each model's columns in the catalog for the ones downstream (the scan's `--chain` already does this by hand).
+- **`schema_change`** uses checked output types when a column is unknown or typed differently by sqlglot. It applies the correction only when the checker's output columns are complete and match sqlglot's names and width; otherwise it keeps sqlglot's result. This lets the schema-change check notice retypes that pass through a set operation, date subtraction and functions whose types sqlglot leaves unknown. The [schema-change bench](evals/schema-change-bench.md) records its coverage and limits.
+- **`set_operation_types`** uses checked branch types for BigQuery queries when its existing reader leaves a branch type unknown. It drops the equal-type assumption only when every branch is known and all corresponding output types match. A differing or unknown type keeps the assumption, and the checker does not make the existing `mixed_types` check more permissive.
+
+Still planned:
+
+- **`prover_schema` / `prover_context`**: give the prover's schema and column model the inferred types of derived tables, so a column without a declared type stops being unknown.
+- **`infer_pipeline`**: run `infer` over a loaded Dataform project in dependency order, putting each model's columns in the catalog for downstream models (the scan's `--chain` already does this by hand).
