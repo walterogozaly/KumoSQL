@@ -94,13 +94,15 @@ def _project(branch: exp.Expression, names: list[str], output: list[str], counte
         isinstance(inner, exp.Select)
         and all(not isinstance(e, exp.Star) for e in inner.expressions)
         and not _ordinal_keys(inner)
+        and not (any(name not in output for name in names) and _reads_dropped_columns(inner))
     ):
         by_name = {name: e for name, e in zip(names, inner.expressions)}
         if names == output:
             return branch
         # Same SELECT, reordered; a column the branch lacks is a constant NULL.
         # Window/aggregate/ORDER BY/LIMIT stay valid because only the select list changes
-        # (an ``ORDER BY 1`` or ``GROUP BY 1`` would not: such a branch is wrapped below).
+        # (an ``ORDER BY 1`` or ``GROUP BY 1`` would not, and neither would dropping a column that
+        # DISTINCT, an alias in ORDER BY / QUALIFY / HAVING or a LIMIT depends on: such a branch is wrapped below).
         projections = []
         for name in output:
             item = by_name.get(name)
@@ -121,6 +123,16 @@ def _project(branch: exp.Expression, names: list[str], output: list[str], counte
         else:
             projections.append(exp.alias_(exp.Null(), name, quoted=False))
     return exp.Subquery(this=exp.select(*projections).from_(wrapped))
+
+
+def _reads_dropped_columns(select: exp.Select) -> bool:
+    """Whether a column of the select list may be dropped without changing which rows the select returns.
+
+    ``SELECT DISTINCT a, b`` keeps one row per pair, so dropping ``b`` from the list afterwards is not
+    ``SELECT DISTINCT a``; a name in ORDER BY, QUALIFY, HAVING or GROUP BY may be one of the aliases dropped.
+    """
+
+    return any(select.args.get(k) for k in ("distinct", "group", "having", "qualify", "order", "limit", "offset", "windows"))
 
 
 def _ordinal_keys(select: exp.Select) -> bool:
