@@ -78,7 +78,13 @@ def _tables(ddl: str) -> dict:
         return sb.load_schema(path)
 
 
-def judge(case: dict, prove=sb.default_prove, trials: int = 30, schemas: dict | None = None) -> tuple[str, bool]:
+def default_prove(left: str, right: str, tables: dict, constants: bool = False) -> bool:
+    """The shared prover call, told that a BOOLEAN column holds TRUE, FALSE or NULL (as it does in CockroachDB and in the check below)."""
+
+    return sb.prove_result(left, right, tables, constants, boolean_columns=True).proven
+
+
+def judge(case: dict, prove=default_prove, trials: int = 30, schemas: dict | None = None) -> tuple[str, bool]:
     """(verdict, unchecked) for one case: verdict is proved / different / unknown / wrong."""
 
     with boolean_columns():
@@ -111,10 +117,10 @@ def _chunk(args):
     return [(c["name"],) + judge(c, trials=trials, schemas=schemas) for c in cases]
 
 
-def run(prove=sb.default_prove, trials: int = 30, limit: int | None = None, workers: int = 1) -> dict:
+def run(prove=default_prove, trials: int = 30, limit: int | None = None, workers: int = 1) -> dict:
     cases = load_cases()[:limit]
     start = time.time()
-    if workers > 1 and prove is sb.default_prove:
+    if workers > 1 and prove is default_prove:
         chunks = [(cases[i::workers * 4], trials) for i in range(workers * 4)]
         with ProcessPoolExecutor(workers) as pool:
             rows = [r for part in pool.map(_chunk, chunks) for r in part]

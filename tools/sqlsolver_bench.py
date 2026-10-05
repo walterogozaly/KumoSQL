@@ -448,7 +448,7 @@ def default_prove(left: str, right: str, tables: dict[str, Table], constants: bo
     return prove_result(left, right, tables, constants).proven
 
 
-def prove_result(left: str, right: str, tables: dict[str, Table], constants: bool = False):
+def prove_result(left: str, right: str, tables: dict[str, Table], constants: bool = False, **options):
     """The prover's full result (status, reason and any counterexample) for one pair."""
 
     from kumosql.algebraic_equivalence import prove_equivalent_algebraic
@@ -464,7 +464,7 @@ def prove_result(left: str, right: str, tables: dict[str, Table], constants: boo
         for t in tables.values()
     }
     return prove_equivalent_algebraic(
-        spark_days(left), spark_days(right), schema=schema, constraints=constraints, types={t.name: {c.name: c.type for c in t.columns} for t in tables.values()}, compare_names=False, dialect="mysql", exact_arithmetic=True, group_by_constants=constants
+        spark_days(left), spark_days(right), schema=schema, constraints=constraints, types={t.name: {c.name: c.type for c in t.columns} for t in tables.values()}, compare_names=False, dialect="mysql", exact_arithmetic=True, group_by_constants=constants, **options
     )
 
 

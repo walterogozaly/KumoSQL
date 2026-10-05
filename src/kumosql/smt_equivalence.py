@@ -82,7 +82,7 @@ from .solver_lock import bound, bounded_solver, serialized
 from .string_literals import canonical_literals
 from .type_names import invalid_type_name
 from .sqlx_fragments import masked_template_problem
-from . import numeric_column_reading, smt_errors, smt_group_sums, smt_numeric, smt_values, string_number_compare, string_number_literals
+from . import numeric_column_reading, smt_column_domains, smt_errors, smt_group_sums, smt_numeric, smt_values, string_number_compare, string_number_literals
 from .float_sum_order import Ledger
 
 try:  # pragma: no cover - exercised by the import itself
@@ -970,8 +970,9 @@ MAX_OUTER_JOIN_CASES = 256
 
 
 class _Compiler:
-    def __init__(self, schema: dict[str, list[str]] | None, exact_arithmetic: bool, dialect: str = "bigquery", types=None):
+    def __init__(self, schema: dict[str, list[str]] | None, exact_arithmetic: bool, dialect: str = "bigquery", types=None, boolean_columns: bool = False):
         self.dialect = dialect
+        self.boolean_columns = boolean_columns
         # Declared column types by table key, and the table of each base-table occurrence.
         self.types = {key.lower(): {c.lower(): t for c, t in cols.items()} for key, cols in (types or {}).items()}
         self.occ_tables: dict[str, str] = {}
@@ -2446,7 +2447,7 @@ class _Compiler:
         S = smt_values
         facts = []
         if self.dialect != "bigquery":
-            return facts
+            return smt_column_domains.facts(self, self.occs_seen if occs is None else occs, z3, V)
         for occ in (self.occs_seen if occs is None else occs):
             declared = self.types.get(self.occ_tables.get(occ.uid, ""), {})
             for name, v in occ.cols.items():
@@ -2911,7 +2912,12 @@ class _Prover:
         isolated.add(*[assertion.translate(context) for assertion in assertions])
         if isolated.check() != z3.sat:
             return base  # A timeout in the extra search must not lose a satisfiable model.
-        model = self._nice_model(isolated, values) or isolated.model()
+        model = self._nice_model(isolated, values)
+        if model is None:
+            # _nice_model leaves the solver on its last (unsatisfiable) preference; ask again without them
+            if isolated.check() != z3.sat:
+                return base
+            model = isolated.model()
         return model.translate(base.ctx)
 
     def _nice_model(self, solver, values):
@@ -4454,8 +4460,13 @@ def _prove_core(
     compare_names: bool = True,
     dialect: str = "bigquery",
     types: dict[str, dict[str, str]] | None = None,
+    boolean_columns: bool = False,
 ) -> SmtEquivalenceResult:
     """Prove two BigQuery queries return the same result bag, or refute them.
+
+    ``boolean_columns`` reads a column declared BOOLEAN as a true boolean (TRUE, FALSE or NULL) outside BigQuery,
+    where a BOOLEAN column is a number (MySQL's is a ``TINYINT(1)``) unless the caller says otherwise
+    (see ``kumosql.smt_column_domains``).
 
     ``constraints`` maps table names to ``TableConstraints`` (NOT NULL columns and
     keys) the proof may rely on. ``compare_names=False`` ignores output column
@@ -4479,7 +4490,7 @@ def _prove_core(
     used = [False]
 
     def attempt(semijoin: bool, blind: bool = False) -> SmtEquivalenceResult:
-        compiler = _Compiler(schema, exact_arithmetic, dialect, types)
+        compiler = _Compiler(schema, exact_arithmetic, dialect, types, boolean_columns)
         compiler.semijoin = semijoin
         compiler.blind_sets = blind
         try:
@@ -4871,6 +4882,10 @@ def _prove_with_limit(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalence
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {str(error)[:200]}")
     except RecursionError:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: the query nests too deeply")
+    except Exception as error:  # noqa: BLE001 - a solver failure is a failure to prove, never an exception or a proof
+        if z3 is not None and isinstance(error, z3.Z3Exception):
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unknown: the solver failed ({str(error)[:100]})")
+        raise
 
 
 def _prove_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
