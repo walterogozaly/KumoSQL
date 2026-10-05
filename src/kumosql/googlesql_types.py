@@ -395,18 +395,29 @@ def infer(sql_or_tree, catalog: Catalog | None = None, dialect: str = "bigquery"
 
     catalog = catalog or Catalog()
     text = sql_or_tree if isinstance(sql_or_tree, str) else None
+    pipes: dict = {}
     if isinstance(sql_or_tree, str):
+        parse_text = sql_or_tree
         if "|>" in _without_strings(sql_or_tree):
-            return TypedQuery(None, None, (), {}, {}, "pipe syntax is not typed")
+            from . import googlesql_pipe_types
+
+            prepared = googlesql_pipe_types.prepare(sql_or_tree)
+            if prepared is None:
+                return TypedQuery(None, None, (), {}, {}, "pipe syntax is not typed")
+            parse_text, pipes = prepared
         try:
-            tree = sqlglot.parse_one(sql_or_tree, read=dialect)
+            tree = sqlglot.parse_one(parse_text, read=dialect)
         except Exception as exc:  # noqa: BLE001 - an unparsed query has no types
             return TypedQuery(None, None, (), {}, {}, f"parse error: {exc}"[:200])
     else:
         tree = sql_or_tree
+        if any(re.fullmatch(r"__tmp\d+", t.name) for t in tree.find_all(exp.Table)):
+            # sqlglot reads a pipe query as a chain of CTEs of this name, which is not the query that was written
+            return TypedQuery(tree, None, (), {}, {}, "pipe syntax is not typed")
     if not isinstance(tree, exp.Query):
         return TypedQuery(tree, None, (), {}, {}, "not a query")
     typer = _Typer(catalog, text if text is not None else tree.sql(dialect))
+    typer.pipes = pipes
     try:
         rel = typer.query(tree, None, {})
     except _Unsupported as exc:
@@ -543,6 +554,7 @@ class _Typer:
         self.types: dict[int, tuple[exp.Expression, GType | None]] = {}
         self.relations: dict[int, tuple[exp.Expression, tuple[Column, ...] | None]] = {}
         self.findings: list[Finding] = []
+        self.pipes: dict = {}  # pipe chains by the placeholder table that stands for each (googlesql_pipe_types)
         clean = _without_strings(text).upper()
         ambiguous = set()
         if re.search(r"\bINT32\b", clean):
@@ -575,6 +587,12 @@ class _Typer:
             return inner
         if isinstance(node, exp.Paren):
             return self.query(node.this, outer, ctes)
+        if self.pipes:
+            from . import googlesql_pipe_types
+
+            chain = googlesql_pipe_types.chain_for(self, node)
+            if chain is not None:
+                return googlesql_pipe_types.type_chain(self, chain, outer, ctes)
         ctes = self.with_clause(node, outer, ctes)
         if isinstance(node, exp.SetOperation):
             return self.set_operation(node, outer, ctes)
