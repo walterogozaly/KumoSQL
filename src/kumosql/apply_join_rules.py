@@ -44,6 +44,9 @@ def apply_join_rules(select: exp.Select, types: dict | None) -> exp.Select | Non
     return (
         pin_lateral_outputs(select, types)
         or lateral_projection(select)
+        or unwrap_lateral_passthrough(select)
+        or read_correlated_derived(select)
+        or flatten_lateral(select)
         or lateral_union_projection(select)
         or exists_over_constant_row(select)
         or exists_read_derived(select)
@@ -407,8 +410,28 @@ def _reads_alias(select: exp.Select, alias: str):
     return reads
 
 
+def _replace_reads(select: exp.Select, alias: str, values: dict[str, exp.Expression]) -> bool:
+    """Write ``values[name]`` for every read of ``alias.name`` in ``select``; False when that is not safe."""
+
+    reads = _reads_alias(select, alias)
+    if reads is None or any(c.name.lower() not in values for c in reads):
+        return False
+    if any(not c.table and not isinstance(c.this, exp.Star) for c in select.find_all(exp.Column)):
+        return False  # a bare name might be one of its columns
+    for column in reads:
+        replacement = values[column.name.lower()].copy()
+        if isinstance(column.parent, exp.Select) and column.arg_key == "expressions":
+            replacement = exp.alias_(replacement, column.name)  # the output keeps its name
+        column.replace(replacement)
+    return True
+
+
+def _only_lateral(select: exp.Select, alias: str) -> bool:
+    return [_alias(s) for s in _sources(select)].count(alias) == 1
+
+
 def lateral_projection(select: exp.Select) -> exp.Select | None:
-    for index, join in enumerate(select.args.get("joins") or []):
+    for join in select.args.get("joins") or []:
         info = _plain_lateral(join)
         if info is None:
             continue
@@ -417,30 +440,180 @@ def lateral_projection(select: exp.Select) -> exp.Select | None:
         on = join.args.get("on")
         if on is not None and not (isinstance(on, exp.Boolean) and on.this):
             continue
-        if not isinstance(body, exp.Select) or not _row_branch(body) or not _other_joins_inner(select, join):
+        if not isinstance(body, exp.Select) or not _row_branch(body) or not _other_joins_inner(select, join) or not _only_lateral(select, alias):
             continue
-        if select.args.get("laterals") or any(select.args.get(k) for k in ("group", "having", "qualify", "windows")):
+        if any(select.args.get(k) for k in ("group", "having", "qualify", "windows")):
             continue
         names = _clean_outputs(body)
-        values = {n: _unaliased(e) for n, e in zip(names, body.expressions)}
-        reads = _reads_alias(select, alias)
-        if reads is None or [_alias(s) for s in _sources(select)].count(alias) != 1:
+        copy = select.copy()
+        if not _replace_reads(copy, alias, {n: _unaliased(e) for n, e in zip(names, body.expressions)}):
             continue
-        if any(c.name.lower() not in values for c in reads):
+        copy.set("joins", [j for j in copy.args["joins"] if _plain_lateral(j) is None or _plain_lateral(j)[1] != alias] or None)
+        return copy
+    return None
+
+
+def flatten_lateral(select: exp.Select) -> exp.Select | None:
+    """``o JOIN LATERAL (SELECT .. FROM a [LEFT] JOIN c ON p WHERE q)`` is ``o JOIN a ON q [LEFT] JOIN c ON p``.
+
+    The body keeps one output row per row of its own join, so its sources can join the enclosing query directly
+    (``q`` becomes the ON of ``a``, which is where it sits relative to the left joins: it reads ``a`` and the
+    outer row only). The body must be a plain select-project-join: no grouping, DISTINCT, LIMIT or windows, and no
+    RIGHT or FULL join.
+    """
+
+    for join in select.args.get("joins") or []:
+        info = _plain_lateral(join)
+        if info is None:
             continue
-        bare = [c for c in select.find_all(exp.Column) if not c.table and not isinstance(c.this, exp.Star)]
-        if bare:
+        lateral, alias = info
+        body = _strip(lateral.this)
+        on = join.args.get("on")
+        if on is not None and not (isinstance(on, exp.Boolean) and on.this):
+            continue
+        if not isinstance(body, exp.Select) or not _plain_scope(body) or body.args.get("distinct") or not _only_lateral(select, alias):
+            continue
+        if any(select.args.get(k) for k in ("group", "having", "qualify", "windows")) and False:
+            continue
+        names = _clean_outputs(body)
+        if names is None:
+            continue
+        inner_joins = body.args.get("joins") or []
+        if any(j.args.get("using") is not None or j.args.get("method") or isinstance(j.this, exp.Lateral) for j in inner_joins):
+            continue
+        sources = _sources(body)
+        if any(not (isinstance(s, (exp.Table, exp.Subquery)) and _alias(s)) for s in sources) or any(isinstance(s, exp.Table) and (s.args.get("pivots") or s.args.get("joins")) for s in sources):
+            continue
+        if any(isinstance(s, exp.Subquery) and _free_columns(s.this) != [] for s in sources):
+            continue  # a derived table that reads the outer row can only stay inside the lateral
+        inner_aliases = [_alias(s) for s in sources]
+        if len(set(inner_aliases)) != len(inner_aliases) or set(inner_aliases) & (_scope_aliases(select) | {alias}):
+            continue
+        # no other select of the query may use these names either (a nested read of an outer name could be captured)
+        if any(set(inner_aliases) & _scope_aliases(n) for n in select.find_all(exp.Select) if n is not select and not _inside(n, lateral)):
+            continue
+        if any(not c.table for c in body.find_all(exp.Column) if not isinstance(c.this, exp.Star)):
+            continue
+        where = body.args.get("where")
+        outside_the_first = set(inner_aliases[1:])
+        if where is not None and inner_joins and any(c.table.lower() in outside_the_first for c in where.find_all(exp.Column)):
+            continue
+        if where is not None and any((j.args.get("side") or "").upper() == "LEFT" for j in inner_joins) is False:
+            pass
+        copy = select.copy()
+        new_join = next(j for j in copy.args["joins"] if isinstance(j.this, exp.Lateral) and (_plain_lateral(j) or (None, ""))[1] == alias)
+        new_body = _strip(new_join.this.this)
+        values = {n: _unaliased(e) for n, e in zip(names, new_body.expressions)}
+        if not _replace_reads(copy, alias, values):
+            continue
+        first = _from(new_body).this
+        where = new_body.args.get("where")
+        has_left = any((j.args.get("side") or "").upper() == "LEFT" for j in new_body.args.get("joins") or [])
+        position = copy.args["joins"].index(new_join)
+        pieces = []
+        if where is not None and has_left:
+            pieces.append(exp.Join(this=first, kind="INNER", on=where.this.copy()))
+        else:
+            pieces.append(exp.Join(this=first, kind="CROSS" if where is None else "INNER", **({"on": exp.true()} if where is not None and False else {})))
+            if where is not None:
+                copy_where = copy.args.get("where")
+                joined = where.this.copy()
+                copy.set("where", exp.Where(this=exp.And(this=copy_where.this.copy(), expression=joined) if copy_where is not None else joined))
+        pieces += [j.copy() for j in new_body.args.get("joins") or []]
+        copy.set("joins", copy.args["joins"][:position] + pieces + copy.args["joins"][position + 1 :])
+        return copy
+    return None
+
+
+def unwrap_lateral_passthrough(select: exp.Select) -> exp.Select | None:
+    """``LATERAL (SELECT d.a AS x, d.b AS y FROM (SELECT .. ) AS d)`` is the inner select with those outputs."""
+
+    for index, join in enumerate(select.args.get("joins") or []):
+        info = _plain_lateral(join)
+        body = _strip(join.this.this) if info is not None else None
+        if not isinstance(body, exp.Select) or any(body.args.get(k) for k in _BLOCKING + ("where", "distinct", "joins")):
+            continue
+        from_ = _from(body)
+        if from_ is None or not isinstance(from_.this, exp.Subquery) or not isinstance(from_.this.this, exp.Select) or not _alias(from_.this):
+            continue
+        inner = from_.this.this
+        if any(inner.args.get(k) for k in _BLOCKING + ("distinct",)) or inner.find(exp.AggFunc) is not None or inner.find(exp.Window) is not None:
+            continue
+        inner_names = _clean_outputs(inner)
+        outer_names = _clean_outputs(body)
+        if inner_names is None or outer_names is None:
+            continue
+        alias = _alias(from_.this)
+        picks = [_unaliased(e) for e in body.expressions]
+        if any(not (isinstance(c, exp.Column) and c.table.lower() == alias and c.name.lower() in inner_names) for c in picks):
             continue
         copy = select.copy()
-        copy_reads = _reads_alias(copy, alias)
-        for column in copy_reads or []:
-            replacement = values[column.name.lower()].copy()
-            if column.parent is copy and isinstance(column, exp.Column) and column.arg_key == "expressions":
-                replacement = exp.alias_(replacement, column.name)
-            elif isinstance(column.parent, exp.Select) and column.arg_key == "expressions":
-                replacement = exp.alias_(replacement, column.name)
-            column.replace(replacement)
-        copy.set("joins", [j for j in copy.args["joins"] if _plain_lateral(j) is None or _plain_lateral(j)[1] != alias] or None)
+        target = copy.args["joins"][index]
+        new_inner = _strip(target.this.this).args["from_" if "from_" in _strip(target.this.this).args else "from"].this.this
+        values = {n: _unaliased(e) for n, e in zip(inner_names, new_inner.expressions)}
+        new_inner.set("expressions", [exp.alias_(values[c.name.lower()].copy(), name) for c, name in zip(picks, outer_names)])
+        target.this.set("this", exp.Subquery(this=new_inner))
+        return copy
+    return None
+
+
+def read_correlated_derived(select: exp.Select) -> exp.Select | None:
+    """Read a correlated derived table of one table through: ``(SELECT t.a AS x FROM t WHERE t.b = o.b) AS d``.
+
+    A derived table that reads an outer row sits inside a lateral. Its filter moves to the select that reads it
+    (the WHERE for the first source, the ON clause for a joined one, which is where an outer join keeps it) and
+    ``d.x`` becomes ``t.a``.
+    """
+
+    from_ = _from(select)
+    if from_ is None or not _plain_scope(select) and select.args.get("where") is None and not select.args.get("joins"):
+        pass
+    items = [(from_.this, None)] + [(j.this, j) for j, _ in zip(select.args.get("joins") or [], range(10**6))] if from_ is not None else []
+    for source, join in items:
+        if not isinstance(source, exp.Subquery) or not isinstance(source.this, exp.Select) or not _alias(source):
+            continue
+        inner = source.this
+        if any(inner.args.get(k) for k in _BLOCKING + ("distinct", "joins")) or inner.find(exp.AggFunc) is not None or inner.find(exp.Window) is not None:
+            continue
+        table = _from(inner).this if _from(inner) is not None else None
+        if not isinstance(table, exp.Table) or not _alias(table) or table.args.get("joins") or table.args.get("pivots"):
+            continue
+        free = _free_columns(inner)
+        if not free:  # None (unknown) or nothing correlated
+            continue
+        side = (join.args.get("side") or "").upper() if join is not None else ""
+        if side in ("RIGHT", "FULL") or any((j.args.get("side") or "").upper() in ("RIGHT", "FULL") for j in select.args.get("joins") or []):
+            continue
+        names = _clean_outputs(inner)
+        if names is None or _alias(table) in (_scope_aliases(select) - {_alias(source)}):
+            continue
+        if any(not c.table for c in inner.find_all(exp.Column) if not isinstance(c.this, exp.Star)):
+            continue
+        copy = select.copy()
+        position = items.index((source, join))
+        new_source = [(_from(copy).this, None)] + [(j.this, j) for j in copy.args.get("joins") or []]
+        new_source, new_join = new_source[position]
+        new_inner = new_source.this
+        values = {n: _unaliased(e) for n, e in zip(names, new_inner.expressions)}
+        if not _replace_reads(copy, _alias(source), values):
+            continue
+        condition = new_inner.args["where"].this.copy() if new_inner.args.get("where") is not None else None
+        table_copy = _from(new_inner).this.copy()
+        if new_join is None:
+            _from(copy).set("this", table_copy)
+            if condition is not None:
+                old = copy.args.get("where")
+                copy.set("where", exp.Where(this=exp.And(this=old.this.copy(), expression=condition) if old is not None else condition))
+        else:
+            new_join.set("this", table_copy)
+            if condition is not None:
+                on = new_join.args.get("on")
+                if on is None or (isinstance(on, exp.Boolean) and on.this):
+                    new_join.set("on", condition)
+                else:
+                    new_join.set("on", exp.And(this=on.copy(), expression=condition))
+                if (new_join.args.get("kind") or "").upper() == "CROSS":
+                    new_join.set("kind", "INNER")
         return copy
     return None
 
