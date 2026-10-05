@@ -1555,8 +1555,10 @@ class _ColumnGuard:
     rewrite can capture.
     """
 
-    def __init__(self, node: exp.Expression, site: str):
+    def __init__(self, node: exp.Expression, site: str, local: bool = False):
         self.node = node
+        self.site = site
+        self.local = local  # only the columns inside the rewritten node are compared (see ``Rewrite.verify``)
         self.root = node.root()
         self._rewrite = proof_columns.begin(node, site)
         self.active = self._rewrite.active
@@ -1566,9 +1568,9 @@ class _ColumnGuard:
 
         self._rewrite.snapshot()
 
-    def _check(self, after: exp.Expression) -> None:
+    def _check(self, after: exp.Expression, region: exp.Expression | None = None) -> None:
         try:
-            self._rewrite.check(after)
+            self._rewrite.check(after, region if self.local else None)
         except proof_columns.ColumnResolutionRefused as refusal:
             raise UnmodeledConstruct(f"independent check of column resolution: {refusal}") from None
 
@@ -1581,18 +1583,19 @@ class _ColumnGuard:
         if twin is None:
             return
         if twin is trial:
-            trial = result.copy()
+            trial = region = result.copy()
         else:
-            twin.replace(result.copy())
-        self._check(trial)
+            region = result.copy()
+            twin.replace(region)
+        self._check(trial, region)
 
     def edited(self) -> None:
         if self.active:
-            self._check(self.root)
+            self._check(self.root, self.node)
 
 
-def _rewriting(node: exp.Expression, site: str) -> _ColumnGuard:
-    return _ColumnGuard(node, site)
+def _rewriting(node: exp.Expression, site: str, local: bool = False) -> _ColumnGuard:
+    return _ColumnGuard(node, site, local)
 
 
 def _twin(node: exp.Expression, root: exp.Expression, copy: exp.Expression) -> exp.Expression | None:
@@ -3374,7 +3377,7 @@ def _left_join_indicator_to_exists(tree: exp.Expression, keys: dict[str, list[tu
     for select in list(tree.find_all(exp.Select))[::-1]:
         if not any(isinstance(j.this, exp.Subquery) for j in select.args.get("joins") or []):
             continue
-        guard = _rewriting(select, "algebraic_indicator_join")
+        guard = _rewriting(select, "algebraic_indicator_join", local=True)
         trial = select.copy()
         if not _apply_indicator_joins(trial, key_sets):
             continue
@@ -3405,7 +3408,7 @@ def _indicator_join_above(select: exp.Select, keys: dict[str, list[tuple[str, ..
     from_ = select.args.get("from_") or select.args.get("from")
     if from_ is None or not isinstance(from_.this, exp.Subquery) or select.args.get("joins"):
         return None
-    guard = _rewriting(select, "algebraic_indicator_join_above")
+    guard = _rewriting(select, "algebraic_indicator_join_above", local=True)
     flat = _flatten_projections(select.copy())
     if flat is None or not flat.args.get("joins") or not _apply_indicator_joins(flat, key_sets):
         return None
@@ -3454,6 +3457,7 @@ def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list
     if any((later.args.get("side") or "").upper() in ("RIGHT", "FULL") for later in select.args["joins"][select.args["joins"].index(join) + 1 :]):
         return False  # a later outer join NULL-pads the joined relation, and its indicator with it, but not an EXISTS test
     equated: dict[str, list[exp.Expression]] = {}
+    matched: dict[str, exp.Column] = {}
     for part in ([] if isinstance(join.args["on"], exp.Boolean) and join.args["on"].this else _conjuncts(join.args["on"])):
         if not isinstance(part, exp.EQ):
             return False
@@ -3468,6 +3472,7 @@ def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list
         if not isinstance(column, exp.Column) or column.table.lower() not in ("", inner_alias):
             return False
         equated.setdefault(column.name.lower(), []).append(other)  # every equality is a condition of the match
+        matched.setdefault(column.name.lower(), column)
     if group_columns is not None:
         if not group_columns <= set(equated):
             return False
@@ -3506,7 +3511,9 @@ def _indicator_join(select: exp.Select, join: exp.Join, key_sets: dict[str, list
                 column.set("table", exp.to_identifier(fresh))
         conditions.append(own)
     for name, others in equated.items():
-        conditions.extend(exp.EQ(this=exp.column(name, table=fresh), expression=other.copy()) for other in others)
+        conditions.extend(
+            exp.EQ(this=proof_columns.rebuilt(exp.column(name, table=fresh), matched[name]), expression=other.copy()) for other in others
+        )
     where = _and_all(conditions)
     if where is not None:
         probe.set("where", exp.Where(this=where))
