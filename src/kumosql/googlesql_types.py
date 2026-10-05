@@ -229,11 +229,13 @@ class _TypeReader:
         return GType(kind)
 
 
-def from_datatype(datatype: exp.DataType, ambiguous: frozenset[str] = frozenset()) -> GType | None:
+def from_datatype(datatype: exp.DataType, ambiguous: frozenset[str] = frozenset(),
+                  renames: Mapping[str, str] | None = None) -> GType | None:
     """A sqlglot DataType (as parsed from BigQuery SQL) as a GType; None when sqlglot's type does not fix one.
 
     ``ambiguous`` names sqlglot types that stand for more than one GoogleSQL type in the query being typed (sqlglot
-    reads both ``INT`` and GoogleSQL's ``INT32`` as INT).
+    reads both ``INT`` and GoogleSQL's ``INT32`` as INT). ``renames`` maps a sqlglot type to the GoogleSQL kind it
+    certainly means in the query being typed (INT is INT32 when INT32 is the only spelling of it the query uses).
     """
 
     if not isinstance(datatype, exp.DataType):
@@ -244,26 +246,26 @@ def from_datatype(datatype: exp.DataType, ambiguous: frozenset[str] = frozenset(
         return None
     if name == "ARRAY":
         inner = datatype.expressions[0] if datatype.expressions else None
-        element = from_datatype(inner, ambiguous) if isinstance(inner, exp.DataType) else None
+        element = from_datatype(inner, ambiguous, renames) if isinstance(inner, exp.DataType) else None
         return GType.array(element) if element is not None else None
     if name == "RANGE":
         inner = datatype.expressions[0] if datatype.expressions else None
-        element = from_datatype(inner, ambiguous) if isinstance(inner, exp.DataType) else None
+        element = from_datatype(inner, ambiguous, renames) if isinstance(inner, exp.DataType) else None
         return GType.range(element) if element is not None else None
     if name == "STRUCT":
         fields = []
         for item in datatype.expressions:
             if isinstance(item, exp.ColumnDef) and isinstance(item.args.get("kind"), exp.DataType):
-                inner = from_datatype(item.args["kind"], ambiguous)
+                inner = from_datatype(item.args["kind"], ambiguous, renames)
                 fields.append(StructField(item.name, inner))
             elif isinstance(item, exp.DataType):
-                fields.append(StructField(None, from_datatype(item, ambiguous)))
+                fields.append(StructField(None, from_datatype(item, ambiguous, renames)))
             else:
                 return None
             if fields[-1].type is None:
                 return None
         return GType.struct(fields)
-    kind = _SQLGLOT_KINDS.get(name)
+    kind = (renames or {}).get(name) or _SQLGLOT_KINDS.get(name)
     return GType(kind) if kind else None
 
 
@@ -562,10 +564,15 @@ class _Typer:
         self.findings: list[Finding] = []
         self.select_aliases: frozenset[str] = frozenset()  # select-list aliases HAVING or QUALIFY may name
         clean = _without_strings(text).upper()
-        ambiguous = set()
+        ambiguous, renames = set(), {}
         if re.search(r"\bINT32\b", clean):
-            ambiguous.add("INT")
+            # sqlglot reads INT, INTEGER, INT4, BYTEINT and INT32 all as INT; the first four are GoogleSQL's INT64.
+            if re.search(r"\b(?:INT|INTEGER|INT4|BYTEINT)\b", clean):
+                ambiguous.add("INT")
+            else:
+                renames["INT"] = "INT32"
         self.ambiguous = frozenset(ambiguous)
+        self.renames = renames
         from . import googlesql_signatures
 
         self.signatures = googlesql_signatures
@@ -583,7 +590,7 @@ class _Typer:
         self.findings.append(Finding(code, message, node))
 
     def datatype(self, node) -> GType | None:
-        return from_datatype(node, self.ambiguous)
+        return from_datatype(node, self.ambiguous, self.renames)
 
     # ---- queries
 
