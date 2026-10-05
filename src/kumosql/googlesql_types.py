@@ -1985,6 +1985,9 @@ def _supertype(ts: list[T]) -> T | None:
         return None
     if any(t.type.kind == "STRUCT" for t in typed):
         return _struct_supertype(typed)
+    if typed and all(t.type.kind == "ARRAY" and t.lit is None for t in typed) and len({t.type for t in typed}) > 1:
+        # Arrays that differ only in struct field names are the same type to GoogleSQL (the first one's names are kept).
+        return typed[0] if all(_equivalent(t.type, typed[0].type) for t in typed) else None
     if non_literals:
         candidates = _common_supertypes([t.type for t in non_literals])
         if candidates is None:
