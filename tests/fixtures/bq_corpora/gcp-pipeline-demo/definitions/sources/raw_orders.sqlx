@@ -1,0 +1,7 @@
+config {
+  type: "declaration",
+  database: dataform.projectConfig.vars.rawProject,
+  schema: dataform.projectConfig.vars.rawDataset,
+  name: "orders",
+  description: "Append-only order events loaded by an upstream ingestion process."
+}

@@ -1,0 +1,13 @@
+config {
+  type: "assertion",
+  name: "assert_no_negative_revenue",
+  description: "Returns failing order records with a negative paid amount.",
+  tags: ["daily"]
+}
+
+SELECT
+  order_id,
+  gross_amount,
+  updated_at
+FROM ${ref("fact_orders")}
+WHERE gross_amount < 0

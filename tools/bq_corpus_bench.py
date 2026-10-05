@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 import time
 from collections import Counter
@@ -29,7 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tools"))
 
-from bq_syntax_coverage import FAIL, PASS, expected_dependencies, stage_cleanup, stage_format  # noqa: E402
+from bq_syntax_coverage import FAIL, PASS, _without_comments, expected_dependencies, stage_cleanup, stage_format  # noqa: E402
 
 from kumosql.pipeline import load_sqlx_project  # noqa: E402
 
@@ -47,11 +48,47 @@ def _error(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {str(exc).splitlines()[0][:160] if str(exc) else ''}"
 
 
-def run_project(root: Path, *, stages: bool = True) -> dict:
-    """The scores of one project folder. ``stages=False`` loads and traces it but runs no cleanup or format."""
+_QUOTED_TABLE = re.compile(r"`([\w-]+(?:\.[\w-]+){1,2})`")
+_MISSING_REF = re.compile(r"ref\(\) names '([^']+)'")
+
+
+def quoted_tables(text: str) -> set[str]:
+    """Tables a plain SQL file names in backticks (``project.dataset.table`` or ``dataset.table``), comments left out.
+
+    This is the oracle for the table reads of a file that holds no ``ref()``: every table of the projects scored this
+    way is written like that, so what KumoSQL reads can be compared with what the text says."""
+
+    return {name.lower() for name in _QUOTED_TABLE.findall(_without_comments(text))}
+
+
+def score_reads(all_reads: dict, model, text: str, stems: set[str]) -> tuple[int, int, list[str]]:
+    """(tables the text names, how many of them the loader read, failures) for one plain SQL file.
+
+    A table named in the text that is also another file of the project (``mimiciv_derived.age`` and ``age.sql``) is read
+    as that file's model. A read with no table of the text behind it is a failure too: a dependency nobody wrote."""
+
+    expected = quoted_tables(text)
+    reads = {name.lower() for name in all_reads.get(model.key, ())}
+    own = {model.key.lower(), model.target.name.lower()}
+
+    def read(name: str) -> bool:
+        return name in reads or (name.rsplit(".", 1)[-1] in stems and name.rsplit(".", 1)[-1] in {r.rsplit(".", 1)[-1] for r in reads})
+
+    found = {name for name in expected if read(name)}
+    failures = [f"{model.path}: table {name!r} is named in the file but not read" for name in sorted(expected - found)]
+    tails = {name.rsplit(".", 1)[-1] for name in expected}
+    extra = sorted(r for r in reads - expected if r not in own and r.rsplit(".", 1)[-1] not in tails)
+    failures += [f"{model.path}: read of {name!r} is not behind any table the file names" for name in extra]
+    return len(expected), len(found), failures
+
+
+def run_project(root: Path, *, stages: bool = True, reads: bool = False) -> dict:
+    """The scores of one project folder. ``stages=False`` loads and traces it but runs no cleanup or format.
+
+    ``reads=True`` also scores the table reads of the plain ``.sql`` files against the tables their text names."""
 
     files = sorted(p for p in root.rglob("*") if p.suffix in (".sql", ".sqlx"))
-    out: dict = {"files": len(files), "failures": [], "gaps": {}, "stages": {}}
+    out: dict = {"files": len(files), "failures": [], "gaps": {}, "stages": {}, "upstream_defects": []}
     started = time.perf_counter()
     try:
         pipeline = load_sqlx_project(root)
@@ -67,6 +104,14 @@ def run_project(root: Path, *, stages: bool = True) -> dict:
     by_path = {(model.path or "").replace("\\", "/"): model for model in pipeline.models.values()}
     gapped = {gap["asset"] for gap in pipeline.completeness().get("gaps", []) if gap.get("blocking")}
     deps = {"expected": 0, "found": 0}
+    table_reads = {"expected": 0, "found": 0}
+    all_reads = pipeline.table_reads() if reads else {}
+    stems = {path.stem for path in files if path.suffix == ".sql"}
+    # A ref() the loader reports as naming no action is a defect of the project (Dataform rejects it), not a miss of ours.
+    missing = {}
+    for diagnostic in pipeline.all_diagnostics():
+        if diagnostic.code == "missing_ref":
+            missing.setdefault(diagnostic.model, set()).update(_MISSING_REF.findall(diagnostic.message))
     stages: dict[str, Counter] = {"cleanup": Counter(), "format": Counter()}
     handled: Counter = Counter()  # True: read with no gap, cleaned up and formatted with no gap either
     held = Counter()
@@ -81,7 +126,14 @@ def run_project(root: Path, *, stages: bool = True) -> dict:
                         for k in pipeline.upstream.get(model.key, set())}
             deps["expected"] += len(expected)
             deps["found"] += len(expected & upstream)
-            out["failures"] += [f"{relative}: ref({name!r}) is not an edge" for name in sorted(expected - upstream)]
+            defects = missing.get(model.key, set()) & (expected - upstream)
+            out["upstream_defects"] += [f"{relative}: ref({name!r}) names no action of the project" for name in sorted(defects)]
+            out["failures"] += [f"{relative}: ref({name!r}) is not an edge" for name in sorted(expected - upstream - defects)]
+        if reads and model is not None and path.suffix == ".sql" and model.kind == "sql":
+            wanted, got, problems = score_reads(all_reads, model, text, stems)
+            table_reads["expected"] += wanted
+            table_reads["found"] += got
+            out["failures"] += problems
         clean = model is None or model.key not in gapped
         for stage, run in (("cleanup", stage_cleanup), ("format", stage_format)) if stages else ():
             status, detail = run(text, PASS)
@@ -96,6 +148,8 @@ def run_project(root: Path, *, stages: bool = True) -> dict:
             held["failures"] += len(out["failures"]) > failures_before
     out["held_out"] = {key: held[key] for key in ("files", "handled", "failures")}
     out["dependencies"] = deps
+    if reads:
+        out["table_reads"] = table_reads
     out["stages"] = {stage: dict(counts) for stage, counts in stages.items()}
     out["handled"] = handled[True]
     return out
@@ -103,7 +157,11 @@ def run_project(root: Path, *, stages: bool = True) -> dict:
 
 def run_all(skip: frozenset[str] | set[str] = frozenset()) -> dict[str, dict]:
     sources = json.loads((CORPORA / "sources.json").read_text())
-    return {project["name"]: run_project(CORPORA / project["name"]) for project in sources["projects"] if project["name"] not in skip}
+    return {
+        project["name"]: run_project(CORPORA / project["name"], reads="reads" in project.get("scored", ()))
+        for project in sources["projects"]
+        if project["name"] not in skip
+    }
 
 
 def totals(results: dict[str, dict]) -> dict:
@@ -114,6 +172,9 @@ def totals(results: dict[str, dict]) -> dict:
     out["held_out"] = {key: sum(r.get("held_out", {}).get(key, 0) for r in results.values()) for key in ("files", "handled", "failures")}
     out["dependencies_expected"] = sum(r.get("dependencies", {}).get("expected", 0) for r in results.values())
     out["dependencies_found"] = sum(r.get("dependencies", {}).get("found", 0) for r in results.values())
+    out["table_reads_expected"] = sum(r.get("table_reads", {}).get("expected", 0) for r in results.values())
+    out["table_reads_found"] = sum(r.get("table_reads", {}).get("found", 0) for r in results.values())
+    out["upstream_defects"] = sum(len(r.get("upstream_defects", ())) for r in results.values())
     for stage in ("cleanup", "format"):
         out[stage] = dict(sum((Counter(r["stages"].get(stage, {})) for r in results.values()), Counter()))
     out["gaps"] = dict(sum((Counter(r["gaps"]) for r in results.values()), Counter()).most_common())

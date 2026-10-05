@@ -1,0 +1,85 @@
+config {
+  type: "incremental",
+  schema: dataform.projectConfig.vars.martDataset,
+  name: "fact_orders",
+  description: "Current order state and paid amount, one row per order.",
+  tags: ["daily"],
+  uniqueKey: ["order_id"],
+  assertions: {
+    uniqueKey: ["order_id"],
+    nonNull: ["order_id", "customer_id", "status", "created_at", "updated_at"],
+    rowConditions: [
+      "status IN ('CREATED', 'PAID', 'CANCELLED')",
+      "gross_amount >= 0"
+    ]
+  },
+  bigquery: {
+    clusterBy: ["order_id", "customer_id", "status"],
+    labels: {
+      domain: "orders",
+      layer: "mart"
+    }
+  },
+  columns: {
+    order_id: "Business order identifier.",
+    customer_id: "Customer associated with the latest event.",
+    status: "Latest known order status.",
+    gross_amount: "Latest paid amount, or zero when the order has not been paid.",
+    currency: "Currency associated with the latest paid event.",
+    created_at: "First observed order event timestamp.",
+    updated_at: "Latest observed order event timestamp.",
+    processed_at: "Warehouse processing timestamp."
+  }
+}
+
+WITH affected_orders AS (
+  SELECT DISTINCT order_id
+  FROM ${ref("stg_orders")}
+  ${when(
+    incremental(),
+    `WHERE ingested_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL ${dataform.projectConfig.vars.lateArrivalDays} DAY)`
+  )}
+),
+
+order_events AS (
+  SELECT events.*
+  FROM ${ref("stg_orders")} AS events
+  INNER JOIN affected_orders USING (order_id)
+),
+
+aggregated AS (
+  SELECT
+    order_id,
+    ARRAY_AGG(customer_id ORDER BY event_ts DESC, ingested_at DESC LIMIT 1)[OFFSET(0)] AS customer_id,
+    ARRAY_AGG(event_type ORDER BY event_ts DESC, ingested_at DESC LIMIT 1)[OFFSET(0)] AS status,
+    COALESCE(
+      ARRAY_AGG(
+        IF(event_type = 'PAID', amount, NULL)
+        IGNORE NULLS
+        ORDER BY event_ts DESC, ingested_at DESC
+        LIMIT 1
+      )[SAFE_OFFSET(0)],
+      0
+    ) AS gross_amount,
+    ARRAY_AGG(
+      IF(event_type = 'PAID', currency, NULL)
+      IGNORE NULLS
+      ORDER BY event_ts DESC, ingested_at DESC
+      LIMIT 1
+    )[SAFE_OFFSET(0)] AS currency,
+    MIN(event_ts) AS created_at,
+    MAX(event_ts) AS updated_at
+  FROM order_events
+  GROUP BY order_id
+)
+
+SELECT
+  order_id,
+  customer_id,
+  status,
+  gross_amount,
+  currency,
+  created_at,
+  updated_at,
+  CURRENT_TIMESTAMP() AS processed_at
+FROM aggregated

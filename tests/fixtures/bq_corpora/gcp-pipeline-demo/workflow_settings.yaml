@@ -1,0 +1,12 @@
+defaultProject: demo-analytics-project
+defaultDataset: analytics
+defaultAssertionDataset: dataform_assertions
+defaultLocation: US
+dataformCoreVersion: "3.0.43"
+vars:
+  rawProject: demo-analytics-project
+  rawDataset: raw
+  stagingDataset: staging
+  martDataset: analytics
+  lateArrivalDays: "3"
+  targetPartitionDays: "7"
