@@ -39,3 +39,15 @@ def test_single_value_does_not_equal_another_column():
         "SELECT empno, (SELECT deptno FROM emp WHERE empno < 20) AS d FROM emp",
         "SELECT e.empno, t.f0 AS d FROM emp AS e LEFT JOIN (SELECT SINGLE_VALUE(x.sal) AS f0 FROM emp AS x WHERE x.empno < 20) AS t ON TRUE",
     )
+
+
+def test_average_is_sum_over_count_of_a_keyed_column():
+    # the bag of key values of dept is the bag of its rows, so AVG(deptno) = SUM(deptno) / COUNT(*)
+    assert proves(
+        "SELECT name, AVG(deptno) FROM dept GROUP BY name",
+        "SELECT name, SUM(deptno) / COUNT(*) FROM dept GROUP BY name",
+    )
+    assert not proves(
+        "SELECT name, AVG(deptno) FROM dept GROUP BY name",
+        "SELECT name, SUM(deptno) / COUNT(*) + 1 FROM dept GROUP BY name",
+    )

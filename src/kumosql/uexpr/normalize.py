@@ -67,7 +67,9 @@ from .ir import (
     conj,
     disj,
     free_vars,
+    fresh_id,
     neg,
+    replace,
     subst,
     walk,
 )
@@ -320,6 +322,11 @@ def simplify_term(t: Term, ctx: Ctx) -> list:
         if changed is not None:
             t = changed
             continue
+        # 4. a sum over the key values of a keyed table is a sum over its rows
+        changed = _unkey_scalars(t, ctx)
+        if changed is not None:
+            t = changed
+            continue
         break
     for v in t.vars:
         if isinstance(v, SVar) and not any(v in free_vars(f) for f in t.factors):
@@ -374,6 +381,35 @@ def _eliminate_scalar(t: Term) -> Term | None:
                 rest.append(extra)
             new = tuple(subst(g, {v: target}) for g in rest)
             return Term(tuple(x for x in t.vars if x != v), t.coef, new)
+    return None
+
+
+def _unkey_scalars(t: Term, ctx: Ctx) -> Term | None:
+    """``Σk. [ι(k) ∈ R]·f(k, ι(k)) = Σy. R(y)·f(y.k, y)``: the inverse of key elimination.
+
+    Summing over the values of a key of ``R`` that name a row of ``R`` is summing over the rows of ``R``
+    (a key is unique and not NULL, so ``y ↦ y.k`` is a bijection from the rows onto those values and
+    ``R(y)`` is 0 or 1). It makes a bag of key values agree with the bag of the rows it was read from.
+    """
+
+    scalars = {v for v in t.vars if isinstance(v, SVar)}
+    if not scalars:
+        return None
+    for f in t.factors:
+        if not (isinstance(f, NInd) and isinstance(f.f, InRel) and isinstance(f.f.tup, Iota)):
+            continue
+        iota = f.f.tup
+        if not all(isinstance(v, Ref) and v.var in scalars for v in iota.values):
+            continue
+        keys = [v.var for v in iota.values]
+        if len(set(keys)) != len(keys):
+            continue
+        info = ctx.catalog.info(iota.table)
+        y = TVar(fresh_id(), iota.table)
+        mapping = {w: Col(y, k, info.kinds.get(k)) for w, k in zip(keys, iota.key)}
+        rest = [replace(g, {iota: y}) for g in t.factors if g is not f]
+        new = tuple(subst(g, mapping) for g in rest) + (NRel(y),)
+        return Term(tuple(v for v in t.vars if v not in mapping) + (y,), t.coef, new)
     return None
 
 
