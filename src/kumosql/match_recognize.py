@@ -376,3 +376,20 @@ def generate_subquery(generator, expression: exp.Subquery, fallback) -> str:
         return f"{generator.sql(_from_of(inner).this)} {generator.sql(inner, 'match').strip()}{alias}"
     return fallback(generator, expression)
 
+
+
+def text_has_clause(sql: str) -> bool:
+    """Whether the text holds a ``MATCH_RECOGNIZE (`` table operator (found in the tokens, so a string or comment does not count).
+
+    Text that does not tokenize counts as holding one: the callers use this to decline, and declining is the safe answer.
+    """
+
+    if "match_recognize" not in sql.lower():
+        return False
+    try:
+        import sqlglot
+
+        tokens = sqlglot.tokenize(sql, read="bigquery")
+    except Exception:  # noqa: BLE001
+        return True
+    return any(_is_keyword(token) and following.token_type == TokenType.L_PAREN for token, following in zip(tokens, tokens[1:]))

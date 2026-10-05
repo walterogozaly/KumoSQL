@@ -42,6 +42,7 @@ from typing import Callable, Mapping, Sequence
 import sqlglot
 from sqlglot import exp
 
+from . import match_recognize
 from .ast_utils import MAX_EXPANDED_READS, UnmodeledConstruct, distinct_on, drop_case_conflicts, expand_group_by_all, expanded_reads, extended_grouping, is_call, spell_for_duckdb, star_modified
 from .duckdb_load import small_database
 from .set_operations import positional_sql_pair
@@ -2335,6 +2336,8 @@ def check_bounded(left_sql: str, right_sql: str, schema: BoundedSchema, **kwargs
             # The compiler reads FLOAT, INT32 and VARCHAR as FLOAT64, INT64 and STRING, so a bound "checked" for
             # such a query would be a claim about a query BigQuery rejects.
             return BoundedResult(BoundedStatus.UNKNOWN, f"unsupported: BigQuery would reject the query: {unknown_type}")
+    if match_recognize.text_has_clause(left_sql) or match_recognize.text_has_clause(right_sql):
+        return BoundedResult(BoundedStatus.UNKNOWN, "unsupported: MATCH_RECOGNIZE")
     result = _check_bounded(left_sql, right_sql, schema, **kwargs)
     if kwargs.get("dialect") == "sqlite" and result.bounded_equivalent:
         return BoundedResult(BoundedStatus.UNKNOWN, "SQLite: no equivalence claim (its LIKE and integer division differ from the encoding)", result.bound, None, result.seconds)

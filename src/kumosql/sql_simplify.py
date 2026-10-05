@@ -139,7 +139,9 @@ def _parse(sql: str) -> exp.Expression | None:
         trees = [t for t in sqlglot.parse(sql, read=_DIALECT) if t is not None]
     except Exception:  # noqa: BLE001 - unparseable input has no candidates
         return None
-    return trees[0] if len(trees) == 1 and isinstance(trees[0], exp.Query) else None
+    if len(trees) != 1 or not isinstance(trees[0], exp.Query) or trees[0].find(exp.MatchRecognize) is not None:
+        return None  # a MATCH_RECOGNIZE query is left as written: no rewrite knows what its clause does to the rows
+    return trees[0]
 
 
 def _split_quoted_paths(tree: exp.Expression) -> exp.Expression:

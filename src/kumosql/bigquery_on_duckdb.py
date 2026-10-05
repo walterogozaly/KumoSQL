@@ -199,7 +199,7 @@ def _class(*names: str) -> tuple[type, ...]:
 
 
 _REFUSED = _class(
-    "Format", "Collate", "ApproxDistinct", "ApproxQuantile", "ApproxQuantiles", "ApproxTopK", "ApproxTopSum",
+    "MatchRecognize", "Format", "Collate", "ApproxDistinct", "ApproxQuantile", "ApproxQuantiles", "ApproxTopK", "ApproxTopSum",
     "HllCountMerge", "HllCountExtract", "IeeeDivide",
     # sqlglot's ARRAY_SLICE keeps BigQuery's 0-based bounds; PERCENTILE_CONT ignores RESPECT NULLS
     "ArraySlice", "PercentileCont", "PercentileDisc", "ParseJSON",
