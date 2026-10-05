@@ -530,6 +530,17 @@ class Translator:
     def item_rows(self, item, outer, ctes) -> Rows:
         if isinstance(item, exp.Table):
             return self.table_rows(item, outer, ctes)
+        if isinstance(item, exp.Subquery) and isinstance(item.this, exp.Table) and item.this.args.get("joins"):
+            # ``(a JOIN b ON .. JOIN c ON ..)``: a parenthesized join read before it meets its neighbours.
+            if item.args.get("alias") or any(item.args.get(k) for k in ("pivots", "laterals", "sample", "joins")):
+                raise Unsupported("a parenthesized join with modifiers")
+            head = item.this.copy()
+            joins = head.args["joins"]
+            head.set("joins", None)
+            rows = self.item_rows(head, outer, ctes)
+            for join in joins:
+                rows = self.join(rows, join, outer, ctes)
+            return rows
         if isinstance(item, exp.Subquery):
             alias_node = item.args.get("alias")
             alias = item.alias_or_name.lower() or f"$anon{fresh_id()}"
