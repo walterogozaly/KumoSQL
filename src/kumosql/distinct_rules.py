@@ -247,6 +247,12 @@ def _insensitive(call: exp.Expression) -> bool:
     return isinstance(call, (exp.Min, exp.Max)) or isinstance(call.this, exp.Distinct) or bool(call.args.get("distinct"))
 
 
+def _cuts_rows(node: exp.Expression) -> bool:
+    """A ``LIMIT`` or ``OFFSET`` on ``node`` counts rows, so the repeats of what it reads show in what it keeps."""
+
+    return any(node.args.get(k) for k in ("limit", "offset"))
+
+
 def _reader(select: exp.Expression) -> tuple[exp.Select, exp.Expression] | None:
     """The select that reads ``select`` as a derived table (through ``UNION ALL`` branches), and that source."""
 
@@ -254,8 +260,12 @@ def _reader(select: exp.Expression) -> tuple[exp.Select, exp.Expression] | None:
     while True:
         parent = node.parent
         if isinstance(parent, exp.Subquery) and not parent.alias and isinstance(parent.parent, exp.Union):
+            if _cuts_rows(parent):
+                return None
             node = parent
         elif isinstance(parent, exp.Union) and not parent.args.get("distinct") and type(parent) is exp.Union:
+            if _cuts_rows(parent):
+                return None  # ``(A UNION ALL B ORDER BY k LIMIT n)`` keeps the first n rows, repeats included
             node = parent
         else:
             break
