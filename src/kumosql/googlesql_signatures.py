@@ -6,7 +6,8 @@ at d82db99): the "Return type" of each function and, for numeric functions, its 
 named as written (sqlglot keeps the written name of a call in ``meta["name"]``); a call sqlglot built itself, with no
 written name, is unknown unless its node class has a single source in BigQuery syntax.
 
-A call to a user-defined function (``Catalog.functions``) is unknown even when a built-in has the same name.
+A call to a user-defined function (``Catalog.functions``) has the type the catalog gives it (unknown when it gives none),
+never the type of a built-in of the same name.
 """
 
 from __future__ import annotations
@@ -420,7 +421,7 @@ def _visit_children(typer, node, scope, ctes) -> None:
 def _named(typer, node, name: str, scope, ctes) -> T:
     if name.lower() in typer.catalog.functions or name.split(".")[-1].lower() in typer.catalog.functions:
         _visit_children(typer, node, scope, ctes)
-        return UNKNOWN
+        return known(typer.catalog.function_type(name))  # a user-defined function: its declared (or body) type
     if name in ("ARRAY_TRANSFORM",) or (name in ("ARRAY_FILTER",) and _has_lambda(node)):
         return lambda_call(typer, node, name, scope, ctes)
     if name == "ARRAY_ZIP" and isinstance(node, exp.Anonymous):

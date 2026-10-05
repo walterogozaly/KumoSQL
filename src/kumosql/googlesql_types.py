@@ -295,15 +295,53 @@ class Column:
 
 class Catalog:
     """Table schemas, found under each spelling of their name (``project.dataset.table``, ``dataset.table``,
-    ``table``); a spelling two tables share finds neither. ``functions`` are user-defined functions: a call to one has
-    an unknown type even if its name matches a built-in function. A table the catalog does not list is an
-    ``unknown_table`` finding only when ``complete`` says the catalog lists every table; otherwise it is just unknown."""
+    ``table``); a spelling two tables share finds neither. ``functions`` are user-defined functions: a call to one is
+    never typed as the built-in function of the same name. It is an iterable of names (the result type is unknown) or
+    a mapping from name to return type (a :class:`GType`, type text, or ``None`` for unknown); ``add_function`` and
+    ``add_function_sql`` add one, the latter from its ``CREATE FUNCTION`` statement. A table the catalog does not
+    list is an ``unknown_table`` finding only when ``complete`` says the catalog lists every table; otherwise it is
+    just unknown."""
 
-    def __init__(self, functions: Iterable[str] = (), complete: bool = False):
+    def __init__(self, functions: Iterable[str] | Mapping[str, object] = (), complete: bool = False):
         self._tables: dict[str, tuple[Column, ...]] = {}
-        self.functions = {f.lower() for f in functions}
+        self.functions: set[str] = set()
+        self.function_types: dict[str, GType | None] = {}
+        self.table_functions: dict[str, tuple[Column, ...] | None] = {}
+        for name in functions:
+            self.add_function(name, functions[name] if isinstance(functions, Mapping) else None)
         # True only when the catalog lists every table the query can read: only then is a missing table an error.
         self.complete = complete
+
+    def add_function(self, name: str, returns: "GType | str | None" = None) -> None:
+        """Register a user-defined function; ``returns`` is its result type (None when not known)."""
+
+        key = name.strip("`").lower()
+        self.functions.add(key)
+        self.function_types[key] = returns if isinstance(returns, GType) else parse_type(returns)
+
+    def add_table_function(self, name: str, columns: "Iterable[Column] | None" = None) -> None:
+        """Register a table-valued function; ``columns`` is its result schema (None when not known)."""
+
+        key = name.strip("`").lower()
+        self.functions.add(key)
+        self.table_functions[key] = tuple(columns) if columns is not None else None
+
+    def function_type(self, name: str) -> "GType | None":
+        """The return type of the user-defined function ``name`` (a dotted path is tried whole, then by its last
+        part), or None when it is not known."""
+
+        key = name.strip("`").lower()
+        if key in self.function_types:
+            return self.function_types[key]
+        return self.function_types.get(key.split(".")[-1])
+
+    def add_function_sql(self, statement: str) -> bool:
+        """Register the function a ``CREATE [TEMP] [AGGREGATE | TABLE] FUNCTION`` statement defines, with the return type
+        its ``RETURNS`` clause declares or, when it has none, its SQL body gives for the declared parameter types.
+        Functions that take ``ANY TYPE`` parameters have no body type. Returns False when the statement is not one this
+        reads (nothing is registered)."""
+
+        return add_function_sql(self, statement)
 
     @classmethod
     def from_types(cls, tables: Mapping[str, object], functions: Iterable[str] = (), complete: bool = False) -> "Catalog":
@@ -352,6 +390,176 @@ def field_type(f) -> GType | None:
     if (getattr(f, "mode", "") or "").upper() == "REPEATED":
         return GType.array(base) if base is not None else None
     return base
+
+
+# --- user-defined functions ---------------------------------------------------------------------------------------
+
+_CREATE_FUNCTION = re.compile(
+    r"(?is)^\s*create\s+(?:or\s+replace\s+)?(?:(?:temp|temporary|public|private)\s+)?(aggregate\s+|table\s+)?function\s+"
+    r"(?:if\s+not\s+exists\s+)?((?:`[^`]+`|[\w\-]+)(?:\s*\.\s*(?:`[^`]+`|[\w\-]+))*)\s*\("
+)
+_RETURNS = re.compile(r"(?is)^\s*returns\s+")
+_AFTER_RETURNS = {"DETERMINISTIC", "NOT", "LANGUAGE", "OPTIONS", "AS", "REMOTE"}
+_SIGNATURE_TOKEN = re.compile(r"[A-Za-z_]\w*|\S")
+
+
+def _masked(text: str) -> str:
+    """``text`` with the inside of strings, backticked names and comments blanked, so brackets and keywords found in
+    it are structure (same length, so positions carry over)."""
+
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            end = n if end < 0 else end + 2
+            out.append(" " * (end - i))
+            i = end
+        elif text.startswith("--", i) or c == "#":
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+            out.append(" " * (end - i))
+            i = end
+        elif c in "\"'`":
+            quote = c * 3 if c != "`" and text.startswith(c * 3, i) else c
+            j = i + len(quote)
+            while j < n and not text.startswith(quote, j):
+                j += 2 if text[j] == "\\" else 1
+            end = min(n, j + len(quote))
+            out.append(" " * (end - i))  # the quotes too: a masked string is blank, not text
+            i = end
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def _closing(masked: str, open_index: int) -> int:
+    """The index of the bracket closing the one at ``open_index`` of a masked text; -1 when unbalanced."""
+
+    depth = 0
+    for i in range(open_index, len(masked)):
+        if masked[i] in "([":
+            depth += 1
+        elif masked[i] in ")]":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _split_top(text: str, masked: str) -> list[str]:
+    parts, start, depth = [], 0, 0
+    for i, c in enumerate(masked):
+        if c in "([<":
+            depth += 1
+        elif c in ")]>":
+            depth -= 1
+        elif c == "," and depth == 0:
+            parts.append(text[start:i].strip())
+            start = i + 1
+    parts.append(text[start:].strip())
+    return [p for p in parts if p]
+
+
+def _declared_type(text: str) -> GType | None:
+    """A type written in a function signature; None when it is not one this reads. ``FLOAT`` is GoogleSQL's 32-bit
+    float but BigQuery's spelling of FLOAT64 in schemas, so it is left unknown."""
+
+    if re.search(r"(?i)\bfloat\b", text):
+        return None
+    return parse_type(re.sub(r"\s+", " ", text.strip()))
+
+
+def _table_columns(text: str) -> tuple[Column, ...] | None:
+    """The columns of a ``TABLE<a INT64, ..>`` type; None when it is not one or a column type is not known."""
+
+    m = re.match(r"(?is)^\s*table\s*<(.*)>\s*$", text)
+    if not m:
+        return None
+    struct = _declared_type("STRUCT<" + m.group(1) + ">")
+    if struct is None or struct.kind != "STRUCT" or not struct.complete or any(f.name is None for f in struct.fields):
+        return None
+    return tuple(Column(f.name, f.type) for f in struct.fields)
+
+
+def add_function_sql(catalog: Catalog, statement: str) -> bool:
+    """See :meth:`Catalog.add_function_sql`."""
+
+    m = _CREATE_FUNCTION.match(statement)
+    if not m:
+        return False
+    kind = (m.group(1) or "").strip().lower()
+    name = ".".join(part.strip().strip("`") for part in m.group(2).split("."))
+    masked = _masked(statement)
+    open_index = m.end() - 1
+    close = _closing(masked, open_index)
+    if close < 0:
+        return False
+    params_text, params_masked = statement[open_index + 1:close], masked[open_index + 1:close]
+    params: list[tuple[str, GType | None]] = []
+    for text in _split_top(params_text, params_masked):
+        mm = re.match(r"(?s)^\s*(`[^`]+`|\w+)\s+(.*)$", text)
+        if not mm:
+            params.append(("", None))
+            continue
+        declared = re.split(r"(?i)\s+(?:not\s+aggregate|default)\b", mm.group(2).strip())[0]
+        params.append((mm.group(1).strip("`"), _declared_type(declared)))
+    rest, rest_masked = statement[close + 1:], masked[close + 1:]
+    returns_text = None
+    r = _RETURNS.match(rest_masked)
+    if r:
+        depth, end = 0, len(rest)
+        for token in _SIGNATURE_TOKEN.finditer(rest_masked, r.end()):
+            word = token.group(0)
+            if word in "<(":
+                depth += 1
+            elif word in ">)":
+                depth -= 1
+            elif depth == 0 and word.upper() in _AFTER_RETURNS:
+                end = token.start()
+                break
+        returns_text = rest[r.end():end].strip()
+    if kind == "table":
+        catalog.add_table_function(name, _table_columns(returns_text) if returns_text else None)
+        return True
+    returns = _declared_type(returns_text) if returns_text else None
+    if returns is None and returns_text is None:
+        returns = _sql_body_type(catalog, params, rest, rest_masked)
+    catalog.add_function(name, returns if returns is not None and returns.complete else None)
+    return True
+
+
+def _sql_body_type(catalog: Catalog, params: list[tuple[str, GType | None]], rest: str, rest_masked: str) -> GType | None:
+    """The type of a SQL function's body when it declares no return type: its expression typed over the parameters.
+    Unknown when a parameter is templated (``ANY TYPE``), the function is not SQL, or the body type is not certain."""
+
+    language = re.search(r"(?i)\blanguage\s+(\w+)", rest_masked)
+    if (language and language.group(1).lower() != "sql") or any(not n or t is None or not t.complete for n, t in params):
+        return None
+    a = re.search(r"(?i)\bas\s*\(", rest_masked)
+    if not a:
+        return None
+    start = a.end() - 1
+    end = _closing(rest_masked, start)
+    if end < 0:
+        return None
+    body = rest[start + 1:end].strip()
+    inner = Catalog()
+    inner.functions, inner.function_types, inner.table_functions = catalog.functions, catalog.function_types, \
+        catalog.table_functions
+    names = [n.lower() for n, _ in params]
+    if len(set(names)) != len(names):
+        return None
+    if params:
+        inner.add("__udf_params", [Column(n, t) for n, t in params])
+        query = f"SELECT {body}\nFROM __udf_params"
+    else:
+        query = f"SELECT {body}"
+    typed = infer(query, inner)
+    if typed.columns is None or len(typed.columns) != 1 or typed.findings:
+        return None
+    return typed.columns[0].type
 
 
 # --- results ------------------------------------------------------------------------------------------------------
@@ -1098,6 +1306,12 @@ class _Typer:
     def table_range(self, item: exp.Table, scope: _Scope, ctes, alias_name: str | None) -> _Range:
         parts = [p.name for p in (item.args.get("catalog"), item.args.get("db"), item.this) if isinstance(p, exp.Expression)]
         if not isinstance(item.this, exp.Identifier):
+            if isinstance(item.this, exp.Anonymous) and isinstance(item.this.this, str) and len(parts) == 1:
+                # a table-valued function the catalog declares: its columns are its declared result schema
+                columns = self.catalog.table_functions.get(item.this.this.lower())
+                if columns is not None:
+                    return _Range((alias_name or item.this.this).lower(), [_Col(c.name, known(c.type)) for c in columns],
+                                  node=item)
             return _Range(alias_name.lower() if alias_name else None, None, node=item)  # a table function
         name = (alias_name or parts[-1]).lower()
         # A path whose first part is a range variable to its left is an array to unnest (FROM t, t.arr).
