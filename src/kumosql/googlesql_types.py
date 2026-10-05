@@ -402,9 +402,14 @@ def infer(sql_or_tree, catalog: Catalog | None = None, dialect: str = "bigquery"
         if "|>" in _without_strings(sql_or_tree):
             return TypedQuery(None, None, (), {}, {}, "pipe syntax is not typed")
         try:
-            tree = sqlglot.parse_one(sql_or_tree, read=dialect)
+            statements = [s for s in sqlglot.parse(sql_or_tree, read=dialect) if s is not None]
         except Exception as exc:  # noqa: BLE001 - an unparsed query has no types
             return TypedQuery(None, None, (), {}, {}, f"parse error: {exc}"[:200])
+        # A trailing `;` followed only by a comment is parsed as a second, empty statement.
+        statements = [s for s in statements if not isinstance(s, exp.Semicolon)]
+        if len(statements) != 1:
+            return TypedQuery(None, None, (), {}, {}, "not a single statement")
+        tree = statements[0]
     else:
         tree = sql_or_tree
     if not isinstance(tree, exp.Query):
