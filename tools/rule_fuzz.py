@@ -170,6 +170,21 @@ def _fresh_key_values(kind: str, count: int, rng: random.Random, mode: str) -> l
     return rng.sample(pool, count)
 
 
+def _foreign_key_order(schema: dict, rules_by: dict) -> list[str]:
+    """Tables with every foreign-key parent before its children (schema order where keys cycle)."""
+
+    lower = {t.lower(): t for t in schema}
+    parents = {
+        t: {lower[p.lower()] for _, p, _ in rules_by.get(t.lower(), {}).get("foreign_keys", []) if p.lower() in lower} - {t}
+        for t in schema
+    }
+    order: list[str] = []
+    while len(order) < len(schema):
+        ready = [t for t in schema if t not in order and parents[t] <= set(order)]
+        order.extend(ready or [t for t in schema if t not in order][:1])
+    return order
+
+
 def build_databases(case: dict, seed: int = 0, randoms: int = 6) -> list[dict]:
     """Legal databases for ``case``: ``[{"name": ..., "tables": {table: [row, ...]}}]``."""
 
@@ -246,7 +261,9 @@ def build_databases(case: dict, seed: int = 0, randoms: int = 6) -> list[dict]:
                 rows = kept
             tables[table] = rows
         # MATCH SIMPLE foreign keys: a child row with every column non-NULL points at an existing parent
-        for table, columns in schema.items():
+        # parents first: a child that points at a parent the pass empties afterwards would break its own foreign key
+        for table in _foreign_key_order(schema, rules_by):
+            columns = schema[table]
             rules = rules_by.get(table.lower(), {})
             names = [c[0].lower() for c in columns]
             for child, parent, parent_cols in rules.get("foreign_keys", []):
