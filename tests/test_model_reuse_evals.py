@@ -58,6 +58,40 @@ def test_calcite_materialized_view_floor(tmp_path):
     assert summary["rewritten_of_expected"] >= 109
 
 
+def _summary_of(source, cases, key=None):
+    records = [mv_bench.run_case(case, False, 5000, 150) for case in cases]
+    return mv_bench.summarize(cases, records)[key or source]
+
+
+def _development_cases(source):
+    return [c for c in sorted(mv_bench.load_cases(source), key=lambda c: c["id"]) if not mv_bench.is_held_out(c["id"])]
+
+
+def test_outer_union_floor():
+    """Outer-join, key-aware, union-compensation and set-operation cases, each with a checked label."""
+
+    summary = _summary_of("outer-union", _development_cases("outer-union"))
+    assert summary["wrong"] == 0 and summary["rewritten_beyond_label"] == 0
+    assert summary["no_rewrite_of_none"] == summary["expect_none"]  # every trap stays unrewritten
+    assert summary["rewritten_of_expected"] >= 5
+
+
+def test_doris_sample_floor():
+    """The Doris outer-join cases and every tenth case of the dimension matrices (the full set is the slow test)."""
+
+    cases = [c for i, c in enumerate(_development_cases("doris")) if c["origin"] == "outer_join" or i % 10 == 0]
+    summary = _summary_of("doris", cases)
+    assert summary["wrong"] == 0 and summary["rewritten_beyond_label"] == 0
+    assert summary["rewritten_of_expected"] >= 8
+
+
+@pytest.mark.slow
+def test_doris_materialized_view_floor():
+    summary = _summary_of("doris", _development_cases("doris"))
+    assert summary["wrong"] == 0 and summary["rewritten_beyond_label"] == 0
+    assert summary["rewritten_of_expected"] >= 55
+
+
 @pytest.mark.slow
 def test_containment_floor(tmp_path):
     summary = _run(containment_bench, ["--all"], tmp_path)["all"]
