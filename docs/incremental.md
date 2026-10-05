@@ -42,18 +42,26 @@ A contract is the set of source-change kinds allowed: `insert_new`, `insert_late
 * **diverges**: a random search over change sequences allowed by the contract found one on which the model differs from a full refresh (or fails), shrunk by dropping batches and statements while it still diverges. It is returned with the verdict and replays on its own.
 * **unknown**: no proof rule applies and the search found nothing. This is bounded evidence, not a proof.
 
+## The change generator
+
+`random_sequence` (used by `search_divergence`, so by `check_incremental`) builds an initial load and a few batches of source DML from the contract's kinds. Each seed gives one fixed sequence. About one in five (`GAP_RATE = 0.2`) `insert_new` rows lands 3 to 30 hours (`GAP_HOURS`) after the table's newest event time instead of one hour after it, so a run can carry rows further apart than a delete-then-reload window or a lookback.
+
+The gap decisions come from a second generator seeded from the main seed (`random.Random(f"gap:{seed}")`), never from the main one. Every choice the main stream makes (operation, table, row picked, column values) is therefore the same with or without gaps, and only event times move. `gap_rate=0` reproduces the sequences of earlier versions exactly. `tests/test_incremental_generator.py` pins digests of those sequences for five seeds, compares gap and no-gap output with the times removed, and checks the gap share.
+
+With gaps, `pre-operation-window-from-source` (a window deleted and reloaded from the source's own maximum) is refuted instead of left unknown. On the dev split (`--split dev`, 86 cases) this moves decided cases from 83 to 84 (refuted 47 to 48, unknown 3 to 2) and changes no other verdict, with 0 wrong and 0 fidelity failures; the pg_ivm track is unchanged.
+
 ## Scores
 
 `python tools/incremental_bench.py` runs the corpus in `tests/fixtures/incremental/` and reports counts per outcome; the README scoreboard has two rows (detection, evidence `executed`; proofs, evidence `proof`).
 
 | | cases | result |
 | --- | --- | --- |
-| Diverging cases refuted | 34 | 33, 1 unknown, 0 false alarms |
+| Diverging cases refuted | 34 | 34, 0 unknown, 0 false alarms |
 | Safe cases proven | 15 | 15 proven, 0 false proofs |
 | Held-out (12 blind cases) | 12 | 9/9 refuted, 3/3 proven |
 | Baseline (first 37 cases, before generalising the proof rules) | 37 | 24/24 refuted, 2/13 proven |
 
-Before R3 to R6, five safe cases were unknown: a de-duplicating merge (`QUALIFY ROW_NUMBER`), a re-aggregating merge, a pre-operation reload window, a day-granular watermark and a join against an unchanged dimension. R3 to R6 prove four of them (written for those cases, so the dev number is optimistic; the held-out cases were not used). The fifth, `pre-operation-window-from-source`, was relabelled `diverges`: it deletes and reloads the last 2 hours before the source's newest row, so a run that adds two rows more than 2 hours apart (allowed by `insert_new`) never loads the earlier one. The change generator steps new rows one hour at a time, so the search does not find it and it stays unknown.
+Before R3 to R6, five safe cases were unknown: a de-duplicating merge (`QUALIFY ROW_NUMBER`), a re-aggregating merge, a pre-operation reload window, a day-granular watermark and a join against an unchanged dimension. R3 to R6 prove four of them (written for those cases, so the dev number is optimistic; the held-out cases were not used). The fifth, `pre-operation-window-from-source`, was relabelled `diverges`: it deletes and reloads the last 2 hours before the source's newest row, so a run that adds two rows more than 2 hours apart (allowed by `insert_new`) never loads the earlier one. The change generator used to step new rows one hour at a time, so the search missed it; with the gap rows described under The change generator it is refuted.
 
 While testing R3, R2 turned out to prove a merge with a `WHERE` under `update_touch`, which diverges when an update makes a row fail the filter (the old row stays). No corpus case had that shape; R2 now refuses it, and `tests/test_incremental_rules.py` keeps it as a regression case alongside near misses for every rule.
 

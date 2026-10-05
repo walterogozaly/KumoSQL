@@ -926,11 +926,22 @@ def _insert(name: str, table: SourceTable, row: dict[str, Any]) -> str:
 class _Generator:
     """Random batches under a contract, tracking the source tables it writes."""
 
-    def __init__(self, sources: dict[str, SourceTable], kinds: frozenset[str], rng: random.Random, tables: tuple[str, ...] | None = None):
+    def __init__(
+        self,
+        sources: dict[str, SourceTable],
+        kinds: frozenset[str],
+        rng: random.Random,
+        tables: tuple[str, ...] | None = None,
+        gap_rng: random.Random | None = None,
+        gap_rate: float = 0.0,
+    ):
         self.sources = sources
         self.tables = tuple(sorted(tables if tables else sources))
         self.kinds = kinds
         self.rng = rng
+        # gaps draw from their own stream, so adding them leaves every main-stream choice alone
+        self.gap_rng = gap_rng if gap_rng is not None else random.Random(0)
+        self.gap_rate = gap_rate
         self.rows: dict[str, list[dict[str, Any]]] = {n: [] for n in sources}
         self.next_key = {name: 0 for name in sources}
         self.next_hour = 0
@@ -964,6 +975,8 @@ class _Generator:
             newest = self._newest(name)
             if op == "insert_new":
                 self.next_hour = (newest + 1) if newest is not None else 0
+                if self.gap_rate and newest is not None and self.gap_rng.random() < self.gap_rate:
+                    self.next_hour = newest + self.gap_rng.randint(GAP_HOURS[0], GAP_HOURS[1])
                 row = self._fresh(name, None)
             elif op == "null_key":
                 self.next_hour = (newest + 1) if newest is not None else 0
@@ -1070,13 +1083,30 @@ def minimize(model, sources, initial, batches) -> tuple[list[str], list[list[str
     return initial, batches
 
 
+GAP_RATE = 0.2  # share of ``insert_new`` rows that jump ahead of the previous maximum event time
+GAP_HOURS = (3, 30)  # how far ahead (inclusive hours); wider than the windows real models delete and reload
+
+
 def random_sequence(
-    sources: dict[str, SourceTable], kinds: frozenset[str], seed: int, batches: int, tables: tuple[str, ...] | None = None
+    sources: dict[str, SourceTable],
+    kinds: frozenset[str],
+    seed: int,
+    batches: int,
+    tables: tuple[str, ...] | None = None,
+    gap_rate: float = GAP_RATE,
 ) -> tuple[list[str], list[list[str]]]:
-    """A random initial load and ``batches`` batches of source DML allowed by ``kinds``."""
+    """A random initial load and ``batches`` batches of source DML allowed by ``kinds``.
+
+    About ``gap_rate`` of the ``insert_new`` rows land 3 to 30 hours after the
+    newest row instead of one hour after it. The gap decisions come from a
+    separate generator seeded from ``seed``, so with ``gap_rate=0`` the output is
+    exactly the sequence earlier versions produced, and with gaps the choices
+    of operation, table and column values are the same (only event times move).
+    """
 
     rng = random.Random(seed)
-    gen = _Generator(sources, kinds, rng, tables)
+    gap_rng = random.Random(f"gap:{seed}")
+    gen = _Generator(sources, kinds, rng, tables, gap_rng, gap_rate)
     initial: list[str] = []
     for name in sorted(sources):
         for _ in range(rng.randint(0, 2)):
