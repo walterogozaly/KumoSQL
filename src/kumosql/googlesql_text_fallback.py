@@ -169,8 +169,10 @@ def _aggregate_clauses(sql: str, dialect: str) -> str | None:
                 continue
             end = close
             for i in direct:
-                if i > first[0] and tokens[i].upper.split(" ")[0] in enders:
-                    end = i
+                word = tokens[i].upper.split(" ")[0]
+                if i > first[0] and word in enders and not (
+                        first is group and word == "HAVING" and not (i + 1 < close and tokens[i + 1].upper in ("MIN", "MAX"))):
+                    end = i  # a HAVING after GROUP BY filters the groups: it goes with the clause
                     break
             spans.append((tokens[first[0]].start, tokens[end - 1].end, ""))
     return _cut(sql, spans) if spans else None
@@ -461,6 +463,8 @@ def _multiway_unnest(sql: str, dialect: str) -> str | None:
         if t.upper != "UNNEST" or tokens[u + 1].type != "L_PAREN" or (u > 0 and tokens[u - 1].type == "DOT"):
             continue
         open_, close = u + 1, pairs[u + 1]
+        if any(tokens[i].type in ("LT", "GT") or tokens[i].text in ("<>", ">>") for i in _direct(tokens, pairs, open_, close)):
+            continue  # a typed array literal (ARRAY<STRUCT<a INT64, b STRING>>[...]) has commas that separate nothing
         items = _split_commas(tokens, pairs, open_ + 1, close)
         named_mode = [it for it in items if it[1] - it[0] >= 3 and tokens[it[0]].upper == "MODE" and tokens[it[0] + 1].text == "=>"]
         arrays = [it for it in items if it not in named_mode]
@@ -510,6 +514,46 @@ def _new_proto(sql: str, dialect: str) -> str | None:
     return _cut(sql, spans) if spans else None
 
 
+def _bit_aggregate_mode(sql: str, dialect: str) -> str | None:
+    """``BIT_AND(bytes, mode => 'PAD')``: the mode says how bytes of different lengths combine; the result has the
+    argument's type either way."""
+
+    tokens = _tokens(sql, dialect)
+    pairs = _pairs(tokens) if tokens is not None else None
+    if tokens is None or pairs is None:
+        return None
+    spans: list[tuple[int, int, str]] = []
+    for i, t in enumerate(tokens[:-1]):
+        if t.upper not in ("BIT_AND", "BIT_OR", "BIT_XOR") or tokens[i + 1].type != "L_PAREN":
+            continue
+        close = pairs[i + 1]
+        items = _split_commas(tokens, pairs, i + 2, close)
+        for k, (lo, hi) in enumerate(items):
+            if k > 0 and hi - lo >= 3 and tokens[lo].upper == "MODE" and tokens[lo + 1].text == "=>":
+                spans.append((tokens[lo - 1].start, tokens[hi - 1].end, ""))
+    return _cut(sql, spans) if spans else None
+
+
+def _cast_format(sql: str, dialect: str) -> str | None:
+    """``CAST(x AS STRING FORMAT fmt)``: the format changes the value, never the type the cast gives."""
+
+    tokens = _tokens(sql, dialect)
+    pairs = _pairs(tokens) if tokens is not None else None
+    if tokens is None or pairs is None:
+        return None
+    spans: list[tuple[int, int, str]] = []
+    for i, t in enumerate(tokens[:-1]):
+        if t.upper not in ("CAST", "SAFE_CAST") or tokens[i + 1].type != "L_PAREN":
+            continue
+        close = pairs[i + 1]
+        direct = list(_direct(tokens, pairs, i + 1, close))
+        as_ = [k for k in direct if tokens[k].upper == "AS"]
+        form = [k for k in direct if tokens[k].upper == "FORMAT"]
+        if as_ and len(form) == 1 and form[0] > as_[-1]:
+            spans.append((tokens[form[0]].start, tokens[close - 1].end, ""))
+    return _cut(sql, spans) if spans else None
+
+
 _REWRITES = (
     ("privacy clause", _privacy_clause),
     ("aggregate filter or group", _aggregate_clauses),
@@ -518,6 +562,8 @@ _REWRITES = (
     ("match recognize", _match_recognize),
     ("quantified comparison over an array", _quantified_unnest),
     ("protocol buffer constructor", _new_proto),
+    ("bit aggregate mode", _bit_aggregate_mode),
+    ("cast format", _cast_format),
     ("unknown cast type", _unknown_casts),
     ("unknown typed constructor", _unknown_typed_arrays),
 )
