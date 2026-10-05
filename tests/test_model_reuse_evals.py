@@ -73,7 +73,7 @@ def test_outer_union_floor():
     summary = _summary_of("outer-union", _development_cases("outer-union"))
     assert summary["wrong"] == 0 and summary["rewritten_beyond_label"] == 0
     assert summary["no_rewrite_of_none"] == summary["expect_none"]  # every trap stays unrewritten
-    assert summary["rewritten_of_expected"] >= 5
+    assert summary["rewritten_of_expected"] >= 9
 
 
 def test_doris_sample_floor():

@@ -30,15 +30,15 @@ Every runner takes `--baseline` (the existing prover alone, before these engines
 | | Reusable cases rewritten | Cannot-cases not rewritten | Unsupported | Wrong |
 | --- | --- | --- | --- | --- |
 | Baseline, development (existing prover alone) | 8/108 | 32/32 | 0 | 0 |
-| Development | 89/108 | 32/32 | 14 | 0 |
+| Development | 91/108 | 32/32 | 12 | 0 |
 | Held out | 28/39 | 9/9 | 3 | 0 |
 | All (196 cases, 8 disabled) | 115/147 (supported subset 115/139) | 41/41 | 17 | 0 |
 
-The development row was measured with the declared HR keys (it was 87/108 on the key-free schema; the keys gain `testJoinMaterializationUKFK1` and `UKFK4`, and the retry above recovers the four cases the keys had broken). The held-out and all-cases rows were measured before that change and are re-measured when the outer-join work lands.
+The development row (89/108 before the branchwise set-operation matching of `src/kumosql/setop_views.py`, which gains the two `INTERSECT ALL` cases) was measured with the declared HR keys (it was 87/108 on the key-free schema; the keys gain `testJoinMaterializationUKFK1` and `UKFK4`, and the retry above recovers the four cases the keys had broken). The held-out and all-cases rows were measured before that change and are re-measured when the outer-join work lands.
 
 118 of 196 queries were changed; all 118 were verified on random databases (`FLOOR(x TO unit)` is run as `DATE_TRUNC`). Adapted cases: 20/20 reusable rewritten, 9/9 cannot-cases left alone, 0 wrong (baseline 1/12 on development).
 
-The two newer sources, development split only (no held-out run yet), before any outer-join rule: Doris 55/159 reusable cases rewritten, 192/192 cannot-cases left alone, 0 wrong (351 cases; `dim_full` 18/54, `dim_left` 16/47, `dim_right` 16/45, `outer_join` 5/13); outer-union 5/37 reusable cases rewritten, 12/12 cannot-cases left alone, 0 wrong (49 cases). Nearly every miss is `unsupported`: the proposer does not yet read an outer join or a filtered derived table on the null-supplying side. The Doris `outer_join` cases `mv1_2` and `mv2_0` (the view preserves the other side) and `mv2_2` (the view lacks the residual's column) must stay unrewritten, and so must every trap in the outer-union set.
+The two newer sources, development split only (no held-out run yet), before any outer-join rule: Doris 55/159 reusable cases rewritten, 192/192 cannot-cases left alone, 0 wrong (351 cases; `dim_full` 18/54, `dim_left` 16/47, `dim_right` 16/45, `outer_join` 5/13); outer-union 9/37 reusable cases rewritten (5/37 before the branchwise set-operation matching), 12/12 cannot-cases left alone, 0 wrong (49 cases). Nearly every miss is `unsupported`: the proposer does not yet read an outer join or a filtered derived table on the null-supplying side. The Doris `outer_join` cases `mv1_2` and `mv2_0` (the view preserves the other side) and `mv2_2` (the view lacks the residual's column) must stay unrewritten, and so must every trap in the outer-union set.
 
 Floors (`tests/test_model_reuse_evals.py`): outer-union 5 of 37 on the development split (fast), Doris 55 of 159 on the development split (slow) and a Doris sample (the `outer_join` group plus every tenth case, 8 reusable cases rewritten) in the fast tier; all with 0 wrong and no cannot-case rewritten.
 
