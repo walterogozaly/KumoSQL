@@ -338,6 +338,8 @@ def type_call(typer, node: exp.Expression, scope, ctes) -> T:
         return _named(typer, node.expression, f"{node.this.name.upper()}.{name}", scope, ctes)
     if isinstance(node, exp.Extract):
         return extract(typer, node, scope, ctes)
+    if isinstance(node, exp.Identifier):
+        return _lambda_parameter(typer, node, scope)
     if isinstance(node, (exp.Var, exp.Star, exp.Placeholder, exp.Parameter, exp.JSONPath, exp.Lambda)):
         return UNKNOWN
     if not isinstance(node, exp.Func):
@@ -348,6 +350,22 @@ def type_call(typer, node: exp.Expression, scope, ctes) -> T:
         _visit_children(typer, node, scope, ctes)
         return UNKNOWN
     return _named(typer, node, name, scope, ctes)
+
+
+def _lambda_parameter(typer, node: exp.Identifier, scope) -> T:
+    """sqlglot leaves a lambda parameter used in the body as a bare Identifier (not a Column). Resolve it only when it
+    names a value range (the parameter itself) in scope; anything else stays unknown and raises no finding."""
+
+    s = scope
+    while s is not None:
+        kind, target = s.lookup(node.name)
+        if kind == "none":
+            s = s.parent
+            continue
+        if kind == "range" and target.value is not None and target.node is None:
+            return target.value
+        return UNKNOWN
+    return UNKNOWN
 
 
 def _visit_children(typer, node, scope, ctes) -> None:
