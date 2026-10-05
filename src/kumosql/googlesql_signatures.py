@@ -32,7 +32,7 @@ _SAME = {k: k for k in _NUM}
 UNARY_NUMERIC = {
     "ABS": _SAME, "SIGN": _SAME,
     "CEIL": _TO_DOUBLE, "CEILING": _TO_DOUBLE, "FLOOR": _TO_DOUBLE, "ROUND": _TO_DOUBLE, "TRUNC": _TO_DOUBLE,
-    "EXP": _TO_DOUBLE, "LN": _TO_DOUBLE, "LOG10": _TO_DOUBLE, "SQRT": _TO_DOUBLE,
+    "EXP": _TO_DOUBLE, "RADIANS": _TO_DOUBLE, "DEGREES": _TO_DOUBLE, "LN": _TO_DOUBLE, "LOG10": _TO_DOUBLE, "SQRT": _TO_DOUBLE,
     "SAFE_NEGATE": _row("INT32", "INT64", "ERROR", "ERROR", "NUMERIC", "BIGNUMERIC", "FLOAT32", F64),
     "AVG": {**_TO_DOUBLE, "INTERVAL": "INTERVAL"},
     "ARRAY_AVG": {**_TO_DOUBLE, "INTERVAL": "INTERVAL"},
@@ -120,7 +120,7 @@ _fixed(BOOL,
 _fixed(STRING,
        "FORMAT", "TO_HEX", "TO_BASE64", "TO_BASE32", "INITCAP", "SOUNDEX", "CHR", "CODE_POINTS_TO_STRING",
        "SAFE_CONVERT_BYTES_TO_STRING", "NORMALIZE", "NORMALIZE_AND_CASEFOLD", "SPLIT_SUBSTR", "COLLATE",
-       "GENERATE_UUID", "SESSION_USER", "FORMAT_DATE", "FORMAT_DATETIME", "FORMAT_TIME", "FORMAT_TIMESTAMP",
+       "GENERATE_UUID", "SESSION_USER", "TYPEOF", "FORMAT_DATE", "FORMAT_DATETIME", "FORMAT_TIME", "FORMAT_TIMESTAMP",
        "JSON_EXTRACT_SCALAR", "JSON_VALUE", "TO_JSON_STRING", "JSON_TYPE", "LAX_STRING", "NET.HOST",
        "NET.PUBLIC_SUFFIX", "NET.REG_DOMAIN", "NET.IP_TO_STRING", "NET.MAKE_NET", "ST_ASGEOJSON", "ST_ASKML",
        "ST_ASTEXT", "ST_GEOHASH", "ST_GEOMETRYTYPE")
@@ -602,6 +602,9 @@ def if_(typer, node: exp.If, scope, ctes) -> T:
     return T(result.type) if result.lit != "null" else T(INT64)
 
 
+_INTERVAL_PARTS = {"YEAR", "MONTH", "DAY", "HOUR", "MINUTE", "SECOND", "MILLISECOND", "MICROSECOND", "NANOSECOND"}
+
+
 def extract(typer, node: exp.Extract, scope, ctes) -> T:
     source = typer.expr(node.expression, scope, ctes)
     part = node.this.name.upper() if isinstance(node.this, exp.Expression) else str(node.this).upper()
@@ -615,6 +618,8 @@ def extract(typer, node: exp.Extract, scope, ctes) -> T:
     if part == "DATETIME":
         return T(DATETIME) if kind == "TIMESTAMP" else UNKNOWN
     if kind in ("DATE", "DATETIME", "TIMESTAMP", "TIME"):
+        return T(INT64)
+    if kind == "INTERVAL" and part in _INTERVAL_PARTS:
         return T(INT64)
     return UNKNOWN
 
