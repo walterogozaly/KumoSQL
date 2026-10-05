@@ -167,6 +167,7 @@ EVAL_FILES = {
     "test_engine_suites.py",
     "test_bq_behavior_eval.py",
     "test_googlesql_results_eval.py",
+    "test_googlesql_types_eval.py",
     "test_bq_utils_udf_eval.py",
     "test_arcwise_bench.py",
     "test_bq_corpus_bench.py",
