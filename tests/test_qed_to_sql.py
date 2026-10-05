@@ -44,3 +44,17 @@ def test_duckdb_runs_a_sample():
             con.execute(stmt)
         for key in ("sql_a", "sql_b"):
             con.execute(sqlglot.transpile(case[key], read="mysql", write="duckdb")[0]).fetchall()
+
+
+def test_windows_group_sets_and_clock_pairs_are_converted_exactly():
+    names = {c["name"] for c in CASES}
+    for name in ("testJoinProjectTransposeWindow", "testPushProjectWithOverPastJoin1", "testAggregateDynamicFunction", "testAggregateJoinRemove10", "testReduceConstants"):
+        assert name in names
+    by_name = {c["name"]: c for c in CASES}
+    assert "OVER (" in by_name["testPushProjectWithOverPastJoin1"]["sql_a"]
+    assert "CURRENT_TIMESTAMP" in by_name["testAggregateDynamicFunction"]["sql_a"]
+
+
+def test_filter_and_grouping_sets_pairs_stay_skipped_with_the_sharper_reason():
+    skipped = {json.loads(s)["name"]: json.loads(s)["reason"] for s in (FIXTURES / "qed_calcite_skipped.jsonl").read_text().splitlines()}
+    assert "FILTER" in skipped["testDistinctCountGroupingSets1"] and "grouping sets" in skipped["testDistinctCountGroupingSets1"]

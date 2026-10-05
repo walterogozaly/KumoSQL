@@ -140,7 +140,7 @@ def new_database(tables: dict[str, Table]):
     return db
 
 
-def random_rows(table: Table, rng: random.Random, numbers: list | None = None) -> list[list]:
+def random_rows(table: Table, rng: random.Random, numbers: list | None = None, strings: list | None = None) -> list[list]:
     """A few rows with small value domains so joins and ties are common.
 
     With ``numbers`` (a few values near the queries' literals, shared by every table of the database),
@@ -153,7 +153,7 @@ def random_rows(table: Table, rng: random.Random, numbers: list | None = None) -
     key_columns = {c for key in ([table.primary_key] if table.primary_key else []) + list(table.unique) for c in key}
     for column in table.columns:
         kind = _duck_type(column)
-        domain = {"VARCHAR": ["a", "b", "c"], "DATE": DATES, "TIMESTAMP": DATES}.get(kind, numbers or [0, 1, 2, 3])
+        domain = {"VARCHAR": strings or ["a", "b", "c"], "DATE": DATES, "TIMESTAMP": DATES}.get(kind, numbers or [0, 1, 2, 3])
         if numbers is not None and column.name not in key_columns and rng.random() < 0.5:
             domain = rng.sample(domain, min(len(domain), rng.choice([1, 2])))
         domains[column.name] = domain
@@ -202,6 +202,13 @@ def constant_groupings(sql: str) -> str:
     return tree.sql(dialect="duckdb")
 
 
+def fix_clock(sql: str, day: str) -> str:
+    """Read CURRENT_TIMESTAMP and CURRENT_DATE as the given day, so a replay can have rows that equal them."""
+
+    sql = re.sub(r"\bCURRENT_TIMESTAMP\b(?:\(\))?", f"TIMESTAMP '{day} 00:00:00'", sql, flags=re.I)
+    return re.sub(r"\bCURRENT_DATE\b(?:\(\))?", f"DATE '{day}'", sql, flags=re.I)
+
+
 def name_values(sql: str) -> str:
     """Calcite calls the columns of an unnamed VALUES ``EXPR$0``, ``EXPR$1``, ..; DuckDB calls them ``col0``, .."""
 
@@ -236,7 +243,7 @@ def calcite_operators(sql: str) -> str:
         return sql
 
 
-def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60, seed: int = 11, constants: bool = False):
+def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60, seed: int = 11, constants: bool = False, strings: list | None = None, clock: str | None = None):
     """A database on which the queries differ as bags, else ``None``; ``False`` if DuckDB rejects them."""
 
     import duckdb
@@ -245,6 +252,8 @@ def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60
 
     rng = random.Random(seed)
     left, right = spark_days(left), spark_days(right)
+    if clock is not None:
+        left, right = (fix_clock(sql, clock) for sql in (left, right))
     if constants:
         left, right = name_values(left), name_values(right)
     try:
@@ -264,7 +273,7 @@ def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60
     for trial in range(2 * trials):
         # every table of a skewed database draws its numbers from the same few, so join keys meet
         shared = rng.sample(sorted(numbers), min(len(numbers), rng.choice([2, 3, 4]))) if trial >= trials else None
-        database = {f'"{table.name}"': random_rows(table, rng, shared if trial >= trials else None) for table in used}
+        database = {f'"{table.name}"': random_rows(table, rng, shared if trial >= trials else None, strings) for table in used}
         key = rows_key(database)
         if key in agreed:
             continue  # small random databases repeat (empty tables, one-row tables); the answer would too
@@ -274,7 +283,10 @@ def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60
             b = _bag(db.execute(right_sql).fetchall())
             # DuckDB's optimizer disagreeing with its unoptimized plan is not evidence
             found = a != b and [_bag(rows) for rows in run_unoptimized(db, left_sql, right_sql)] == [a, b]
-        except duckdb.Error:
+        except duckdb.Error as error:
+            if strings is None and "Conversion Error" in str(error):
+                # a query that casts text to a number rejects "a"; replay it on digit strings instead
+                return differ(left, right, tables, db, trials, seed, constants, ["1", "2", "3"], clock)
             return False
         if found:
             return (left_sql, right_sql, a, b)
@@ -371,11 +383,11 @@ def run_suite(name: str, prove, limit: int | None = None, trials: int = 60) -> S
     return result
 
 
-def default_prove(left: str, right: str, tables: dict[str, Table], constants: bool = False) -> bool:
-    return prove_result(left, right, tables, constants).proven
+def default_prove(left: str, right: str, tables: dict[str, Table], constants: bool = False, clock: bool = False) -> bool:
+    return prove_result(left, right, tables, constants, clock).proven
 
 
-def prove_result(left: str, right: str, tables: dict[str, Table], constants: bool = False):
+def prove_result(left: str, right: str, tables: dict[str, Table], constants: bool = False, clock: bool = False):
     """The prover's full result (status, reason and any counterexample) for one pair."""
 
     from kumosql.algebraic_equivalence import prove_equivalent_algebraic
@@ -391,7 +403,7 @@ def prove_result(left: str, right: str, tables: dict[str, Table], constants: boo
         for t in tables.values()
     }
     return prove_equivalent_algebraic(
-        spark_days(left), spark_days(right), schema=schema, constraints=constraints, types={t.name: {c.name: c.type for c in t.columns} for t in tables.values()}, compare_names=False, dialect="mysql", exact_arithmetic=True, group_by_constants=constants
+        spark_days(left), spark_days(right), schema=schema, constraints=constraints, types={t.name: {c.name: c.type for c in t.columns} for t in tables.values()}, compare_names=False, dialect="mysql", exact_arithmetic=True, group_by_constants=constants, statement_clock=clock
     )
 
 

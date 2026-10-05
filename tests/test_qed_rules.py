@@ -170,3 +170,34 @@ def test_in_in_the_select_list_matches_a_left_join_indicator_read_above_it():
     assert prove_equivalent_algebraic(test, joined, **_emp_kwargs()).proven
     nullable = test.replace("e.deptno IN", "e.mgr IN")
     assert not prove_equivalent_algebraic(nullable, joined.replace("e.deptno = g.d", "e.mgr = g.d"), **_emp_kwargs()).proven
+
+
+def test_a_column_pinned_to_the_statement_clock_reads_as_the_clock():
+    from kumosql.algebraic_equivalence import normalize
+
+    types = {"emp": {"mgr": "INT", "hiredate": "TIMESTAMP", "name": "VARCHAR(20)"}}
+    schema = {"emp": ["mgr", "hiredate", "name"]}
+    pinned = normalize(
+        "SELECT hiredate AS c0 FROM emp WHERE hiredate = CURRENT_TIMESTAMP GROUP BY mgr, hiredate HAVING COUNT(*) > 3",
+        dialect="mysql", schema=schema, types=types, statement_clock=True,
+    )
+    read = normalize(
+        "SELECT CURRENT_TIMESTAMP AS c0 FROM emp WHERE hiredate = CURRENT_TIMESTAMP GROUP BY mgr HAVING COUNT(*) > 3",
+        dialect="mysql", schema=schema, types=types, statement_clock=True,
+    )
+    assert pinned == read
+    # the clock is only a constant when the caller asks; the default leaves CURRENT_TIMESTAMP alone
+    assert "KUMOSQL_CLOCK" not in normalize("SELECT CURRENT_TIMESTAMP FROM emp", dialect="mysql", schema=schema, types=types)
+    # a string column compared with the clock is coerced, so equal does not mean identical
+    text = normalize("SELECT name AS c0 FROM emp WHERE name = CURRENT_TIMESTAMP GROUP BY mgr, name", dialect="mysql", schema=schema, types=types, statement_clock=True)
+    assert "GROUP BY" in text and text.count("KUMOSQL_CLOCK_TIMESTAMP") == 1
+
+
+def test_the_clock_is_never_a_constant_without_a_pinning_filter():
+    from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+
+    kwargs = dict(schema={"emp": ["mgr", "hiredate"]}, types={"emp": {"mgr": "INT", "hiredate": "TIMESTAMP"}}, dialect="mysql", compare_names=False, statement_clock=True)
+    same = prove_equivalent_algebraic("SELECT hiredate FROM emp WHERE hiredate = CURRENT_TIMESTAMP", "SELECT CURRENT_TIMESTAMP FROM emp WHERE hiredate = CURRENT_TIMESTAMP", **kwargs)
+    other = prove_equivalent_algebraic("SELECT hiredate FROM emp", "SELECT CURRENT_TIMESTAMP FROM emp", **kwargs)
+    assert same.proven
+    assert not other.proven

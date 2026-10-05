@@ -15,6 +15,7 @@ counterexample exists; must stay 0).
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -37,7 +38,13 @@ def _tables(ddl: str) -> dict:
         return sb.load_schema(path)
 
 
-def run(prove=sb.default_prove, trials: int = 30, limit: int | None = None) -> dict:
+def qed_prove(left: str, right: str, tables: dict, constants: bool = True) -> bool:
+    """The prover as QED's cases need it: a literal GROUP BY key is a constant, and CURRENT_TIMESTAMP one value for both queries."""
+
+    return sb.default_prove(left, right, tables, constants, clock=True)
+
+
+def run(prove=qed_prove, trials: int = 30, limit: int | None = None) -> dict:
     out = {"total": 0, "proved": 0, "different": [], "unknown": [], "wrong": [], "seconds": 0.0}
     start = time.time()
     schemas: dict[str, tuple] = {}
@@ -54,6 +61,9 @@ def run(prove=sb.default_prove, trials: int = 30, limit: int | None = None) -> d
         except Exception:  # a crash is a failure to prove, never a proof
             proof = False
         counter = sb.differ(left, right, tables, db, trials, constants=True)
+        if counter is None and re.search(r"\bCURRENT_(TIMESTAMP|DATE)\b", left + right, re.I):
+            # the clock is one unknown instant: replay at two that the random dates can equal
+            counter = sb.differ(left, right, tables, db, trials, constants=True, clock=sb.DATES[2]) or sb.differ(left, right, tables, db, trials, constants=True, clock=sb.DATES[5])
         found = counter not in (None, False)
         if proof and found:
             out["wrong"].append(case["name"])

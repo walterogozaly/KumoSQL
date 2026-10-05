@@ -9,6 +9,14 @@ from . import proof_columns
 from .smt_equivalence import _Compiler, _canonical_aliases, Unsupported
 
 
+def _branches(tree: exp.Expression) -> list[exp.Select]:
+    """The selects at the top of ``tree``: itself, or the operands of the set operations above them."""
+
+    if isinstance(tree, exp.SetOperation):
+        return [b for side in (tree.this, tree.expression) for b in _branches(side.this if isinstance(side, exp.Subquery) else side)]
+    return [tree] if isinstance(tree, exp.Select) else []
+
+
 def same_scoped_query(left, right, *, schema, dialect, compare_names):
     if not schema:
         return False
@@ -20,7 +28,7 @@ def same_scoped_query(left, right, *, schema, dialect, compare_names):
             reader = proof_columns.reader_for(sql, schema, dialect)
             parsed = sqlglot.parse_one(sql, read=dialect)
             tree = normalize_identifiers(proof_columns.tag(parsed) if reader is not None else parsed, dialect=dialect)
-            if not isinstance(tree, exp.Select) or tree.find(exp.Limit, exp.Offset):
+            if not isinstance(tree, (exp.Select, exp.SetOperation)) or tree.find(exp.Limit, exp.Offset):
                 return False
             _Compiler(schema, False, dialect)._check_nondeterminism(tree)
             declared = {t.lower(): cs for t, cs in schema.items()}
@@ -38,10 +46,12 @@ def same_scoped_query(left, right, *, schema, dialect, compare_names):
                 return False
             # Qualification resolves GROUP BY aliases before we ignore names.
             if not compare_names:
-                tree.set("expressions", [e.this.copy() if isinstance(e, exp.Alias) else e for e in tree.expressions])
-                for item in tree.expressions:
-                    if isinstance(item, exp.Subquery):
-                        item.set("alias", None)
+                # a set operation takes its names from its first branch, and none of them is compared
+                for branch in _branches(tree):
+                    branch.set("expressions", [e.this.copy() if isinstance(e, exp.Alias) else e for e in branch.expressions])
+                    for item in branch.expressions:
+                        if isinstance(item, exp.Subquery):
+                            item.set("alias", None)
             shapes.append(_canonical_aliases(tree, schema))
     except (sqlglot.errors.SqlglotError, Unsupported, ValueError, proof_columns.ColumnResolutionRefused):
         return False
