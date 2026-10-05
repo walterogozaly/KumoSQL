@@ -45,6 +45,7 @@ from .ir import (
     IsNull,
     Ite,
     Lit,
+    NConst,
     NInd,
     NMin,
     NMonus,
@@ -249,6 +250,12 @@ class Query:
     single: tuple | None = None  # values, when the query returns exactly one row (global aggregate)
 
 
+def _whole_number(node) -> int | None:
+    if isinstance(node, exp.Literal) and not node.is_string and node.this.isdigit():
+        return int(node.this)
+    return None
+
+
 def _limit_zero(node) -> bool:
     limit = node.args.get("limit")
     value = limit.expression if isinstance(limit, exp.Limit) else None
@@ -355,7 +362,8 @@ class Translator:
     # ---- queries --------------------------------------------------------
 
     def query(self, node, outer: Scope | None, ctes: dict) -> Query:
-        while isinstance(node, exp.Subquery) and not any(node.args.get(k) for k in ("limit", "offset", "order")):
+        # A parenthesized query's ORDER BY alone does not change the bag.
+        while isinstance(node, exp.Subquery) and not any(node.args.get(k) for k in ("limit", "offset")):
             node = node.this
         if isinstance(node, exp.Subquery):
             raise Unsupported("a parenthesized query with ORDER BY or LIMIT")
@@ -366,7 +374,7 @@ class Translator:
                     bare.set(key, None)
                 q = self.query(bare, outer, ctes)
                 return Query(q.out, ZERO, q.names)
-            raise Unsupported("LIMIT or OFFSET inside the query")
+            return self.limited(node, outer, ctes)
         if node.args.get("fetch") is not None:
             raise Unsupported("FETCH")
         with_clause = _with(node)
@@ -385,6 +393,32 @@ class Translator:
         if isinstance(node, exp.Values):
             return self.values(node, outer, ctes)
         raise Unsupported(f"{type(node).__name__} query")
+
+    def limited(self, node, outer, ctes) -> Query:
+        """A query inside the query that ends in LIMIT n [OFFSET m] (n and m integer literals, n >= 1).
+
+        Its select list may be all constants: every row is then the same tuple, so the limit keeps
+        ``min(n, count - m)`` copies whatever rows it cuts.
+        """
+
+        limit, offset = node.args.get("limit"), node.args.get("offset")
+        if node.args.get("fetch") is not None or not isinstance(limit, exp.Limit) or limit.args.get("offset") is not None:
+            raise Unsupported("LIMIT or OFFSET inside the query")
+        count = _whole_number(limit.expression)
+        skip = 0 if offset is None else _whole_number(offset.expression) if isinstance(offset, exp.Offset) else None
+        if count is None or count < 1 or skip is None or not isinstance(node, exp.Select):
+            raise Unsupported("LIMIT or OFFSET inside the query")
+        bare = node.copy()
+        for key in ("limit", "offset", "order"):
+            bare.set(key, None)
+        constants = all(isinstance(e.this if isinstance(e, exp.Alias) else e, (exp.Literal, exp.Null, exp.Boolean)) for e in node.expressions)
+        if constants:
+            q = self.query(bare, outer, ctes)
+            if count == 1 and not skip:
+                return Query(q.out, ind(Exists(q.body)), q.names)
+            rest = NMonus(q.body, NConst(Fraction(skip))) if skip else q.body
+            return Query(q.out, NMin(rest, NConst(Fraction(count))), q.names)
+        raise Unsupported("LIMIT or OFFSET inside the query")
 
     def set_operation(self, node, outer, ctes) -> Query:
         for key in ("by_name", "side", "kind", "on"):
