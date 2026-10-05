@@ -32,3 +32,15 @@ def test_checklist_query(case):
     printed = [tree.sql("bigquery") for tree in trees]
     again = [tree.sql("bigquery") for tree in sqlglot.parse(";\n".join(printed), read="bigquery") if tree is not None]
     assert again == printed
+
+
+def test_parenthesized_join_starting_with_unnest_keeps_the_grouped_relation():
+    sql = next(case["sql"] for case in CASES if case["feature"] == "parenthesized join")
+    tree = sqlglot.parse_one(sql, read="bigquery")
+    source = tree.args["from_"].this
+    assert isinstance(source, exp.Subquery)
+    grouped_join = source.this
+    assert isinstance(grouped_join, exp.Table)
+    assert isinstance(grouped_join.this, exp.Unnest)
+    assert grouped_join.alias == "a"
+    assert len(grouped_join.args["joins"]) == 1

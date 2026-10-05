@@ -19,6 +19,7 @@ import venv
 ROOT = Path(__file__).resolve().parents[1]
 SUPPORTED_SQLGLOT_VERSIONS = ("30.21.0",)
 REGRESSION_TESTS = (
+    "tests/test_googlesql_checklist.py",
     "tests/test_lift_subqueries.py",
     "tests/test_rule_registry.py",
     "tests/test_sqlx.py",

@@ -10,7 +10,9 @@ function sqlglot does not know are kept as their own text.
 
 ``x LIKE ALL UNNEST(array)`` (and ``LIKE SOME``), an aggregate with a ``WHERE`` filter inside its parentheses (``COUNT(* WHERE c)``),
 the ``WITH(a AS 1, a + 1)`` expression and ``t.arr elem WITH OFFSET off`` are read the same way, each into nodes sqlglot already
-has or a marker call that prints back as written. ``STRUCT<>()``, which sqlglot reads as the comparison ``STRUCT <> ()``, is refused.
+has or a marker call that prints back as written. A parenthesized join that begins with ``UNNEST`` is parsed through a
+temporary relation marker and restored to an ``UNNEST`` node. ``STRUCT<>()``, which sqlglot reads as the comparison
+``STRUCT <> ()``, is refused.
 
 It works the same on pure and compiled sqlglot: a compiled build ignores parser methods assigned after the fact and refuses
 subclasses of its expressions, so SQL sqlglot rejects is parsed again with the dialect's tokens rewritten and the marker call is resolved after.
@@ -38,6 +40,7 @@ _VERBATIM_CALLS = ("GRAPH_TABLE",)
 WITH_EXPRESSION = "__KUMO_WITH__"
 WITH_VARIABLE = "__KUMO_WITH_VARIABLE__"
 LIKE_ALL = "__KUMO_LIKE_ALL__"
+UNNEST_JOIN_SOURCE = "__KUMO_UNNEST_JOIN_SOURCE__"
 
 
 def _generate(self: Generator, expression: exp.Anonymous) -> str:
@@ -566,6 +569,31 @@ def _rewrite_unnest_offset(sql: str, tokens: list) -> str:
     return _apply_edits(sql, edits)
 
 
+def _rewrite_parenthesized_unnest_join(sql: str, tokens: list) -> str:
+    """Mark a parenthesized join starting with ``UNNEST`` so sqlglot accepts its first relation.
+
+    sqlglot accepts parenthesized joins when their first relation is a table, but not when it is a table function. A
+    temporary table-function name gives it the accepted table form; :func:`_resolve_parenthesized_unnest_join` restores
+    the original ``UNNEST`` node and keeps the grouped-join shape and aliases intact.
+    """
+
+    relations = (TokenType.FROM, TokenType.JOIN, TokenType.COMMA)
+    edits: list[tuple[int, int, str]] = []
+    for opened, closed in _call_groups(tokens):
+        if (
+            opened == 0 or opened + 2 >= closed
+            or tokens[opened - 1].token_type not in relations
+            or tokens[opened + 1].text.upper() != "UNNEST"
+            or tokens[opened + 2].token_type != TokenType.L_PAREN
+        ):
+            continue
+        if not any(token.token_type == TokenType.JOIN for _, token in _top_level(tokens, opened + 1, closed)):
+            continue
+        source = tokens[opened + 1]
+        edits.append((source.start, source.end + 1, UNNEST_JOIN_SOURCE))
+    return _apply_edits(sql, edits)
+
+
 def _check_empty_struct(sql: str, tokens: list) -> None:
     """Refuse ``STRUCT<>(...)``: sqlglot reads it as the comparison ``STRUCT <> (...)``, and BigQuery rejects an empty struct type."""
 
@@ -612,9 +640,24 @@ def _resolve_markers(trees):
 
     for tree in trees:
         if tree is not None:
+            tree = _resolve_parenthesized_unnest_join(tree)
             tree = _resolve_like_all(tree)
             tree = _resolve_with_expressions(tree)
         yield tree
+
+
+def _resolve_parenthesized_unnest_join(tree: exp.Expression) -> exp.Expression:
+    """Restore a marked first relation to ``UNNEST`` without changing the grouped join or its aliases."""
+
+    for table in list(tree.find_all(exp.Table)):
+        function = table.this
+        if (
+            isinstance(function, exp.Anonymous)
+            and function.name == UNNEST_JOIN_SOURCE
+            and table.args.get("joins")
+        ):
+            table.set("this", exp.Unnest(expressions=[item.copy() for item in function.expressions], offset=False))
+    return tree
 
 
 def _resolve_like_all(tree: exp.Expression) -> exp.Expression:
@@ -710,6 +753,7 @@ def install() -> None:
             for rewrite in (
                 _rewrite_raw_bytes, _rewrite_verbatim_calls, _rewrite_model_arguments, _rewrite_pipe_operators, _rewrite_pipe_with,
                 _rewrite_like_quantifiers, _rewrite_aggregate_where, _rewrite_with_expressions, _rewrite_unnest_offset,
+                _rewrite_parenthesized_unnest_join,
             ):
                 rewritten = rewrite(rewritten, tokens if rewritten == sql else self.tokenize(rewritten))
             if rewritten != sql:
