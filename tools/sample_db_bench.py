@@ -537,6 +537,23 @@ class Adapter:
     #: complete a NOT NULL foreign key column a counterexample leaves out with a fresh value (and a parent row
     #: for it) instead of the type's default, which can coincide with a value the counterexample uses elsewhere
     fresh_foreign_key_values: bool = False
+    #: the data is downloaded at run time (pinned, not committed): the shared tests of other databases leave it out
+    downloaded: bool = False
+
+    def available(self) -> bool:
+        """Whether the data can be loaded here (a ``downloaded`` adapter: the pinned files are reachable)."""
+
+        return True
+
+    def digest(self, pin: "Upstream") -> str:
+        """The SHA-256 of a pinned file as it is on disk (a ``downloaded`` adapter reads it from its cache)."""
+
+        return sha256(self.folder / pin.local)
+
+    def pins_text(self) -> str | None:
+        """How the results files name this database's pins, when the default (one line per committed file) does not fit."""
+
+        return None
 
     @property
     def folder(self) -> Path:
@@ -1478,9 +1495,21 @@ class OracleCO(OracleSample):
     identity = {"inventory": "inventory_id"}  # the only INSERTs that leave the identity column to the database
 
 
+# Adapters in modules of their own import this module by its name, also when it runs as a script (``__main__``).
+sys.modules.setdefault("sample_db_bench", sys.modules[__name__])
+from sample_databases_adventureworks import AdventureWorks  # noqa: E402
+
 ADAPTERS: dict[str, Adapter] = {
     a.name: a
-    for a in (Chinook(), Northwind(), Sakila(), Pagila(), OracleHR(), OracleCO())
+    for a in (
+        Chinook(),
+        Northwind(),
+        Sakila(),
+        Pagila(),
+        OracleHR(),
+        OracleCO(),
+        AdventureWorks(),
+    )
 }
 
 
@@ -1492,7 +1521,7 @@ def check_database(adapter: Adapter, con=None) -> dict:
 
     problems: list[str] = []
     for pin in adapter.upstream:
-        digest = sha256(adapter.folder / pin.local)
+        digest = adapter.digest(pin)
         if digest != pin.sha256:
             problems.append(
                 f"{pin.local}: SHA-256 {digest} is not the pinned {pin.sha256}"
@@ -2356,6 +2385,8 @@ COMMAND = "python tools/sample_db_bench.py --write-results"
 
 def _pins_text(adapters: list[Adapter]) -> str:
     def pin(a: Adapter) -> str:
+        if a.pins_text():
+            return a.pins_text()
         files = [u for u in a.upstream if u.licence != "the licence itself"]
         licence = files[0].licence.rsplit(" (", 1)[0]
         if len(files) == 1:
