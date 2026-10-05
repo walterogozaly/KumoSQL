@@ -537,8 +537,11 @@ class Adapter:
     #: complete a NOT NULL foreign key column a counterexample leaves out with a fresh value (and a parent row
     #: for it) instead of the type's default, which can coincide with a value the counterexample uses elsewhere
     fresh_foreign_key_values: bool = False
-    #: the data is downloaded at run time (pinned, not committed): the shared tests of other databases leave it out
+    #: True: the data is downloaded at run time (a size or licence that forbids committing it); such an adapter lives in
+    #: ``DOWNLOADED``, is not part of a default run, and its tests skip when the download fails
     downloaded: bool = False
+    #: results-file text naming the pinned upstream files, for an adapter with too many to list one by one ("" lists them)
+    pins_summary: str = ""
 
     def available(self) -> bool:
         """Whether the data can be loaded here (a ``downloaded`` adapter: the pinned files are reachable)."""
@@ -546,14 +549,9 @@ class Adapter:
         return True
 
     def digest(self, pin: "Upstream") -> str:
-        """The SHA-256 of a pinned file as it is on disk (a ``downloaded`` adapter reads it from its cache)."""
+        """The SHA-256 of a pinned file as it is on disk (an adapter that reads a pinned file from a cache overrides this)."""
 
         return sha256(self.folder / pin.local)
-
-    def pins_text(self) -> str | None:
-        """How the results files name this database's pins, when the default (one line per committed file) does not fit."""
-
-        return None
 
     @property
     def folder(self) -> Path:
@@ -1495,22 +1493,27 @@ class OracleCO(OracleSample):
     identity = {"inventory": "inventory_id"}  # the only INSERTs that leave the identity column to the database
 
 
-# Adapters in modules of their own import this module by its name, also when it runs as a script (``__main__``).
-sys.modules.setdefault("sample_db_bench", sys.modules[__name__])
-from sample_databases_adventureworks import AdventureWorks  # noqa: E402
-
 ADAPTERS: dict[str, Adapter] = {
     a.name: a
-    for a in (
-        Chinook(),
-        Northwind(),
-        Sakila(),
-        Pagila(),
-        OracleHR(),
-        OracleCO(),
-        AdventureWorks(),
-    )
+    for a in (Chinook(), Northwind(), Sakila(), Pagila(), OracleHR(), OracleCO())
 }
+
+
+# Adapters whose data is downloaded at run time are kept out of ``ADAPTERS``, so that a default run and the tests that loop
+# over every database never touch the network; name one with ``--database``. ``adapter_named`` finds either kind. Each
+# lives in a module of its own.
+def _downloaded_adapters() -> dict[str, Adapter]:
+    sys.modules.setdefault("sample_db_bench", sys.modules[__name__])  # the module imports this one by that name
+    import sample_databases_adventureworks
+
+    return {a.name: a for a in (sample_databases_adventureworks.AdventureWorks(),)}
+
+
+DOWNLOADED: dict[str, Adapter] = _downloaded_adapters()
+
+
+def adapter_named(name: str) -> Adapter:
+    return ADAPTERS[name] if name in ADAPTERS else DOWNLOADED[name]
 
 
 # ---------------------------------------------------------------- load checks
@@ -1714,7 +1717,7 @@ def rewrite_cases(job: tuple[str, list[str], bool]) -> list[dict]:
     from kumosql import query_optimizer as qo
 
     name, query_ids, optimizer = job
-    adapter = ADAPTERS[name]
+    adapter = adapter_named(name)
     wanted = set(query_ids)
     queries = [q for q in adapter.workload() if q["id"] in wanted]
     con = adapter.connect()
@@ -2160,7 +2163,7 @@ def decide_pairs(job: tuple[str, list[dict]]) -> list[dict]:
     """Decide the listed pairs of one database (loading the real database once)."""
 
     name, pairs = job
-    con = ADAPTERS[name].connect()
+    con = adapter_named(name).connect()
     try:
         return [decide_pair(name, pair, con) for pair in pairs]
     finally:
@@ -2175,7 +2178,7 @@ def decide_pair(name: str, pair: dict, con) -> dict:
     from kumosql.equivalence import prove_equivalent
     from kumosql.smt_equivalence import SmtStatus
 
-    adapter = ADAPTERS[name]
+    adapter = adapter_named(name)
     drop = tuple(pair.get("drop", ()))
     left, right = pair["left"], pair["right"]
     columns, types = adapter.prover_schema()
@@ -2385,8 +2388,8 @@ COMMAND = "python tools/sample_db_bench.py --write-results"
 
 def _pins_text(adapters: list[Adapter]) -> str:
     def pin(a: Adapter) -> str:
-        if a.pins_text():
-            return a.pins_text()
+        if a.pins_summary:
+            return a.pins_summary
         files = [u for u in a.upstream if u.licence != "the licence itself"]
         licence = files[0].licence.rsplit(" (", 1)[0]
         if len(files) == 1:
@@ -2602,7 +2605,12 @@ def database_results_rows(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--database", choices=sorted(ADAPTERS), action="append")
+    parser.add_argument(
+        "--database",
+        choices=sorted([*ADAPTERS, *DOWNLOADED]),
+        action="append",
+        help="default: every database with committed data (the run-time downloads are named)",
+    )
     parser.add_argument(
         "--check",
         action="store_true",
@@ -2646,7 +2654,7 @@ def main(argv: list[str] | None = None) -> int:
     from bench_common import quiet
 
     quiet()
-    adapters = [ADAPTERS[n] for n in (args.database or sorted(ADAPTERS))]
+    adapters = [adapter_named(n) for n in (args.database or sorted(ADAPTERS))]
     failed = False
     reports = []
     for adapter in adapters:

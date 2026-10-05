@@ -1,0 +1,896 @@
+{
+ "about": "Authored query pairs on AdventureWorks for tools/sample_db_bench.py. label: 'equivalent' or 'different' under the declared keys minus 'drop' (not_null:T.c, pk:T, fk:T.c). A 'different' pair carries a witness: 'real' (the two queries already differ on the AdventureWorks data) or a small database (missing columns are completed with legal values) that satisfies the remaining declarations and separates them. 'sibling' names the pair it negates. BigQuery has no UNIQUE constraint, so the alternate keys upstream declares as unique indexes (Product.Name, Product.ProductNumber, every rowguid) are not declared keys and pairs that need them are 'different' under the declarations although the data agrees; SalesOrderDetailID alone is not a declared key either (the key is the pair with SalesOrderID).",
+ "pairs": [
+  {
+   "id": "aw-fk-join-elimination",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "SalesOrderDetail.SalesOrderID is NOT NULL and references SalesOrderHeader's key: every detail line joins exactly one header",
+   "left": "SELECT d.SalesOrderID, d.SalesOrderDetailID, d.LineTotal FROM SalesOrderDetail AS d JOIN SalesOrderHeader AS h ON d.SalesOrderID = h.SalesOrderID",
+   "right": "SELECT SalesOrderID, SalesOrderDetailID, LineTotal FROM SalesOrderDetail"
+  },
+  {
+   "id": "aw-fk-join-elimination-nullable",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "aw-fk-join-elimination",
+   "why": "Customer.StoreID may be NULL (it is NULL for every individual customer, 18,484 of 19,820): such a customer joins no store",
+   "left": "SELECT c.CustomerID, c.AccountNumber FROM Customer AS c JOIN Store AS s ON c.StoreID = s.BusinessEntityID",
+   "right": "SELECT CustomerID, AccountNumber FROM Customer",
+   "witness": "real"
+  },
+  {
+   "id": "aw-fk-join-elimination-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "aw-fk-join-elimination",
+   "drop": [
+    "fk:SalesOrderDetail.SalesOrderID"
+   ],
+   "why": "without the foreign key a detail line may name a header that does not exist",
+   "left": "SELECT d.SalesOrderID, d.SalesOrderDetailID, d.LineTotal FROM SalesOrderDetail AS d JOIN SalesOrderHeader AS h ON d.SalesOrderID = h.SalesOrderID",
+   "right": "SELECT SalesOrderID, SalesOrderDetailID, LineTotal FROM SalesOrderDetail",
+   "witness": {
+    "SalesOrderDetail": [
+     {
+      "SalesOrderID": 99,
+      "SalesOrderDetailID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-fk-join-elimination-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "aw-fk-join-elimination",
+   "drop": [
+    "pk:SalesOrderHeader"
+   ],
+   "why": "without SalesOrderHeader's primary key two headers may share an id and the join doubles the line",
+   "left": "SELECT d.SalesOrderID, d.SalesOrderDetailID, d.LineTotal FROM SalesOrderDetail AS d JOIN SalesOrderHeader AS h ON d.SalesOrderID = h.SalesOrderID",
+   "right": "SELECT SalesOrderID, SalesOrderDetailID, LineTotal FROM SalesOrderDetail",
+   "witness": {
+    "SalesOrderHeader": [
+     {
+      "SalesOrderID": 1
+     },
+     {
+      "SalesOrderID": 1
+     }
+    ],
+    "SalesOrderDetail": [
+     {
+      "SalesOrderID": 1,
+      "SalesOrderDetailID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-two-hop-join-elimination",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "detail to header to customer, both foreign keys NOT NULL and onto primary keys: neither join changes the detail lines",
+   "left": "SELECT d.SalesOrderID, d.SalesOrderDetailID, d.OrderQty FROM SalesOrderDetail AS d JOIN SalesOrderHeader AS h ON d.SalesOrderID = h.SalesOrderID JOIN Customer AS c ON h.CustomerID = c.CustomerID",
+   "right": "SELECT SalesOrderID, SalesOrderDetailID, OrderQty FROM SalesOrderDetail"
+  },
+  {
+   "id": "aw-two-hop-join-elimination-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "aw-two-hop-join-elimination",
+   "drop": [
+    "fk:SalesOrderHeader.CustomerID"
+   ],
+   "why": "without SalesOrderHeader.CustomerID's foreign key a header may name a customer that does not exist",
+   "left": "SELECT d.SalesOrderID, d.SalesOrderDetailID, d.OrderQty FROM SalesOrderDetail AS d JOIN SalesOrderHeader AS h ON d.SalesOrderID = h.SalesOrderID JOIN Customer AS c ON h.CustomerID = c.CustomerID",
+   "right": "SELECT SalesOrderID, SalesOrderDetailID, OrderQty FROM SalesOrderDetail",
+   "witness": {
+    "SalesOrderHeader": [
+     {
+      "SalesOrderID": 1,
+      "CustomerID": 99
+     }
+    ],
+    "SalesOrderDetail": [
+     {
+      "SalesOrderID": 1,
+      "SalesOrderDetailID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-composite-fk-join-elimination",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "the composite foreign key (SpecialOfferID, ProductID) is NOT NULL and onto SpecialOfferProduct's composite key",
+   "left": "SELECT d.SalesOrderID, d.SalesOrderDetailID FROM SalesOrderDetail AS d JOIN SpecialOfferProduct AS sop ON d.SpecialOfferID = sop.SpecialOfferID AND d.ProductID = sop.ProductID",
+   "right": "SELECT SalesOrderID, SalesOrderDetailID FROM SalesOrderDetail"
+  },
+  {
+   "id": "aw-composite-fk-join-one-column",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "aw-composite-fk-join-elimination",
+   "why": "joining on SpecialOfferID alone is not the foreign key: SpecialOfferProduct has many products per offer and the join repeats the line (shown on one order: unfiltered the repeated join has tens of millions of rows)",
+   "left": "SELECT d.SalesOrderID, d.SalesOrderDetailID FROM SalesOrderDetail AS d JOIN SpecialOfferProduct AS sop ON d.SpecialOfferID = sop.SpecialOfferID WHERE d.SalesOrderID = 43659",
+   "right": "SELECT SalesOrderID, SalesOrderDetailID FROM SalesOrderDetail WHERE SalesOrderID = 43659",
+   "witness": {
+    "SpecialOfferProduct": [
+     {
+      "SpecialOfferID": 1,
+      "ProductID": 1
+     },
+     {
+      "SpecialOfferID": 1,
+      "ProductID": 2
+     }
+    ],
+    "SalesOrderDetail": [
+     {
+      "SalesOrderID": 43659,
+      "SalesOrderDetailID": 1,
+      "SpecialOfferID": 1,
+      "ProductID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-composite-fk-join-elimination-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "aw-composite-fk-join-elimination",
+   "drop": [
+    "fk:SalesOrderDetail.SpecialOfferID"
+   ],
+   "why": "without the composite foreign key a line may name an offer and product pair that does not exist",
+   "left": "SELECT d.SalesOrderID, d.SalesOrderDetailID FROM SalesOrderDetail AS d JOIN SpecialOfferProduct AS sop ON d.SpecialOfferID = sop.SpecialOfferID AND d.ProductID = sop.ProductID",
+   "right": "SELECT SalesOrderID, SalesOrderDetailID FROM SalesOrderDetail",
+   "witness": {
+    "SalesOrderDetail": [
+     {
+      "SalesOrderID": 99,
+      "SalesOrderDetailID": 1,
+      "SpecialOfferID": 7,
+      "ProductID": 8
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-nullable-fk-join-as-filter",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "an inner join on a nullable foreign key keeps exactly the rows whose foreign key is not NULL",
+   "left": "SELECT c.CustomerID FROM Customer AS c JOIN Store AS s ON c.StoreID = s.BusinessEntityID",
+   "right": "SELECT CustomerID FROM Customer WHERE StoreID IS NOT NULL"
+  },
+  {
+   "id": "aw-nullable-fk-join-as-filter-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "aw-nullable-fk-join-as-filter",
+   "drop": [
+    "fk:Customer.StoreID"
+   ],
+   "why": "without the foreign key a customer may name a store that does not exist",
+   "left": "SELECT c.CustomerID FROM Customer AS c JOIN Store AS s ON c.StoreID = s.BusinessEntityID",
+   "right": "SELECT CustomerID FROM Customer WHERE StoreID IS NOT NULL",
+   "witness": {
+    "Customer": [
+     {
+      "CustomerID": 1,
+      "StoreID": 99
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-left-join-elimination",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "a LEFT JOIN on the other table's primary key keeps each product once and none are lost; no column of ProductModel is read",
+   "left": "SELECT p.ProductID, p.Name FROM Product AS p LEFT JOIN ProductModel AS pm ON p.ProductModelID = pm.ProductModelID",
+   "right": "SELECT ProductID, Name FROM Product"
+  },
+  {
+   "id": "aw-left-join-elimination-not-unique",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "aw-left-join-elimination",
+   "why": "SalesOrderDetail.ProductID is not a key: a product with several lines repeats, one without any is kept",
+   "left": "SELECT p.ProductID, p.Name FROM Product AS p LEFT JOIN SalesOrderDetail AS d ON d.ProductID = p.ProductID",
+   "right": "SELECT ProductID, Name FROM Product",
+   "witness": "real"
+  },
+  {
+   "id": "aw-left-join-elimination-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "aw-left-join-elimination",
+   "drop": [
+    "pk:ProductModel"
+   ],
+   "why": "without ProductModel's primary key two models may share an id and the product repeats",
+   "left": "SELECT p.ProductID, p.Name FROM Product AS p LEFT JOIN ProductModel AS pm ON p.ProductModelID = pm.ProductModelID",
+   "right": "SELECT ProductID, Name FROM Product",
+   "witness": {
+    "ProductModel": [
+     {
+      "ProductModelID": 1
+     },
+     {
+      "ProductModelID": 1
+     }
+    ],
+    "Product": [
+     {
+      "ProductID": 1,
+      "ProductModelID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-composite-key-table-join-elimination",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "BusinessEntityAddress.AddressID is NOT NULL and references Address's key",
+   "left": "SELECT bea.BusinessEntityID, bea.AddressTypeID FROM BusinessEntityAddress AS bea JOIN Address AS a ON bea.AddressID = a.AddressID",
+   "right": "SELECT BusinessEntityID, AddressTypeID FROM BusinessEntityAddress"
+  },
+  {
+   "id": "aw-composite-key-table-join-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "aw-composite-key-table-join-elimination",
+   "drop": [
+    "fk:BusinessEntityAddress.AddressID"
+   ],
+   "why": "without the foreign key a row may name an address that does not exist",
+   "left": "SELECT bea.BusinessEntityID, bea.AddressTypeID FROM BusinessEntityAddress AS bea JOIN Address AS a ON bea.AddressID = a.AddressID",
+   "right": "SELECT BusinessEntityID, AddressTypeID FROM BusinessEntityAddress",
+   "witness": {
+    "BusinessEntityAddress": [
+     {
+      "BusinessEntityID": 1,
+      "AddressID": 99,
+      "AddressTypeID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-one-to-one-join",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "Person's primary key is also a NOT NULL foreign key onto BusinessEntity's: each person has exactly one business entity",
+   "left": "SELECT p.BusinessEntityID, p.LastName FROM Person AS p JOIN BusinessEntity AS be ON p.BusinessEntityID = be.BusinessEntityID",
+   "right": "SELECT BusinessEntityID, LastName FROM Person"
+  },
+  {
+   "id": "aw-one-to-one-join-wrong-side",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "aw-one-to-one-join",
+   "why": "BusinessEntity has rows that are not people (vendors and stores): read from that side the join drops them",
+   "left": "SELECT be.BusinessEntityID FROM BusinessEntity AS be JOIN Person AS p ON p.BusinessEntityID = be.BusinessEntityID",
+   "right": "SELECT BusinessEntityID FROM BusinessEntity",
+   "witness": "real"
+  },
+  {
+   "id": "aw-self-join-on-key",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "a self join on the primary key matches each row with itself",
+   "left": "SELECT a.ProductID, a.Name FROM Product AS a JOIN Product AS b ON a.ProductID = b.ProductID",
+   "right": "SELECT ProductID, Name FROM Product"
+  },
+  {
+   "id": "aw-self-join-on-key-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "aw-self-join-on-key",
+   "drop": [
+    "pk:Product"
+   ],
+   "why": "without the primary key two products may share an id and the self join pairs each with both",
+   "left": "SELECT a.ProductID, a.Name FROM Product AS a JOIN Product AS b ON a.ProductID = b.ProductID",
+   "right": "SELECT ProductID, Name FROM Product",
+   "witness": {
+    "Product": [
+     {
+      "ProductID": 1
+     },
+     {
+      "ProductID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-self-join-on-undeclared-unique-name",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "aw-self-join-on-key",
+   "why": "Product.Name is unique upstream (a unique index) but BigQuery has no UNIQUE constraint, so it is not a declared key: two products may share a name",
+   "left": "SELECT a.ProductID FROM Product AS a JOIN Product AS b ON a.Name = b.Name",
+   "right": "SELECT ProductID FROM Product",
+   "witness": {
+    "Product": [
+     {
+      "ProductID": 1,
+      "Name": "n"
+     },
+     {
+      "ProductID": 2,
+      "Name": "n"
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-distinct-on-key",
+   "category": "DISTINCT removal",
+   "label": "equivalent",
+   "why": "ProductID is the primary key, so the rows are already distinct",
+   "left": "SELECT DISTINCT ProductID, Name FROM Product",
+   "right": "SELECT ProductID, Name FROM Product"
+  },
+  {
+   "id": "aw-distinct-on-key-without-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "aw-distinct-on-key",
+   "drop": [
+    "pk:Product"
+   ],
+   "why": "without the primary key two products may be the same row",
+   "left": "SELECT DISTINCT ProductID, Name FROM Product",
+   "right": "SELECT ProductID, Name FROM Product",
+   "witness": {
+    "Product": [
+     {
+      "ProductID": 1
+     },
+     {
+      "ProductID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-distinct-not-on-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "aw-distinct-on-key",
+   "why": "Color is not a key: many products share a colour",
+   "left": "SELECT DISTINCT Color FROM Product",
+   "right": "SELECT Color FROM Product",
+   "witness": "real"
+  },
+  {
+   "id": "aw-distinct-on-undeclared-unique-number",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "aw-distinct-on-key",
+   "why": "Product.ProductNumber is unique upstream (a unique index) but not a declared key: two products may share a number",
+   "left": "SELECT DISTINCT ProductNumber FROM Product",
+   "right": "SELECT ProductNumber FROM Product",
+   "witness": {
+    "Product": [
+     {
+      "ProductID": 1,
+      "ProductNumber": "n"
+     },
+     {
+      "ProductID": 2,
+      "ProductNumber": "n"
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-distinct-composite-key",
+   "category": "DISTINCT removal",
+   "label": "equivalent",
+   "why": "(SalesOrderID, SalesOrderDetailID) is the composite primary key",
+   "left": "SELECT DISTINCT SalesOrderID, SalesOrderDetailID, ProductID FROM SalesOrderDetail",
+   "right": "SELECT SalesOrderID, SalesOrderDetailID, ProductID FROM SalesOrderDetail"
+  },
+  {
+   "id": "aw-distinct-composite-key-part-of-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "aw-distinct-composite-key",
+   "why": "SalesOrderID alone is part of the key: an order has many lines",
+   "left": "SELECT DISTINCT SalesOrderID FROM SalesOrderDetail",
+   "right": "SELECT SalesOrderID FROM SalesOrderDetail",
+   "witness": "real"
+  },
+  {
+   "id": "aw-distinct-composite-key-detail-id-alone",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "aw-distinct-composite-key",
+   "why": "SalesOrderDetailID alone is not the key, only the pair is (the column is unique in the data, an identity, but no unique constraint is declared): two lines of different orders may share it",
+   "left": "SELECT DISTINCT SalesOrderDetailID FROM SalesOrderDetail",
+   "right": "SELECT SalesOrderDetailID FROM SalesOrderDetail",
+   "witness": {
+    "SalesOrderDetail": [
+     {
+      "SalesOrderID": 1,
+      "SalesOrderDetailID": 1
+     },
+     {
+      "SalesOrderID": 2,
+      "SalesOrderDetailID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-distinct-after-key-join",
+   "category": "DISTINCT removal",
+   "label": "equivalent",
+   "why": "the join is onto ProductSubcategory's key (at most one match per product) and ProductID is Product's key",
+   "left": "SELECT DISTINCT p.ProductID, p.Name FROM Product AS p JOIN ProductSubcategory AS ps ON p.ProductSubcategoryID = ps.ProductSubcategoryID",
+   "right": "SELECT p.ProductID, p.Name FROM Product AS p JOIN ProductSubcategory AS ps ON p.ProductSubcategoryID = ps.ProductSubcategoryID"
+  },
+  {
+   "id": "aw-distinct-after-key-join-fan-out",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "aw-distinct-after-key-join",
+   "why": "joined to SalesOrderDetail, which has many lines per product, the same product repeats and DISTINCT on it matters",
+   "left": "SELECT DISTINCT p.ProductID FROM Product AS p JOIN SalesOrderDetail AS d ON d.ProductID = p.ProductID",
+   "right": "SELECT p.ProductID FROM Product AS p JOIN SalesOrderDetail AS d ON d.ProductID = p.ProductID",
+   "witness": "real"
+  },
+  {
+   "id": "aw-distinct-four-column-key",
+   "category": "DISTINCT removal",
+   "label": "equivalent",
+   "why": "the four columns are EmployeeDepartmentHistory's primary key (it includes a DATE column)",
+   "left": "SELECT DISTINCT BusinessEntityID, StartDate, DepartmentID, ShiftID FROM EmployeeDepartmentHistory",
+   "right": "SELECT BusinessEntityID, StartDate, DepartmentID, ShiftID FROM EmployeeDepartmentHistory"
+  },
+  {
+   "id": "aw-distinct-four-column-key-part-of-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "aw-distinct-four-column-key",
+   "why": "BusinessEntityID and DepartmentID are two of the four key columns: an employee may return to a department on a later date",
+   "left": "SELECT DISTINCT BusinessEntityID, DepartmentID FROM EmployeeDepartmentHistory",
+   "right": "SELECT BusinessEntityID, DepartmentID FROM EmployeeDepartmentHistory",
+   "witness": {
+    "EmployeeDepartmentHistory": [
+     {
+      "BusinessEntityID": 1,
+      "DepartmentID": 1,
+      "ShiftID": 1,
+      "StartDate": "2001-01-01"
+     },
+     {
+      "BusinessEntityID": 1,
+      "DepartmentID": 1,
+      "ShiftID": 1,
+      "StartDate": "2002-02-02"
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-count-not-null-column",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "SalesOrderHeader.CustomerID is NOT NULL: COUNT of it counts every row",
+   "left": "SELECT COUNT(CustomerID) FROM SalesOrderHeader",
+   "right": "SELECT COUNT(*) FROM SalesOrderHeader"
+  },
+  {
+   "id": "aw-count-nullable-column",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "aw-count-not-null-column",
+   "why": "Customer.StoreID is NULL for individual customers",
+   "left": "SELECT COUNT(StoreID) FROM Customer",
+   "right": "SELECT COUNT(*) FROM Customer",
+   "witness": "real"
+  },
+  {
+   "id": "aw-group-by-dependent-column",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "ListPrice is a function of the primary key ProductID, already in the group",
+   "left": "SELECT p.ProductID, p.Name, COUNT(*) AS n FROM Product AS p JOIN SalesOrderDetail AS d ON d.ProductID = p.ProductID GROUP BY p.ProductID, p.Name, p.ListPrice",
+   "right": "SELECT p.ProductID, p.Name, COUNT(*) AS n FROM Product AS p JOIN SalesOrderDetail AS d ON d.ProductID = p.ProductID GROUP BY p.ProductID, p.Name"
+  },
+  {
+   "id": "aw-group-by-independent-column",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "aw-group-by-dependent-column",
+   "why": "SalesOrderDetail.SpecialOfferID is not a function of ProductID: a product sells under several offers",
+   "left": "SELECT ProductID, COUNT(*) AS n FROM SalesOrderDetail GROUP BY ProductID, SpecialOfferID",
+   "right": "SELECT ProductID, COUNT(*) AS n FROM SalesOrderDetail GROUP BY ProductID",
+   "witness": "real"
+  },
+  {
+   "id": "aw-group-by-dependent-column-without-key",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "aw-group-by-dependent-column",
+   "drop": [
+    "pk:Product"
+   ],
+   "why": "without the primary key two products may share an id and differ in ListPrice: the groups differ",
+   "left": "SELECT p.ProductID, p.Name, COUNT(*) AS n FROM Product AS p JOIN SalesOrderDetail AS d ON d.ProductID = p.ProductID GROUP BY p.ProductID, p.Name, p.ListPrice",
+   "right": "SELECT p.ProductID, p.Name, COUNT(*) AS n FROM Product AS p JOIN SalesOrderDetail AS d ON d.ProductID = p.ProductID GROUP BY p.ProductID, p.Name",
+   "witness": {
+    "Product": [
+     {
+      "ProductID": 1,
+      "ListPrice": 1
+     },
+     {
+      "ProductID": 1,
+      "ListPrice": 2
+     }
+    ],
+    "SalesOrderDetail": [
+     {
+      "SalesOrderID": 1,
+      "SalesOrderDetailID": 1,
+      "ProductID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-count-distinct-key",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "SalesOrderID is the primary key of SalesOrderHeader",
+   "left": "SELECT COUNT(DISTINCT SalesOrderID) FROM SalesOrderHeader",
+   "right": "SELECT COUNT(*) FROM SalesOrderHeader"
+  },
+  {
+   "id": "aw-count-distinct-key-non-key",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "aw-count-distinct-key",
+   "why": "CustomerID repeats: a customer places many orders",
+   "left": "SELECT COUNT(DISTINCT CustomerID) FROM SalesOrderHeader",
+   "right": "SELECT COUNT(*) FROM SalesOrderHeader",
+   "witness": "real"
+  },
+  {
+   "id": "aw-count-distinct-key-detail-id-alone",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "aw-count-distinct-key",
+   "why": "SalesOrderDetailID alone is not the key (only the pair with SalesOrderID is)",
+   "left": "SELECT COUNT(DISTINCT SalesOrderDetailID) FROM SalesOrderDetail",
+   "right": "SELECT COUNT(*) FROM SalesOrderDetail",
+   "witness": {
+    "SalesOrderDetail": [
+     {
+      "SalesOrderID": 1,
+      "SalesOrderDetailID": 1
+     },
+     {
+      "SalesOrderID": 2,
+      "SalesOrderDetailID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-having-on-group-key",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "a HAVING on a grouping column is a WHERE before the grouping",
+   "left": "SELECT ProductID, SUM(OrderQty) AS q FROM SalesOrderDetail GROUP BY ProductID HAVING ProductID < 800",
+   "right": "SELECT ProductID, SUM(OrderQty) AS q FROM SalesOrderDetail WHERE ProductID < 800 GROUP BY ProductID"
+  },
+  {
+   "id": "aw-having-on-aggregate",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "aw-having-on-group-key",
+   "why": "a HAVING on the sum is not a WHERE on the rows",
+   "left": "SELECT ProductID, SUM(OrderQty) AS q FROM SalesOrderDetail GROUP BY ProductID HAVING SUM(OrderQty) > 100",
+   "right": "SELECT ProductID, SUM(OrderQty) AS q FROM SalesOrderDetail WHERE OrderQty > 100 GROUP BY ProductID",
+   "witness": "real"
+  },
+  {
+   "id": "aw-filter-pushdown-through-group",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "a filter on the grouping column commutes with the grouping",
+   "left": "SELECT * FROM (SELECT CustomerID, COUNT(*) AS n FROM SalesOrderHeader GROUP BY CustomerID) WHERE CustomerID = 11000",
+   "right": "SELECT CustomerID, COUNT(*) AS n FROM SalesOrderHeader WHERE CustomerID = 11000 GROUP BY CustomerID"
+  },
+  {
+   "id": "aw-left-join-count-as-subquery",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "Customer's primary key makes one group per customer, and the count of the joined orders is the count of the subquery",
+   "left": "SELECT c.CustomerID, COUNT(h.SalesOrderID) AS orders FROM Customer AS c LEFT JOIN SalesOrderHeader AS h ON h.CustomerID = c.CustomerID GROUP BY c.CustomerID",
+   "right": "SELECT c.CustomerID, (SELECT COUNT(*) FROM SalesOrderHeader AS h WHERE h.CustomerID = c.CustomerID) AS orders FROM Customer AS c"
+  },
+  {
+   "id": "aw-left-join-count-as-subquery-without-key",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "aw-left-join-count-as-subquery",
+   "drop": [
+    "pk:Customer"
+   ],
+   "why": "without the primary key two customers may share an id and the group merges them",
+   "left": "SELECT c.CustomerID, COUNT(h.SalesOrderID) AS orders FROM Customer AS c LEFT JOIN SalesOrderHeader AS h ON h.CustomerID = c.CustomerID GROUP BY c.CustomerID",
+   "right": "SELECT c.CustomerID, (SELECT COUNT(*) FROM SalesOrderHeader AS h WHERE h.CustomerID = c.CustomerID) AS orders FROM Customer AS c",
+   "witness": {
+    "Customer": [
+     {
+      "CustomerID": 1
+     },
+     {
+      "CustomerID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-in-to-exists",
+   "category": "subquery",
+   "label": "equivalent",
+   "why": "IN on a not null column is a correlated EXISTS",
+   "left": "SELECT ProductID FROM Product WHERE ProductID IN (SELECT ProductID FROM SalesOrderDetail WHERE OrderQty > 20)",
+   "right": "SELECT p.ProductID FROM Product AS p WHERE EXISTS (SELECT 1 FROM SalesOrderDetail AS d WHERE d.ProductID = p.ProductID AND d.OrderQty > 20)"
+  },
+  {
+   "id": "aw-in-to-join-fan-out",
+   "category": "subquery",
+   "label": "different",
+   "sibling": "aw-in-to-exists",
+   "why": "a join repeats a product once per matching line, IN does not",
+   "left": "SELECT ProductID FROM Product WHERE ProductID IN (SELECT ProductID FROM SalesOrderDetail WHERE OrderQty > 20)",
+   "right": "SELECT p.ProductID FROM Product AS p JOIN SalesOrderDetail AS d ON d.ProductID = p.ProductID WHERE d.OrderQty > 20",
+   "witness": "real"
+  },
+  {
+   "id": "aw-in-to-join-on-key",
+   "category": "subquery",
+   "label": "equivalent",
+   "why": "TerritoryID is SalesTerritory's primary key: the join matches at most one row, as IN does",
+   "left": "SELECT CustomerID FROM Customer WHERE TerritoryID IN (SELECT TerritoryID FROM SalesTerritory WHERE `Group` = 'Europe')",
+   "right": "SELECT c.CustomerID FROM Customer AS c JOIN SalesTerritory AS t ON c.TerritoryID = t.TerritoryID WHERE t.`Group` = 'Europe'"
+  },
+  {
+   "id": "aw-in-to-join-on-key-without-key",
+   "category": "subquery",
+   "label": "different",
+   "sibling": "aw-in-to-join-on-key",
+   "drop": [
+    "pk:SalesTerritory"
+   ],
+   "why": "without the primary key two territories may share an id and the join repeats the customer",
+   "left": "SELECT CustomerID FROM Customer WHERE TerritoryID IN (SELECT TerritoryID FROM SalesTerritory WHERE `Group` = 'Europe')",
+   "right": "SELECT c.CustomerID FROM Customer AS c JOIN SalesTerritory AS t ON c.TerritoryID = t.TerritoryID WHERE t.`Group` = 'Europe'",
+   "witness": {
+    "SalesTerritory": [
+     {
+      "TerritoryID": 1,
+      "Group": "Europe"
+     },
+     {
+      "TerritoryID": 1,
+      "Group": "Europe"
+     }
+    ],
+    "Customer": [
+     {
+      "CustomerID": 1,
+      "TerritoryID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-not-in-to-not-exists",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "BillOfMaterials.ComponentID is NOT NULL: NOT IN and NOT EXISTS agree",
+   "left": "SELECT ProductID FROM Product WHERE ProductID NOT IN (SELECT ComponentID FROM BillOfMaterials)",
+   "right": "SELECT p.ProductID FROM Product AS p WHERE NOT EXISTS (SELECT 1 FROM BillOfMaterials AS b WHERE b.ComponentID = p.ProductID)"
+  },
+  {
+   "id": "aw-not-in-nullable",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "aw-not-in-to-not-exists",
+   "why": "BillOfMaterials.ProductAssemblyID is NULL for raw materials (25 rows): NOT IN over it returns no row at all",
+   "left": "SELECT ProductID FROM Product WHERE ProductID NOT IN (SELECT ProductAssemblyID FROM BillOfMaterials)",
+   "right": "SELECT p.ProductID FROM Product AS p WHERE NOT EXISTS (SELECT 1 FROM BillOfMaterials AS b WHERE b.ProductAssemblyID = p.ProductID)",
+   "witness": "real"
+  },
+  {
+   "id": "aw-not-in-to-not-exists-without-not-null",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "aw-not-in-to-not-exists",
+   "drop": [
+    "not_null:BillOfMaterials.ComponentID"
+   ],
+   "why": "without NOT NULL on ComponentID a NULL component makes NOT IN return nothing",
+   "left": "SELECT ProductID FROM Product WHERE ProductID NOT IN (SELECT ComponentID FROM BillOfMaterials)",
+   "right": "SELECT p.ProductID FROM Product AS p WHERE NOT EXISTS (SELECT 1 FROM BillOfMaterials AS b WHERE b.ComponentID = p.ProductID)",
+   "witness": {
+    "Product": [
+     {
+      "ProductID": 1
+     }
+    ],
+    "BillOfMaterials": [
+     {
+      "BillOfMaterialsID": 1,
+      "ComponentID": null
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-is-null-on-not-null",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "Product.Name is NOT NULL",
+   "left": "SELECT ProductID FROM Product WHERE Name IS NULL",
+   "right": "SELECT ProductID FROM Product WHERE FALSE"
+  },
+  {
+   "id": "aw-is-null-on-not-null-nullable",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "aw-is-null-on-not-null",
+   "why": "Product.Color is nullable",
+   "left": "SELECT ProductID FROM Product WHERE Color IS NULL",
+   "right": "SELECT ProductID FROM Product WHERE FALSE",
+   "witness": "real"
+  },
+  {
+   "id": "aw-coalesce-on-not-null",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "Product.Name is NOT NULL, so COALESCE returns it",
+   "left": "SELECT ProductID, COALESCE(Name, 'x') AS Name FROM Product",
+   "right": "SELECT ProductID, Name FROM Product"
+  },
+  {
+   "id": "aw-coalesce-on-nullable",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "aw-coalesce-on-not-null",
+   "why": "Product.Color is nullable",
+   "left": "SELECT ProductID, COALESCE(Color, 'x') AS Color FROM Product",
+   "right": "SELECT ProductID, Color FROM Product",
+   "witness": "real"
+  },
+  {
+   "id": "aw-negated-comparison",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "NOT (a = b) is a <> b for NOT NULL columns",
+   "left": "SELECT ProductID FROM Product WHERE NOT (SafetyStockLevel = ReorderPoint)",
+   "right": "SELECT ProductID FROM Product WHERE SafetyStockLevel <> ReorderPoint"
+  },
+  {
+   "id": "aw-negated-comparison-nullable",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "aw-negated-comparison",
+   "why": "Product.Weight is nullable: for a NULL weight NOT (Weight = 5) is NULL and the row is dropped, while Weight <> 5 OR Weight IS NULL keeps it",
+   "left": "SELECT ProductID FROM Product WHERE NOT (Weight = 5)",
+   "right": "SELECT ProductID FROM Product WHERE Weight <> 5 OR Weight IS NULL",
+   "witness": "real"
+  },
+  {
+   "id": "aw-union-all-vs-distinct",
+   "category": "set operation",
+   "label": "different",
+   "why": "UNION DISTINCT removes duplicates across and within the inputs",
+   "left": "SELECT CustomerID FROM SalesOrderHeader UNION ALL SELECT CustomerID FROM Customer",
+   "right": "SELECT CustomerID FROM SalesOrderHeader UNION DISTINCT SELECT CustomerID FROM Customer",
+   "witness": "real"
+  },
+  {
+   "id": "aw-union-all-of-complementary-filters",
+   "category": "set operation",
+   "label": "equivalent",
+   "why": "the two filters on a NOT NULL column partition the table",
+   "left": "SELECT SalesOrderID FROM SalesOrderHeader WHERE Status > 4 UNION ALL SELECT SalesOrderID FROM SalesOrderHeader WHERE Status <= 4",
+   "right": "SELECT SalesOrderID FROM SalesOrderHeader"
+  },
+  {
+   "id": "aw-union-all-of-complementary-filters-nullable",
+   "category": "set operation",
+   "label": "different",
+   "sibling": "aw-union-all-of-complementary-filters",
+   "why": "on a nullable column a NULL row is in neither filter",
+   "left": "SELECT ProductID FROM Product WHERE Weight > 5 UNION ALL SELECT ProductID FROM Product WHERE Weight <= 5",
+   "right": "SELECT ProductID FROM Product",
+   "witness": "real"
+  },
+  {
+   "id": "aw-intersect-to-in-on-not-null",
+   "category": "set operation",
+   "label": "equivalent",
+   "why": "INTERSECT DISTINCT on NOT NULL columns is DISTINCT with IN",
+   "left": "SELECT CustomerID FROM SalesOrderHeader INTERSECT DISTINCT SELECT CustomerID FROM Customer",
+   "right": "SELECT DISTINCT h.CustomerID FROM SalesOrderHeader AS h WHERE h.CustomerID IN (SELECT CustomerID FROM Customer)"
+  },
+  {
+   "id": "aw-intersect-to-in-on-not-null-nullable",
+   "category": "set operation",
+   "label": "different",
+   "sibling": "aw-intersect-to-in-on-not-null",
+   "why": "INTERSECT treats two NULLs as equal, IN does not match them",
+   "left": "SELECT StoreID FROM Customer INTERSECT DISTINCT SELECT SalesPersonID FROM Store",
+   "right": "SELECT DISTINCT c.StoreID FROM Customer AS c WHERE c.StoreID IN (SELECT SalesPersonID FROM Store)",
+   "witness": {
+    "Customer": [
+     {
+      "CustomerID": 1,
+      "StoreID": null
+     }
+    ],
+    "Store": [
+     {
+      "BusinessEntityID": 1,
+      "SalesPersonID": null
+     }
+    ]
+   }
+  },
+  {
+   "id": "aw-outer-to-inner-join",
+   "category": "outer join",
+   "label": "equivalent",
+   "why": "the WHERE on the right side's column rejects the NULL-extended rows, so the LEFT JOIN is an inner join",
+   "left": "SELECT h.SalesOrderID, d.OrderQty FROM SalesOrderHeader AS h LEFT JOIN SalesOrderDetail AS d ON d.SalesOrderID = h.SalesOrderID WHERE d.OrderQty > 5",
+   "right": "SELECT h.SalesOrderID, d.OrderQty FROM SalesOrderHeader AS h JOIN SalesOrderDetail AS d ON d.SalesOrderID = h.SalesOrderID WHERE d.OrderQty > 5"
+  },
+  {
+   "id": "aw-outer-to-inner-join-null-accepting",
+   "category": "outer join",
+   "label": "different",
+   "sibling": "aw-outer-to-inner-join",
+   "why": "the filter accepts NULL, so the NULL-extended rows survive the LEFT JOIN",
+   "left": "SELECT h.SalesOrderID, d.OrderQty FROM SalesOrderHeader AS h LEFT JOIN SalesOrderDetail AS d ON d.SalesOrderID = h.SalesOrderID AND d.OrderQty > 100 WHERE d.OrderQty > 100 OR d.OrderQty IS NULL",
+   "right": "SELECT h.SalesOrderID, d.OrderQty FROM SalesOrderHeader AS h JOIN SalesOrderDetail AS d ON d.SalesOrderID = h.SalesOrderID AND d.OrderQty > 100 WHERE d.OrderQty > 100 OR d.OrderQty IS NULL",
+   "witness": "real"
+  },
+  {
+   "id": "aw-window-filter-on-partition-key",
+   "category": "window",
+   "label": "equivalent",
+   "why": "a filter on the partition column removes whole partitions: the ranks of the rest do not change",
+   "left": "SELECT ProductID, SalesOrderID, r FROM (SELECT ProductID, SalesOrderID, RANK() OVER (PARTITION BY ProductID ORDER BY OrderQty) AS r FROM SalesOrderDetail) WHERE ProductID = 776",
+   "right": "SELECT ProductID, SalesOrderID, RANK() OVER (PARTITION BY ProductID ORDER BY OrderQty) AS r FROM SalesOrderDetail WHERE ProductID = 776"
+  },
+  {
+   "id": "aw-window-filter-on-other-column",
+   "category": "window",
+   "label": "different",
+   "sibling": "aw-window-filter-on-partition-key",
+   "why": "a filter on another column removes rows from inside the partitions and the ranks change",
+   "left": "SELECT ProductID, SalesOrderID, r FROM (SELECT ProductID, SalesOrderID, OrderQty, RANK() OVER (PARTITION BY ProductID ORDER BY OrderQty) AS r FROM SalesOrderDetail) WHERE OrderQty > 3",
+   "right": "SELECT ProductID, SalesOrderID, RANK() OVER (PARTITION BY ProductID ORDER BY OrderQty) AS r FROM SalesOrderDetail WHERE OrderQty > 3",
+   "witness": "real"
+  }
+ ]
+}

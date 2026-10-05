@@ -36,6 +36,7 @@ from sample_db_bench import (  # the harness module, importable under this name 
     tokenize,
 )
 
+TITLE = "AdventureWorks"
 REPO = "microsoft/sql-server-samples"
 TAG = "adventureworks"
 ASSET = "AdventureWorks-oltp-install-script.zip"
@@ -191,7 +192,7 @@ class LazyRows(Mapping):
 
 class AdventureWorks(Adapter):
     name = "adventureworks"
-    title = "AdventureWorks"
+    title = TITLE
     results_order = 360
     docs_page = "docs/evals/sample-databases-adventureworks.md"
     downloaded = True
@@ -230,6 +231,21 @@ class AdventureWorks(Adapter):
         "data files give them, hierarchyid, geography and uniqueidentifier values as the hex or text the files write, and XML as text; nchar values keep their padding"
     )
     baseline_note = "The first run is the baseline (nothing tuned)"
+    #: what the pinned script says about its computed columns, checked on the loaded rows (the data files give those values;
+    #: the script defines them): every query returns the number of rows that break the formula
+    assertions = tuple(
+        (f"SELECT COUNT(*) FROM {table} WHERE {broken}", [(0,)])
+        for table, broken in (
+            ("SalesOrderHeader", "TotalDue <> SubTotal + TaxAmt + Freight"),
+            ("PurchaseOrderHeader", "TotalDue <> SubTotal + TaxAmt + Freight"),
+            ("SalesOrderDetail", "ABS(LineTotal - UnitPrice * (1.0 - UnitPriceDiscount) * OrderQty) >= 0.000001"),
+            ("PurchaseOrderDetail", "LineTotal <> OrderQty * UnitPrice OR StockedQty <> ReceivedQty - RejectedQty"),
+            ("WorkOrder", "StockedQty <> OrderQty - ScrappedQty"),
+            ("SalesOrderHeader", "SalesOrderNumber <> 'SO' || CAST(SalesOrderID AS STRING)"),
+            ("Customer", "AccountNumber <> 'AW' || LPAD(CAST(CustomerID AS STRING), 8, '0')"),
+            ("Employee", "(OrganizationNode IS NULL) <> (OrganizationLevel IS NULL)"),
+        )
+    )
 
     # -- the release asset
 
@@ -248,11 +264,10 @@ class AdventureWorks(Adapter):
             return hashlib.sha256(self.asset().read_bytes()).hexdigest()
         return super().digest(pin)
 
-    def pins_text(self) -> str:
-        return (
-            f"{self.title} {REPO} release {TAG}, asset {ASSET} (SHA-256 {ASSET_SHA256[:12]}; its {SCRIPT} SHA-256 {SCRIPT_SHA256[:12]}, MIT Copyright (c) Microsoft Corporation, "
-            f"licence text at {LICENCE_COMMIT[:10]}, committed unchanged; the 69 data files are checked against members.sha256 and downloaded at run time, not committed)"
-        )
+    pins_summary = (
+        f"{TITLE} {REPO} release {TAG}, asset {ASSET} (SHA-256 {ASSET_SHA256[:12]}; its {SCRIPT} SHA-256 {SCRIPT_SHA256[:12]}, MIT Copyright (c) Microsoft Corporation, "
+        f"licence text at {LICENCE_COMMIT[:10]}, committed unchanged; the 69 data files are checked against members.sha256 and downloaded at run time, not committed)"
+    )
 
     def member_digests(self) -> dict[str, str]:
         """``{file: SHA-256}`` of everything in the release zip, as pinned in ``members.sha256``."""
