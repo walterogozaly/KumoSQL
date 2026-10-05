@@ -187,6 +187,8 @@ EVAL_FILES = {
     "test_numeric_traps_bench.py",
     "test_model_reuse_evals.py",
     "test_mv_workload_bench.py",
+    "test_workload_job_bench.py",
+    "test_eval_execution_cache.py",
     "test_optimizer_bugs_bench.py",
     "test_output_properties.py",
     "test_pipeline_bench.py",

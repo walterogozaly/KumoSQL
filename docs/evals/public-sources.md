@@ -47,7 +47,7 @@ Status: **covered** (an existing eval already scores it), **new** (being added, 
 | D10 | WideWorldImporters | MIT | release holds only SQL Server `.bak` backups | — | not added: needs a SQL Server restore |
 | D11 | Employees (`datacharmer/test_db`) | CC BY-SA 3.0 | yes (167 MB) | 6 tables, 3.9 M rows | **new** (batch 2): downloaded at run time, slow lane |
 | D12 | Postgres Professional Airlines | MIT | no: `postgrespro.ru` is blocked | 9 tables, 133 MB dump | not added |
-| D13 | Join Order Benchmark / IMDb | unverified, IMDb terms | yes | 113 queries | covered: `job-cardinality`, `job-endtoend`, `job-alternative-forms`, `mv-benchmark` |
+| D13 | Join Order Benchmark / IMDb | unverified, IMDb terms | yes | 113 queries | covered: `job-cardinality`, `job-endtoend`, `job-alternative-forms`, `mv-benchmark`, `workload-advisor-job` ([page](workload-advisor-job.md)) |
 | D14 | BigQuery Stack Overflow | hosted | needs a billed Google project | — | not added: evals run offline without credentials. The Dataform example project (below) models the same tables |
 | D15 | GA4 obfuscated sample | hosted | needs a billed Google project | — | not added: as D14. GA4-shaped SQL is already in `terashim-ga4` ([page](bq-real-corpora.md)) and Spider 2.0's GA4 tasks |
 | D16 | Apache Sedona SpatialBench | Apache-2.0 | yes | spatial queries | not added: KumoSQL has no GEOGRAPHY support |

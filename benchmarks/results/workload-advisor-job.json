@@ -1,0 +1,653 @@
+{
+  "suite": "Workload advisor JOB proxy",
+  "order": 65,
+  "size": 54,
+  "score": "160.49s vs 154.14s; -4.1%",
+  "metric": "Held-out JOB runtime from measured per-query timings, scaled to the declared daily frequency and including selected-view builds.",
+  "evidence": "executed",
+  "correctness": "0 wrong among 283 proof-approved rewrite attempts; result bags compared in DuckDB, and differences rechecked with DuckDB's optimizer disabled.",
+  "coverage": {},
+  "held_out": "Families 17-33 (54/54 queries measured); views chosen on families 1-16.",
+  "docs": "docs/evals/workload-advisor-job.md",
+  "command": "python tools/workload_job_bench.py --repo PATH --query-runs-per-day 10 --write-results",
+  "date": "2026-10-05",
+  "caveats": "Ten query runs/day is a stated scenario assumption, not JOB schedule data. Bounded candidate sample; local JOB/IMDb license terms are not verified. One-machine DuckDB timings, not a warehouse cost estimate.",
+  "performance": "Development-selected advisor: 160.49s/day incl. builds; baseline: 154.14s/day (54 measured query timings scaled to the declared frequency).",
+  "measurements": {
+    "candidate_mining": {
+      "development_execution_pairs": 246,
+      "max_tables": 4,
+      "max_views": 10,
+      "measured": 10,
+      "min_support": 2,
+      "mined": 267,
+      "optimizer_disagreements_excluded": 0,
+      "proofs": 246,
+      "row_cap": 30000000,
+      "size_screened": 27
+    },
+    "cost_model": {
+      "development_error": {
+        "jobs": 315,
+        "median_log10_ratio": -0.3998,
+        "q_error_max": 41.7794,
+        "q_error_p50": 2.5634,
+        "q_error_p90": 6.434
+      },
+      "development_reader_savings_backtest": {
+        "changes": 246,
+        "k": 10,
+        "kendall": {
+          "interval": [
+            -0.03692348739814844,
+            0.14907205615456257
+          ],
+          "value": 0.05651611202837789
+        },
+        "level": 0.95,
+        "median_ratio": {
+          "interval": [
+            0.07088335613119966,
+            0.33793578126903007
+          ],
+          "value": 0.15450169082356238
+        },
+        "resamples": 1000,
+        "sign_agreement": {
+          "interval": [
+            0.6016260162601627,
+            0.7195121951219512
+          ],
+          "value": 0.6585365853658537
+        },
+        "spearman": {
+          "interval": [
+            -0.05404886857428924,
+            0.21971444832531792
+          ],
+          "value": 0.0845060261262055
+        },
+        "top_10_precision": {
+          "interval": [
+            0.0,
+            0.7
+          ],
+          "value": 0.3
+        }
+      },
+      "features": [
+        "scan",
+        "join",
+        "write",
+        "query",
+        "rows",
+        "build"
+      ],
+      "reader_savings_note": "In-sample development ranking; pair-level bootstrap does not cluster repeated queries; excludes per-view build cost, which the selector adds once.",
+      "samples": 315,
+      "weights": {
+        "build": 0.03241203321327464,
+        "join": 2.4399188170299825e-08,
+        "query": 0.0,
+        "rows": 0.0,
+        "scan": 4.991561824772418e-10,
+        "write": 1.3904359305296641e-08
+      }
+    },
+    "dataset": "danolivo/jo-bench",
+    "dataset_commit": "ad516b39edc51f914f0097b801dc7dbd114fc46b",
+    "development_runtime_seconds": {
+      "advisor_with_builds": 94.53621230019053,
+      "baseline": 99.1605130001335,
+      "saving": 4.624300699942978,
+      "queries_measured": 59
+    },
+    "duckdb_version": "1.5.6",
+    "held_out": {
+      "advisor_cost_error": {
+        "jobs": 54,
+        "median_log10_ratio": -0.5911,
+        "q_error_max": 16.1669,
+        "q_error_p50": 3.8684,
+        "q_error_p90": 7.516
+      },
+      "advisor_with_builds_seconds": 160.48579220007014,
+      "baseline_seconds": 154.1428299999825,
+      "optimizer_disagreements_excluded": 0,
+      "proofs": 37,
+      "queries": {
+        "17a": {
+          "advisor_seconds": 0.389191900001606,
+          "baseline_seconds": 0.3238125999996555,
+          "choice": "job_view_00",
+          "predicted_seconds": 0.09429912788449699
+        },
+        "17b": {
+          "advisor_seconds": 0.7566869000002043,
+          "baseline_seconds": 0.47394789999816567,
+          "choice": "job_view_00",
+          "predicted_seconds": 0.06205974043769044
+        },
+        "17c": {
+          "advisor_seconds": 0.502201100000093,
+          "baseline_seconds": 0.502201100000093,
+          "choice": "base",
+          "predicted_seconds": 0.051048664502386105
+        },
+        "17d": {
+          "advisor_seconds": 0.571915500000614,
+          "baseline_seconds": 0.571915500000614,
+          "choice": "base",
+          "predicted_seconds": 0.05280400091292737
+        },
+        "17e": {
+          "advisor_seconds": 0.483618900001602,
+          "baseline_seconds": 0.43505999999979394,
+          "choice": "job_view_00",
+          "predicted_seconds": 0.25708690048855326
+        },
+        "17f": {
+          "advisor_seconds": 0.7548719000005804,
+          "baseline_seconds": 0.6144389000000956,
+          "choice": "job_view_00",
+          "predicted_seconds": 0.12667836366121146
+        },
+        "18a": {
+          "advisor_seconds": 0.4477603999985149,
+          "baseline_seconds": 0.4477603999985149,
+          "choice": "base",
+          "predicted_seconds": 0.08798398827648839
+        },
+        "18b": {
+          "advisor_seconds": 0.372061300000496,
+          "baseline_seconds": 0.372061300000496,
+          "choice": "base",
+          "predicted_seconds": 0.0946284956669602
+        },
+        "18c": {
+          "advisor_seconds": 0.46657670000058715,
+          "baseline_seconds": 0.46657670000058715,
+          "choice": "base",
+          "predicted_seconds": 0.101659033026811
+        },
+        "19a": {
+          "advisor_seconds": 0.546036700001423,
+          "baseline_seconds": 0.546036700001423,
+          "choice": "base",
+          "predicted_seconds": 0.12897878204405547
+        },
+        "19b": {
+          "advisor_seconds": 0.15733710000131396,
+          "baseline_seconds": 0.15733710000131396,
+          "choice": "base",
+          "predicted_seconds": 0.12885997823438242
+        },
+        "19c": {
+          "advisor_seconds": 0.5610636999990675,
+          "baseline_seconds": 0.5610636999990675,
+          "choice": "base",
+          "predicted_seconds": 0.12946604475172974
+        },
+        "19d": {
+          "advisor_seconds": 0.5349691000010353,
+          "baseline_seconds": 0.5151565999985905,
+          "choice": "job_view_00",
+          "predicted_seconds": 0.22678805546951875
+        },
+        "20a": {
+          "advisor_seconds": 0.3551518999993277,
+          "baseline_seconds": 0.3551518999993277,
+          "choice": "base",
+          "predicted_seconds": 0.06939066441641675
+        },
+        "20b": {
+          "advisor_seconds": 0.2707568000005267,
+          "baseline_seconds": 0.2707568000005267,
+          "choice": "base",
+          "predicted_seconds": 0.07147089331448502
+        },
+        "20c": {
+          "advisor_seconds": 0.2950793000018166,
+          "baseline_seconds": 0.2950793000018166,
+          "choice": "base",
+          "predicted_seconds": 0.07147089331448502
+        },
+        "21a": {
+          "advisor_seconds": 0.03709819999858155,
+          "baseline_seconds": 0.03709819999858155,
+          "choice": "base",
+          "predicted_seconds": 0.028954082172749845
+        },
+        "21b": {
+          "advisor_seconds": 0.03169290000005276,
+          "baseline_seconds": 0.03169290000005276,
+          "choice": "base",
+          "predicted_seconds": 0.029012066313320383
+        },
+        "21c": {
+          "advisor_seconds": 0.02843880000000354,
+          "baseline_seconds": 0.02843880000000354,
+          "choice": "base",
+          "predicted_seconds": 0.02920613456589426
+        },
+        "22a": {
+          "advisor_seconds": 0.19950099999914528,
+          "baseline_seconds": 0.19950099999914528,
+          "choice": "base",
+          "predicted_seconds": 0.04216277775664584
+        },
+        "22b": {
+          "advisor_seconds": 0.1903085000012652,
+          "baseline_seconds": 0.1903085000012652,
+          "choice": "base",
+          "predicted_seconds": 0.04166175171673648
+        },
+        "22c": {
+          "advisor_seconds": 0.5602496999999858,
+          "baseline_seconds": 0.5602496999999858,
+          "choice": "base",
+          "predicted_seconds": 0.04371137130335333
+        },
+        "22d": {
+          "advisor_seconds": 0.8120144000022265,
+          "baseline_seconds": 0.8120144000022265,
+          "choice": "base",
+          "predicted_seconds": 0.05022702809859959
+        },
+        "23a": {
+          "advisor_seconds": 0.15618479999830015,
+          "baseline_seconds": 0.15618479999830015,
+          "choice": "base",
+          "predicted_seconds": 0.0435293955803316
+        },
+        "23b": {
+          "advisor_seconds": 0.23024149999764632,
+          "baseline_seconds": 0.23024149999764632,
+          "choice": "base",
+          "predicted_seconds": 0.04359636736533457
+        },
+        "23c": {
+          "advisor_seconds": 0.18204750000222703,
+          "baseline_seconds": 0.18204750000222703,
+          "choice": "base",
+          "predicted_seconds": 0.0435293955803316
+        },
+        "24a": {
+          "advisor_seconds": 0.3788136000002851,
+          "baseline_seconds": 0.3788136000002851,
+          "choice": "base",
+          "predicted_seconds": 0.13407809703524964
+        },
+        "24b": {
+          "advisor_seconds": 0.08432560000073863,
+          "baseline_seconds": 0.08432560000073863,
+          "choice": "base",
+          "predicted_seconds": 0.1338927079567099
+        },
+        "25a": {
+          "advisor_seconds": 0.4233803999995871,
+          "baseline_seconds": 0.4233803999995871,
+          "choice": "base",
+          "predicted_seconds": 0.09500137286322709
+        },
+        "25b": {
+          "advisor_seconds": 0.2361583999991126,
+          "baseline_seconds": 0.2361583999991126,
+          "choice": "base",
+          "predicted_seconds": 0.09323505502840881
+        },
+        "25c": {
+          "advisor_seconds": 0.599295500000153,
+          "baseline_seconds": 0.599295500000153,
+          "choice": "base",
+          "predicted_seconds": 0.10489162859851892
+        },
+        "26a": {
+          "advisor_seconds": 0.25718810000034864,
+          "baseline_seconds": 0.25718810000034864,
+          "choice": "base",
+          "predicted_seconds": 0.0735375651306372
+        },
+        "26b": {
+          "advisor_seconds": 0.16624760000195238,
+          "baseline_seconds": 0.16624760000195238,
+          "choice": "base",
+          "predicted_seconds": 0.07145733623256893
+        },
+        "26c": {
+          "advisor_seconds": 0.34033110000018496,
+          "baseline_seconds": 0.34033110000018496,
+          "choice": "base",
+          "predicted_seconds": 0.07145733623256893
+        },
+        "27a": {
+          "advisor_seconds": 0.03667209999912302,
+          "baseline_seconds": 0.03667209999912302,
+          "choice": "base",
+          "predicted_seconds": 0.029040604707035532
+        },
+        "27b": {
+          "advisor_seconds": 0.03262629999881028,
+          "baseline_seconds": 0.03262629999881028,
+          "choice": "base",
+          "predicted_seconds": 0.029040604707035532
+        },
+        "27c": {
+          "advisor_seconds": 0.04049569999915548,
+          "baseline_seconds": 0.04049569999915548,
+          "choice": "base",
+          "predicted_seconds": 0.029040604707035532
+        },
+        "28a": {
+          "advisor_seconds": 0.29872310000064317,
+          "baseline_seconds": 0.29872310000064317,
+          "choice": "base",
+          "predicted_seconds": 0.039744793903945336
+        },
+        "28b": {
+          "advisor_seconds": 0.15375020000283257,
+          "baseline_seconds": 0.15375020000283257,
+          "choice": "base",
+          "predicted_seconds": 0.039744793903945336
+        },
+        "28c": {
+          "advisor_seconds": 0.2919426000007661,
+          "baseline_seconds": 0.2919426000007661,
+          "choice": "base",
+          "predicted_seconds": 0.039744793903945336
+        },
+        "29a": {
+          "advisor_seconds": 0.13088629999765544,
+          "baseline_seconds": 0.13088629999765544,
+          "choice": "base",
+          "predicted_seconds": 0.13693643061108743
+        },
+        "29b": {
+          "advisor_seconds": 0.1367153999999573,
+          "baseline_seconds": 0.1367153999999573,
+          "choice": "base",
+          "predicted_seconds": 0.13693643061108743
+        },
+        "29c": {
+          "advisor_seconds": 0.1746988999984751,
+          "baseline_seconds": 0.1746988999984751,
+          "choice": "base",
+          "predicted_seconds": 0.13693643061108743
+        },
+        "30a": {
+          "advisor_seconds": 0.3529324999981327,
+          "baseline_seconds": 0.3529324999981327,
+          "choice": "base",
+          "predicted_seconds": 0.09343686210843975
+        },
+        "30b": {
+          "advisor_seconds": 0.19672589999754564,
+          "baseline_seconds": 0.19672589999754564,
+          "choice": "base",
+          "predicted_seconds": 0.09343686210843975
+        },
+        "30c": {
+          "advisor_seconds": 0.46058519999860437,
+          "baseline_seconds": 0.46058519999860437,
+          "choice": "base",
+          "predicted_seconds": 0.09217483954240835
+        },
+        "31a": {
+          "advisor_seconds": 0.3941025999993144,
+          "baseline_seconds": 0.3941025999993144,
+          "choice": "base",
+          "predicted_seconds": 0.09518305654354564
+        },
+        "31b": {
+          "advisor_seconds": 0.20924060000106692,
+          "baseline_seconds": 0.20924060000106692,
+          "choice": "base",
+          "predicted_seconds": 0.09737634866705092
+        },
+        "31c": {
+          "advisor_seconds": 0.4676206000003731,
+          "baseline_seconds": 0.4676206000003731,
+          "choice": "base",
+          "predicted_seconds": 0.09343259104788289
+        },
+        "32a": {
+          "advisor_seconds": 0.009040599998115795,
+          "baseline_seconds": 0.009040599998115795,
+          "choice": "base",
+          "predicted_seconds": 0.009745718273664371
+        },
+        "32b": {
+          "advisor_seconds": 0.030653199999505887,
+          "baseline_seconds": 0.030653199999505887,
+          "choice": "base",
+          "predicted_seconds": 0.011847569765163844
+        },
+        "33a": {
+          "advisor_seconds": 0.03916360000221175,
+          "baseline_seconds": 0.03916360000221175,
+          "choice": "base",
+          "predicted_seconds": 0.018870246641064913
+        },
+        "33b": {
+          "advisor_seconds": 0.08178130000305828,
+          "baseline_seconds": 0.08178130000305828,
+          "choice": "base",
+          "predicted_seconds": 0.018840265284419785
+        },
+        "33c": {
+          "advisor_seconds": 0.054052200001024175,
+          "baseline_seconds": 0.054052200001024175,
+          "choice": "base",
+          "predicted_seconds": 0.018965273121399364
+        }
+      },
+      "queries_measured": 54,
+      "saving_seconds": -6.342962200087641,
+      "scan_only_feature_fallbacks": {
+        "baseline": 21,
+        "reader": 12
+      },
+      "selected_view_build_seconds": {
+        "job_view_00": 0.7737352000003739
+      },
+      "wrong": 0
+    },
+    "measured_views": [
+      {
+        "build_seconds_measured": 0.4865633000008529,
+        "build_seconds_predicted": 0.6069439620861994,
+        "development_readers": 34,
+        "id": "job_view_00",
+        "reader_savings_measured_seconds_per_day_excluding_build": 4.225024000115809,
+        "reader_savings_predicted_seconds_per_day_excluding_build": 0.5831795260559391,
+        "readers_faster_than_base": 18,
+        "rows": 2609129
+      },
+      {
+        "build_seconds_measured": 0.6958161000002292,
+        "build_seconds_predicted": 0.8302539572772508,
+        "development_readers": 31,
+        "id": "job_view_01",
+        "reader_savings_measured_seconds_per_day_excluding_build": -62.47923399972933,
+        "reader_savings_predicted_seconds_per_day_excluding_build": -1.8271489045919087,
+        "readers_faster_than_base": 5,
+        "rows": 4523930
+      },
+      {
+        "build_seconds_measured": 0.9922673999972176,
+        "build_seconds_predicted": 0.705620840034873,
+        "development_readers": 18,
+        "id": "job_view_02",
+        "reader_savings_measured_seconds_per_day_excluding_build": -9.570008999944548,
+        "reader_savings_predicted_seconds_per_day_excluding_build": -0.4180519919914676,
+        "readers_faster_than_base": 4,
+        "rows": 2609129
+      },
+      {
+        "build_seconds_measured": 0.7552558999996108,
+        "build_seconds_predicted": 0.532773508717438,
+        "development_readers": 25,
+        "id": "job_view_03",
+        "reader_savings_measured_seconds_per_day_excluding_build": -9.944728999798826,
+        "reader_savings_predicted_seconds_per_day_excluding_build": -0.34811672877155436,
+        "readers_faster_than_base": 6,
+        "rows": 2609129
+      },
+      {
+        "build_seconds_measured": 0.4661298999999417,
+        "build_seconds_predicted": 0.4340966307687644,
+        "development_readers": 41,
+        "id": "job_view_04",
+        "reader_savings_measured_seconds_per_day_excluding_build": -17.684877999854507,
+        "reader_savings_predicted_seconds_per_day_excluding_build": 0.31129255247531284,
+        "readers_faster_than_base": 9,
+        "rows": 2609129
+      },
+      {
+        "build_seconds_measured": 0.4056095000014466,
+        "build_seconds_predicted": 0.4917990519796839,
+        "development_readers": 18,
+        "id": "job_view_05",
+        "reader_savings_measured_seconds_per_day_excluding_build": -11.160689999924216,
+        "reader_savings_predicted_seconds_per_day_excluding_build": -0.38258920824226295,
+        "readers_faster_than_base": 1,
+        "rows": 2609129
+      },
+      {
+        "build_seconds_measured": 3.5586597000001348,
+        "build_seconds_predicted": 2.853852463896218,
+        "development_readers": 17,
+        "id": "job_view_06",
+        "reader_savings_measured_seconds_per_day_excluding_build": -44.699170000021695,
+        "reader_savings_predicted_seconds_per_day_excluding_build": -5.079794056693187,
+        "readers_faster_than_base": 2,
+        "rows": 14835720
+      },
+      {
+        "build_seconds_measured": 0.35296200000084355,
+        "build_seconds_predicted": 0.27956678503171734,
+        "development_readers": 17,
+        "id": "job_view_07",
+        "reader_savings_measured_seconds_per_day_excluding_build": -3.479847999915364,
+        "reader_savings_predicted_seconds_per_day_excluding_build": 0.38801249916640645,
+        "readers_faster_than_base": 6,
+        "rows": 1380035
+      },
+      {
+        "build_seconds_measured": 0.32492479999928037,
+        "build_seconds_predicted": 0.3555818843751095,
+        "development_readers": 34,
+        "id": "job_view_08",
+        "reader_savings_measured_seconds_per_day_excluding_build": -23.018244999911985,
+        "reader_savings_predicted_seconds_per_day_excluding_build": 0.18847801645233417,
+        "readers_faster_than_base": 2,
+        "rows": 2609129
+      },
+      {
+        "build_seconds_measured": 0.9372336999986146,
+        "build_seconds_predicted": 0.8256421799804965,
+        "development_readers": 11,
+        "id": "job_view_09",
+        "reader_savings_measured_seconds_per_day_excluding_build": 0.5392689999280265,
+        "reader_savings_predicted_seconds_per_day_excluding_build": -0.9690726260145358,
+        "readers_faster_than_base": 8,
+        "rows": 4073078
+      }
+    ],
+    "selected_views": [
+      {
+        "build_seconds": 0.4865633000008529,
+        "id": "job_view_00",
+        "rows": 2609129,
+        "shape": {
+          "edges": [
+            [
+              0,
+              1,
+              "id",
+              "company_id"
+            ],
+            [
+              1,
+              2,
+              "movie_id",
+              "id"
+            ]
+          ],
+          "tables": [
+            "company_name",
+            "movie_companies",
+            "title"
+          ]
+        },
+        "support_queries": [
+          "10a",
+          "10b",
+          "10c",
+          "11a",
+          "11b",
+          "11c",
+          "11d",
+          "12a",
+          "12b",
+          "12c",
+          "13a",
+          "13b",
+          "13c",
+          "13d",
+          "15a",
+          "15b",
+          "15c",
+          "15d",
+          "16a",
+          "16b",
+          "16c",
+          "16d",
+          "2a",
+          "2b",
+          "2c",
+          "2d",
+          "8a",
+          "8b",
+          "8c",
+          "8d",
+          "9a",
+          "9b",
+          "9c",
+          "9d"
+        ]
+      }
+    ],
+    "selection": {
+      "added_storage_bytes": 0.0,
+      "baseline_per_day": 31.602441034679448,
+      "chosen": [
+        "job_view_00"
+      ],
+      "combinations_evaluated": 17,
+      "method": "exact",
+      "saving_per_day": 0.6557246898428488,
+      "share_of_bound": 1.000000000000005,
+      "upper_bound_per_day": 0.6557246898428455
+    },
+    "split": {
+      "development_families": "1-16",
+      "development_queries": 59,
+      "held_out_families": "17-33",
+      "held_out_queries": 54
+    },
+    "workload_assumption": {
+      "runs_per_query_per_day": 10.0,
+      "storage_cost_priced": false,
+      "view_refreshes_per_day": 1.0
+    }
+  },
+  "environment": {
+    "python": "3.12.14",
+    "sqlglot": "30.21.0",
+    "duckdb": "1.5.6",
+    "z3-solver": "5.1.0.0",
+    "sqlfluff": "4.4.0",
+    "commit": "bc83f521+changes"
+  }
+}

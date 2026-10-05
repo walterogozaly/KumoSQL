@@ -85,6 +85,7 @@ These features keep their eval results on the feature's own page.
 | --- | --- | --- |
 | [Model reuse and containment](../model-reuse.md) | View reuse, query containment, aggregate decomposition | `mv-reuse-calcite`, `containment`, `aggregate-decomposition` |
 | [Join ordering and cardinality](../joinorder.md) | Sub-join sizes and join orders on STATS-CEB and JOB | `stats-ceb-cardinality`, `stats-ceb-endtoend`, `job-cardinality`, `job-endtoend` |
+| [Workload advisor JOB proxy](workload-advisor-job.md) | Proof-gated join materialization, calibrated runtime prediction and a family holdout | `workload-advisor-job` |
 | [Output properties](../output-properties.md) | Never-NULL columns, unique keys and row bounds | `output-properties`, `output-properties-adapted` |
 | [Constraint-dependent rewrites](../constraint-rewrites.md) | Rewrites valid only under declared keys and constraints | `constraint-rewrites` |
 | [Incremental models](../incremental.md) | Whether an incremental run equals a full refresh | `incremental-detection`, `incremental-proofs`, `incremental-pgivm` |
