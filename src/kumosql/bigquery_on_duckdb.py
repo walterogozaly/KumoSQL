@@ -97,6 +97,10 @@ _MACRO_DEFINITIONS = (
     f"THEN {_fail('fractional seconds format differently')} "
     "WHEN typeof(x) LIKE 'DECIMAL%' AND contains(CAST(x AS VARCHAR), '.') "
     "THEN rtrim(rtrim(CAST(x AS VARCHAR), '0'), '.') ELSE CAST(x AS VARCHAR) END",
+    # CONCAT converts its arguments to STRING the way CAST does (28.0 is '28' in BigQuery, '28.0' in DuckDB); a BYTES
+    # argument that is not a literal makes it BYTES concatenation, which this does not read
+    f"CREATE OR REPLACE TEMP MACRO kumo_bq_concat_arg(x) AS CASE WHEN typeof(x) = 'BLOB' THEN {_fail('CONCAT of BYTES')} "
+    "ELSE kumo_bq_string(x) END",
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_avg_arg(x) AS CASE WHEN typeof(x) LIKE 'DECIMAL%' "
     f"THEN {_fail('AVG, STDDEV and VARIANCE of NUMERIC are exact in BigQuery')} ELSE x END",
     # SPLIT with a NULL delimiter is NULL; DuckDB's STR_SPLIT returns the whole string
@@ -424,6 +428,7 @@ for _name in ("TIMESTAMPTZ", "TIMESTAMPLTZ"):
     if hasattr(exp.DataType.Type, _name):
         _READ_FORMS[getattr(exp.DataType.Type, _name)] = "timestamp"
 _STRING_TYPES = {exp.DataType.Type.TEXT, exp.DataType.Type.VARCHAR}
+_BINARY = {exp.DataType.Type.BINARY, exp.DataType.Type.VARBINARY}
 
 
 def _unit(unit: exp.Expression | None) -> str:
@@ -583,7 +588,11 @@ def _rewrite(node: exp.Expression) -> exp.Expression | None:
             e=_week_trunc(node.this, start),
         )
     if isinstance(node, exp.Concat):
-        return _null_if_any_null(node, node.expressions)
+        originals = list(node.expressions)
+        if any(a.find(exp.ByteString) or (isinstance(a, exp.Cast) and a.to.this in _BINARY) for a in originals):
+            return _null_if_any_null(node, originals)
+        node.set("expressions", [a if isinstance(a, exp.Literal) and a.is_string else _call("kumo_bq_concat_arg", a.copy()) for a in originals])
+        return _null_if_any_null(node, originals)
     if isinstance(node, (exp.Least, exp.Greatest)):
         return _null_if_any_null(node, [node.this, *node.expressions])
     if isinstance(node, exp.Substring):

@@ -47,7 +47,10 @@ from sqlglot import exp
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import bq_utils_udf_eval as bu  # noqa: E402  (the sibling eval: values, running, UDF inlining)
+from kumosql import bigquery_on_duckdb as bq  # noqa: E402
 from kumosql.bigquery_duckdb import UntranslatableError  # noqa: E402
+
+DECLINED = (UntranslatableError, bq.Unfaithful)
 
 ROOT = Path(__file__).resolve().parent.parent
 URL = "https://github.com/mozilla/bigquery-etl.git"
@@ -956,6 +959,28 @@ def coerce(value, dtype):
     return value
 
 
+def run_raw(con, duck_sql: str, unoptimized: bool = False):
+    """Rows as DuckDB returns them (a NULL array stays NULL: inside an expression BigQuery's is NULL as well)."""
+
+    if unoptimized:
+        con.execute("PRAGMA disable_optimizer")
+    try:
+        con.execute(duck_sql)
+        types = [str(d[1]) for d in con.description]
+        wrapped = bu._fetchable(duck_sql, types)
+        return con.execute(wrapped).fetchall() if wrapped else con.fetchall()
+    finally:
+        if unoptimized:
+            con.execute("PRAGMA enable_optimizer")
+
+
+def guard_reason(error) -> str | None:
+    """The text of a layer guard (BigQuery would fail, or no faithful reading exists), when ``error`` is one."""
+
+    text = str(error)
+    return text.split(bq.MARKER + ": ", 1)[-1].splitlines()[0][:120] if bq.MARKER in text else None
+
+
 def fetch_typed(con, duck_sql: str):
     """(rows as BigQuery-coerced dicts, DuckDB description); TIMESTAMPTZ read as UTC without ``pytz``."""
 
@@ -1039,17 +1064,10 @@ def evaluate_query(case: Case, con, translate, out: dict) -> dict:
         return _failed(out, "unsupported", error.reason, error.detail)
     except duckdb.Error as error:
         return _failed(out, "unsupported", "input table not loadable in DuckDB", str(error)[:120])
-    try:
-        duck = translate(case.bigquery)
-    except UntranslatableError as error:
-        return _failed(out, "unsupported", "KumoSQL declines to translate", str(error))
-    except sqlglot.errors.SqlglotError as error:
-        return _failed(out, "unsupported", "does not parse", str(error)[:120])
-    out["duckdb"] = duck
-    try:
-        rows = fetch_typed(con, duck)
-    except duckdb.Error as error:
-        return _failed(out, "unsupported", "translation not executable in DuckDB", str(error)[:160])
+    got = translate_and_run(case, con, translate, out, raw=False)
+    if got is None:
+        return out
+    duck, rows = got
     expected = case.expected
     unordered = bu.order_unspecified(case.bigquery)
     out["actual"] = repr(rows)[:300]
@@ -1075,7 +1093,7 @@ def evaluate_query(case: Case, con, translate, out: dict) -> dict:
 # --- running -----------------------------------------------------------------------------------
 
 def translator(mode: str):
-    """``mode``: "fixed" (``kumosql.bigquery_duckdb``), "baseline" (sqlglot alone) or "layer" (the layer the searches use)."""
+    """``mode``: "layer" (what the searches run), "fixed" (``kumosql.bigquery_duckdb``) or "baseline" (sqlglot alone)."""
 
     from kumosql import bigquery_duckdb
 
@@ -1100,30 +1118,34 @@ def _failed(out: dict, outcome: str, reason: str, detail: str = "") -> dict:
     return out
 
 
-def translate_and_run(case: Case, con, translate, out: dict, sql: str | None = None):
-    """(duck_sql, rows, types), or None after recording why the case has no verdict in ``out``."""
+def translate_and_run(case: Case, con, translate, out: dict, sql: str | None = None, raw: bool = True):
+    """(duck_sql, rows), or None after recording why the case has no verdict in ``out``."""
 
     import duckdb
 
     sql = case.bigquery if sql is None else sql
     try:
         duck = translate(sql)
-    except UntranslatableError as error:
-        _failed(out, "unsupported", "KumoSQL declines to translate", str(error))
+    except DECLINED as error:
+        _failed(out, "unsupported", "KumoSQL declines to translate", str(error).split(": ", 1)[-1][:120])
         return None
     except sqlglot.errors.SqlglotError as error:
         _failed(out, "unsupported", "does not parse", str(error)[:120])
         return None
     out["duckdb"] = duck
     try:
-        rows, types = bu.run(con, duck)
+        rows = run_raw(con, duck) if raw else fetch_typed(con, duck)
     except duckdb.Error as error:
-        _failed(out, "unsupported", "translation not executable in DuckDB", str(error)[:160])
+        reason = guard_reason(error)
+        if reason:
+            _failed(out, "unsupported", "a guard fires: BigQuery would fail or has no faithful reading", reason)
+        else:
+            _failed(out, "unsupported", "translation not executable in DuckDB", str(error)[:160])
         return None
-    return duck, rows, types
+    return duck, rows
 
 
-def evaluate(case: Case, mode: str = "fixed", con=None) -> dict:
+def evaluate(case: Case, mode: str = "layer", con=None) -> dict:
     out = {"id": case.id, "unit": case.unit, "kind": case.kind, "held_out": held_out(case.unit)}
     if case.unsupported:
         return _failed(out, "unsupported", *case.unsupported)
@@ -1136,7 +1158,7 @@ def evaluate(case: Case, mode: str = "fixed", con=None) -> dict:
         got = translate_and_run(case, con, translate, out)
         if got is None:
             return out
-        duck, rows, types = got
+        duck, rows = got
         if not rows:
             return _failed(out, "unsupported", "the statement returns no rows to check")
         holds = _rows_hold(case.assertion, rows)
@@ -1145,7 +1167,7 @@ def evaluate(case: Case, mode: str = "fixed", con=None) -> dict:
             if holds:
                 out["outcome"] = "agree"
                 return out
-            if _rows_hold(case.assertion, bu._rerun_unoptimized(con, duck)):
+            if _rows_hold(case.assertion, run_raw(con, duck, unoptimized=True)):
                 return _failed(out, "unsupported", "DuckDB optimizer disagrees with itself")
             if bu.order_unspecified(case.bigquery) and _rows_hold(case.assertion, rows, unordered=True):
                 return _failed(out, "unsupported", "element order not specified by GoogleSQL")
@@ -1153,7 +1175,7 @@ def evaluate(case: Case, mode: str = "fixed", con=None) -> dict:
             return out
         # #xfail: BigQuery raised, so the assertion must not hold on our values
         if holds:
-            if not _rows_hold(case.assertion, bu._rerun_unoptimized(con, duck)):
+            if not _rows_hold(case.assertion, run_raw(con, duck, unoptimized=True)):
                 return _failed(out, "unsupported", "DuckDB optimizer disagrees with itself")
             out["outcome"] = "WRONG"
         else:
@@ -1171,7 +1193,7 @@ def build_cases(tree: Tree, registry: Registry | None = None) -> list[Case]:
     return cases
 
 
-def run_all(cases: list[Case], mode: str = "fixed") -> list[dict]:
+def run_all(cases: list[Case], mode: str = "layer") -> list[dict]:
     return [evaluate(case, mode) for case in cases]
 
 
@@ -1207,7 +1229,8 @@ def main(argv=None) -> int:
     ap.add_argument("--failures", action="store_true", help="print WRONG development cases (held-out cases stay hidden)")
     ap.add_argument("--unsupported", action="store_true", help="print unsupported development cases with their reason")
     ap.add_argument("--only", help="run the cases whose id contains this text")
-    ap.add_argument("--mode", choices=["fixed", "baseline", "layer"], default="fixed")
+    ap.add_argument("--mode", choices=["layer", "fixed", "baseline"], default="layer",
+                    help="layer: the translation KumoSQL's searches run (default); fixed: kumosql.bigquery_duckdb; baseline: sqlglot alone")
     ap.add_argument("--include-held-out", action="store_true", help="also print held-out cases (final measurement only)")
     ap.add_argument("--write-results", action="store_true")
     ap.add_argument("--json", type=Path, help="write the outcome of every case that may be looked at here")
