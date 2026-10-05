@@ -1,0 +1,31 @@
+{
+  "job": "master",
+  "kind": "master",
+  "ref": "master",
+  "sha": "362545a392e1e9ba343f52283a6fa838f353bb79",
+  "leg": "compiled",
+  "mode": "full",
+  "status": "finished",
+  "exit": 1,
+  "seconds": 3393.6,
+  "workers": 6,
+  "notes": [],
+  "finished": "2026-10-05T05:37:51Z",
+  "machine": {
+    "system": "Linux",
+    "release": "6.18.40.1-microsoft-standard-WSL2",
+    "cpus": 6,
+    "python": "3.12.3"
+  },
+  "passed": 11637,
+  "failed": [
+    "tests/test_bq_corpus_bench.py::test_real_projects_load_clean_and_keep_their_floors",
+    "tests/test_scoreboard.py::test_every_test_file_that_loads_an_eval_script_is_marked_eval",
+    "tests/test_smt_robustness.py::test_unreadable_input_is_not_proven_never_an_exception[SELECT ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))]"
+  ],
+  "errors": [],
+  "skipped": 108,
+  "tests": 11748,
+  "known_failed": [],
+  "tail": "tests/test_sqlfluff_fixtures_bench.py: 4 warnings\ntests/test_quite_bench.py: 1 warning\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=271797) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\ntests/test_conditional_benchmark.py::test_singh_sample\ntests/test_conditional_benchmark.py::test_singh_sample\ntests/test_conditional_benchmark.py::test_singh_sample\ntests/test_conditional_benchmark.py::test_singh_sample\ntests/test_conditional_benchmark.py::test_singh_sample\ntests/test_conditional_benchmark.py::test_singh_sample\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=271811) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\ntests/test_arcwise_bench.py: 147 warnings\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=271794) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\ntests/test_sample_db_oracle.py::test_the_date_key_pairs_are_refuted_with_counterexamples_that_replay\ntests/test_sample_db_oracle.py::test_the_date_key_pairs_are_refuted_with_counterexamples_that_replay\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=271791) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\ntests/test_sqlfluff_refusals_bench.py::test_refusal_cases\ntests/test_sqlfluff_refusals_bench.py::test_refusal_cases\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=271803) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\ntests/test_singh_bedathur_benchmark.py: 6 warnings\ntests/test_sqlfluff_fixtures_bench.py: 2 warnings\ntests/test_spider2_bench.py: 4 warnings\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=271800) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED tests/test_scoreboard.py::test_every_test_file_that_loads_an_eval_script_is_marked_eval\nFAILED tests/test_smt_robustness.py::test_unreadable_input_is_not_proven_never_an_exception[SELECT ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))]\nFAILED tests/test_bq_corpus_bench.py::test_real_projects_load_clean_and_keep_their_floors\n3 failed, 11637 passed, 1 skipped, 107 xfailed, 180 warnings in 3105.69s (0:51:45)"
+}
