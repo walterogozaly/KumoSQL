@@ -335,7 +335,9 @@ def test_the_checker_imports_no_rule_normalizer_or_prover():
             imported.add(node.module.split(".")[0])
         elif isinstance(node, ast.Import):
             imported.update(alias.name.split(".")[0] for alias in node.names)
-    assert imported == {"__future__", "collections", "contextlib", "contextvars", "dataclasses", "sqlglot", "proof_qualify", "proof_steps"}
+    assert imported == {
+        "__future__", "collections", "contextlib", "contextvars", "dataclasses", "itertools", "secrets", "sqlglot", "proof_qualify", "proof_steps",
+    }
 
 
 # --- the SMT compiler: an honest prover is never refused, a corrupted one is -------------------------------------
