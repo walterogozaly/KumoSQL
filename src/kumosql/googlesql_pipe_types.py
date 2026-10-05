@@ -54,26 +54,25 @@ class _VarRange(g._Range):
         return []
 
 
-_tokenizer = None
+_SHIFT = len("|> ")
 
 
 def _tokenize(text: str):
-    """BigQuery tokens of ``text``. sqlglot reads the rest of the statement after RENAME, CALL and the like as one string
-    (they are commands to it), which would swallow the operators after a pipe ``RENAME``, so no word is a command here."""
+    """BigQuery tokens of ``text``, positions in ``text``.
 
-    global _tokenizer
+    sqlglot reads the rest of a statement as one string when it begins with a word like RENAME, CALL, REPEAT or SHOW (they
+    are commands to it), which would swallow the operators after a pipe ``RENAME``, so the text is tokenized after a
+    ``|>`` that stands in for the statement before it, and the extra token and offset are taken away again."""
+
     try:
-        if _tokenizer is None:
-            dialect = Dialect.get_or_raise("bigquery")
-            base = dialect.tokenizer_class
-
-            class PipeTokenizer(base):
-                COMMANDS = set()
-
-            _tokenizer = PipeTokenizer(dialect=dialect)
-        return _tokenizer.tokenize(text)
+        tokens = Dialect.get_or_raise("bigquery").tokenize("|> " + text)
     except Exception:  # noqa: BLE001 - text sqlglot cannot tokenize has no pipe chain to type
         return None
+    tokens = tokens[1:]
+    for token in tokens:
+        token.start -= _SHIFT
+        token.end -= _SHIFT
+    return tokens
 
 
 def _parse(text: str):
@@ -148,10 +147,11 @@ def prepare(sql: str) -> tuple[str, dict[str, Chain]] | None:
             return render(lo, hi)
         bounds = [lo - 1, *pipes, hi]
         parts = [render(bounds[k] + 1, bounds[k + 1]) for k in range(len(bounds) - 1)]
-        if any(not p or not p.strip() for p in parts):
+        if any(p is None for p in parts):
             return None
         name = f"{MARK}{len(chains) + 1}"
-        chains[name] = Chain(parts[0], parts[1:])
+        # A chain with an empty piece (FORK's `(|> SELECT ..)`, a trailing `|>`) is a query of unknown columns.
+        chains[name] = Chain(parts[0], parts[1:]) if all(p.strip() for p in parts) else Chain("", [])
         return f"SELECT * FROM {name}"
 
     text = content(0, len(tokens))
@@ -196,12 +196,15 @@ def _flat(columns: list[g._Col] | None, outer) -> g._Scope | None:
 
 
 def _clash(scope: g._Scope) -> bool:
-    """Whether a range variable has the name of a column of the relation (which one a name means is then not settled).
-    The range variable of a value table such as ``UNNEST(...) AS x`` is its own column and does not count."""
+    """Whether a range variable, or one an earlier operator dropped, has the name of a column of the relation (which
+    one a name means is then not settled). The range variable of a value table such as ``UNNEST(...) AS x`` is its own
+    column and does not count."""
 
-    names = {r.name for r in scope.ranges if r.name}
+    names = _range_names(scope) | getattr(scope, "dropped", set())
     if not names:
         return False
+    if any(c.name and c.name.lower() in names for c in scope.star or ()):
+        return True
     for r in scope.ranges:
         columns = r.addressable()
         if columns is not None and any(c.name and c.name.lower() in names for c in columns):
@@ -219,9 +222,14 @@ def _columns(scope: g._Scope | None) -> list[g._Col] | None:
 
 
 def _star(scope: g._Scope | None) -> list[g._Col] | None:
-    """The columns ``SELECT *`` gives, value table or not."""
+    """The columns ``SELECT *`` gives. A value table gives them only when it is an UNNEST (``FROM UNNEST(a) AS x`` has the
+    column ``x``, or the fields of a struct element); a ``SELECT AS VALUE`` result is left unknown."""
 
-    return None if scope is None or scope.star is None else list(scope.star)
+    if scope is None or scope.star is None:
+        return None
+    if any(r.value is not None and r.node is not None and not isinstance(r.node, exp.Unnest) for r in scope.ranges):
+        return None
+    return list(scope.star)
 
 
 def _is_value_table(scope: g._Scope) -> bool:
@@ -248,6 +256,17 @@ def _depth_split(tokens: list, separator) -> list[list]:
 
 
 def _commas(tokens: list) -> list[list]:
+    """``tokens`` cut at the commas outside any brackets. Angle brackets are not brackets to the tokenizer (``a < b``), so
+    text that opens a type outside any parentheses (``ARRAY<STRUCT<a INT64, b INT64>>[..]``) cannot be cut reliably."""
+
+    depth = 0
+    for i, token in enumerate(tokens):
+        if token.token_type in _OPEN:
+            depth += 1
+        elif token.token_type in _CLOSE:
+            depth -= 1
+        elif depth == 0 and token.token_type == TokenType.LT and i and tokens[i - 1].text.upper() in ("ARRAY", "STRUCT", "RANGE"):
+            raise ValueError("a type in the text")
     return _depth_split(tokens, lambda t: t.token_type == TokenType.COMMA)
 
 
@@ -257,6 +276,12 @@ def _text(source: str, tokens: list) -> str:
 
 def _word(token) -> str:
     return " ".join(token.text.upper().split())
+
+
+def _parenthesized(tokens: list) -> bool:
+    """Whether an operator is its keyword followed by one parenthesised group (``ALIGN (..)``)."""
+
+    return len(tokens) >= 3 and tokens[1].token_type == TokenType.L_PAREN and _closing(tokens, 1) == len(tokens) - 1
 
 
 def _top_level_index(tokens: list, predicate) -> int | None:
@@ -276,7 +301,8 @@ def _name_token(token) -> bool:
 
     if token.token_type == TokenType.IDENTIFIER:
         return True
-    return token.token_type not in (TokenType.STRING, TokenType.NUMBER) and re.fullmatch(r"[A-Za-z_]\w*", token.text) is not None
+    word = re.fullmatch(r"[A-Za-z_]\w*", token.text) is not None
+    return word and token.token_type not in (TokenType.STRING, TokenType.NUMBER)
 
 
 # --- items -------------------------------------------------------------------------------------------------------------
@@ -290,16 +316,28 @@ def _alias_of(tokens: list) -> str | None:
 
 
 def _items(ty, text: str, scope: g._Scope, ctes) -> list[g._Col] | None:
-    """The columns of a select list (``a, b + 1 AS c, * EXCEPT (d)``), each item read on its own so one the parser
-    cannot read is one column of unknown type; None when the width is unknown too (a star the typer cannot expand)."""
+    """The columns of a select list (``a, b + 1 AS c, * EXCEPT (d)``). When the parser cannot read the whole list, each
+    item is read on its own, so one it cannot read is one column of unknown type; None when the width is unknown (a star
+    the typer cannot expand)."""
 
+    tree = _parse("SELECT " + text)
+    if isinstance(tree, exp.Select) and tree.args.get("expressions") and not any(
+        v for k, v in tree.args.items() if k not in ("expressions", "distinct", "windows") and v
+    ):
+        columns: list[g._Col] = []
+        for item in tree.args["expressions"]:
+            expanded = ty.select_item(item, scope, ctes)
+            if expanded is None:
+                return None
+            columns.extend(expanded)
+        return columns
     tokens = _tokenize(text)
     if not tokens:
         return None
     cut = _top_level_index(tokens, lambda t: _word(t) == "WINDOW")
     if cut is not None:
         tokens = tokens[:cut]  # the named windows only define what OVER w means; a window function's type does not use them
-    columns: list[g._Col] = []
+    columns = []
     for item in _commas(tokens):
         item_text = _text(text, item)
         tree = _parse("SELECT " + item_text)
@@ -335,6 +373,8 @@ def _strip_ordering(tokens: list) -> list:
 def type_chain(ty, chain: Chain, outer, ctes) -> g._Rel | None:
     """The result of a pipe query: its running relation after the last operator."""
 
+    if not chain.head.strip():
+        return g._Rel(None)
     mark = len(ty.findings)
     try:
         try:
@@ -371,7 +411,7 @@ def _start(ty, head: str, outer, ctes):
     tree = _parse(head)
     if not isinstance(tree, exp.Query):
         return None, ctes
-    if isinstance(tree, exp.Select) and (tree.args.get("with_") or tree.args.get("with")):
+    if tree.args.get("with_") or tree.args.get("with"):
         ctes = ty.with_clause(tree, outer, ctes)
         tree = tree.copy()
         tree.set("with_", None)
@@ -384,7 +424,7 @@ def _start(ty, head: str, outer, ctes):
         return None, ctes
     if rel.value is not None:
         scope = g._Scope(outer)
-        value = g._Range(None, None, value=g._plain(rel.value))
+        value = g._Range(None, None, value=g._plain(rel.value), node=tree)
         scope.ranges = [value]
         scope.star = ty.star_columns(value)
         return scope, ctes
@@ -414,15 +454,40 @@ def _apply(ty, text: str, state, outer, ctes):
     handler = {
         "SELECT": _select, "EXTEND": _extend, "WINDOW": _extend, "SET": _set, "DROP": _drop, "RENAME": _rename,
         "AS": _as, "AGGREGATE": _aggregate, "DISTINCT": _distinct, "PIVOT": _pivot, "UNPIVOT": _pivot,
-        "MATCH_RECOGNIZE": _match_recognize,
+        "MATCH_RECOGNIZE": _match_recognize, "ALIGN": _align,
     }.get(word)
     if handler is not None:
-        return handler(ty, text, tokens, state, outer, ctes), ctes
-    if word in _JOINS:
-        return _join(ty, text, state, outer, ctes), ctes
-    if word in _SETS:
-        return _set_operation(ty, text, tokens, state, outer, ctes), ctes
-    return None, ctes
+        new = handler(ty, text, tokens, state, outer, ctes)
+    elif word in _JOINS:
+        new = _join(ty, text, state, outer, ctes)
+    elif word in _SETS:
+        new = _set_operation(ty, text, tokens, state, outer, ctes)
+    else:
+        return None, ctes
+    return _unshadowed(state, new), ctes
+
+
+def _range_names(scope: g._Scope) -> set[str]:
+    """The range variables of a relation, except the one of a value table that is its own column (UNNEST(..) AS x)."""
+
+    names = set()
+    for r in scope.ranges:
+        if not r.name:
+            continue
+        own = r.value is not None and (r.value.type is None or r.value.type.kind != "STRUCT")
+        if not own:
+            names.add(r.name)
+    return names
+
+
+def _unshadowed(before: g._Scope, after: g._Scope | None) -> g._Scope | None:
+    """``after``, remembering the range variables the operator dropped (``dropped``): while a column has the name of one,
+    whether that name means the column or the variable depends on rules this module does not model, so ``_clash``
+    leaves an operator that reads such a name unknown."""
+
+    if after is not None:
+        after.dropped = getattr(before, "dropped", set()) | (_range_names(before) - _range_names(after))
+    return after
 
 
 def _with(ty, text: str, tokens: list, outer, ctes):
@@ -446,7 +511,7 @@ def _select(ty, text, tokens, state, outer, ctes):
 
 
 def _extend(ty, text, tokens, state, outer, ctes):
-    base = _columns(state)
+    base = _star(state)
     if base is None or len(tokens) < 2:
         return None
     added = _items(ty, _text(text, tokens[1:]), state, ctes)
@@ -508,7 +573,8 @@ def _rename(ty, text, tokens, state, outer, ctes):
         return None
     pairs = []
     for item in _commas(tokens[1:]):
-        if len(item) != 3 or not _name_token(item[0]) or item[1].token_type != TokenType.ALIAS or not _name_token(item[2]):
+        shaped = len(item) == 3 and _name_token(item[0]) and item[1].token_type == TokenType.ALIAS and _name_token(item[2])
+        if not shaped:
             return None
         pairs.append((item[0].text, item[2].text))
     if not pairs or len({a.lower() for a, _ in pairs}) != len(pairs):
@@ -574,6 +640,8 @@ def _aggregate(ty, text, tokens, state, outer, ctes):
         if columns is None:
             return None
         aggregate_columns.extend(columns)
+    if not group_columns and not aggregate_columns:
+        return None
     return _flat(group_columns + aggregate_columns, outer)
 
 
@@ -642,7 +710,7 @@ def _match_recognize(ty, text, tokens, state, outer, ctes):
     have the types the clause documents."""
 
     columns = _star(state)
-    if columns is None or len(tokens) < 3 or tokens[1].token_type != TokenType.L_PAREN or tokens[-1].token_type != TokenType.R_PAREN:
+    if columns is None or not _parenthesized(tokens):
         return None
     inner = tokens[2:-1]
     clauses: dict[str, list] = {}
@@ -721,7 +789,8 @@ def _measure_text(ty, text: str, tokens: list) -> str | None:
             position = tokens[close].start
             i = close
             continue
-        if _name_token(token) and following is not None and following.token_type == TokenType.L_PAREN and token.text.lower() not in user:
+        is_call = following is not None and following.token_type == TokenType.L_PAREN
+        if _name_token(token) and is_call and token.text.lower() not in user:
             close = _closing(tokens, i + 1)
             if close is None:
                 return None
@@ -752,3 +821,152 @@ def _closing(tokens: list, open_index: int) -> int | None:
             if depth == 0:
                 return i
     return None
+
+
+# --- ALIGN ---------------------------------------------------------------------------------------------------------------
+
+_ALIGN_CLAUSES = ("PERIOD", "ORIGIN", "OUTPUT", "PARTITION BY", "METRICS")
+_ALIGN_AGGREGATES = ("SUM", "COUNT", "MIN", "MAX", "AVG")
+
+
+def _align(ty, text, tokens, state, outer, ctes):
+    """``ALIGN ([TIMESTAMP ts] PERIOD .. ORIGIN .. [OUTPUT ..] [PARTITION BY ..] [METRICS m WITHIN (..) AS name, ..])``
+    gives the PARTITION BY columns, then the METRICS, then the timestamp column (``timestamp`` unless named). A metric
+    is typed as the aggregate it applies (SUM, COUNT, MIN, MAX, AVG) without its WITHIN range."""
+
+    columns = _star(state)
+    if columns is None or not _parenthesized(tokens):
+        return None
+    inner = tokens[2:-1]
+    clauses: dict[str, list] = {}
+    timestamp = "timestamp"
+    current, depth = None, 0
+    for index, token in enumerate(inner):
+        if token.token_type in _OPEN:
+            depth += 1
+        elif token.token_type in _CLOSE:
+            depth -= 1
+        word = _word(token)
+        if index == 0 and word == "TIMESTAMP":
+            if len(inner) < 2 or not _name_token(inner[1]):
+                return None
+            timestamp = inner[1].text
+            current = "TIMESTAMP"
+            clauses[current] = [inner[1]]
+            continue
+        if depth == 0 and word in _ALIGN_CLAUSES:
+            if word in clauses:
+                return None
+            current = word
+            clauses[current] = []
+            continue
+        if current is None:
+            return None
+        if current != "TIMESTAMP" or index > 1:
+            clauses[current].append(token)
+    if "PERIOD" not in clauses:
+        return None
+    position = _unique(columns, timestamp)
+    stamp = columns[position].t.type if position is not None else None
+    output: list[g._Col] = []
+    for item in _commas(clauses.get("PARTITION BY", [])):
+        expanded = _items(ty, _text(text, item), state, ctes)
+        if expanded is None or len(expanded) != 1:
+            return None
+        output.extend(expanded)
+    names = {c.name.lower() for c in columns if c.name}
+    scope = _copy(state, outer)
+    extra = [c for c in output if c.name and c.name.lower() not in names]
+    if extra:
+        scope.ranges.append(g._Range(None, extra))
+    metrics = clauses.get("METRICS", [])
+    for item in _commas(metrics):
+        stripped = _without_within(text, item)
+        if stripped is None:
+            output.append(g._Col(_alias_of(item), g.UNKNOWN))
+            continue
+        expanded = _items(ty, stripped, scope, ctes)
+        if expanded is None or len(expanded) != 1:
+            return None
+        output.append(expanded[0])
+    output.append(g._Col(timestamp, g.known(stamp) if stamp is not None and stamp.kind == "TIMESTAMP" else g.UNKNOWN))
+    return _flat(output, outer)
+
+
+def _without_within(text: str, tokens: list) -> str | None:
+    """A metric with the ``WITHIN (..)`` of each aggregate removed; None when it has one on a call that is not a known
+    aggregate or has none at all."""
+
+    pieces, position, found, i = [], tokens[0].start, False, 0
+    while i < len(tokens):
+        if _word(tokens[i]) == "WITHIN" and i + 1 < len(tokens) and tokens[i + 1].token_type == TokenType.L_PAREN:
+            close = _closing(tokens, i + 1)
+            before = tokens[i - 1] if i else None
+            if close is None or before is None or before.token_type != TokenType.R_PAREN:
+                return None
+            opener = None
+            depth = 0
+            for k in range(i - 1, -1, -1):
+                if tokens[k].token_type == TokenType.R_PAREN:
+                    depth += 1
+                elif tokens[k].token_type == TokenType.L_PAREN:
+                    depth -= 1
+                    if depth == 0:
+                        opener = k
+                        break
+            if opener is None or opener == 0 or tokens[opener - 1].text.upper() not in _ALIGN_AGGREGATES:
+                return None
+            pieces.append(text[position : tokens[i].start])
+            position = tokens[close].end + 1
+            found = True
+            i = close + 1
+            continue
+        i += 1
+    if not found:
+        return None
+    pieces.append(text[position : tokens[-1].end + 1])
+    return "".join(pieces)
+
+
+# --- recursive CTEs ------------------------------------------------------------------------------------------------------
+
+def mentions(chain: Chain, name: str) -> bool:
+    """Whether the name of a recursive CTE is spelled in a chain (as a table or not: a chain that might read itself)."""
+
+    pattern = re.compile(rf"(?<![\w`]){re.escape(name)}(?![\w`])", re.I)
+    return any(pattern.search(t) for t in (chain.head, *chain.ops))
+
+
+def recursive_chain(ty, chain: Chain, name: str, outer, ctes) -> g._Rel:
+    """``WITH RECURSIVE t AS ((base) |> UNION ... (step reading t))``: typed from the base as the recursive term of a
+    plain recursive CTE is; the step must give the base's types."""
+
+    unknown = g._Rel(None)
+    if not chain.ops or _word_of(chain.ops[0]) != "UNION":
+        return unknown
+    try:
+        state, _ = _start(ty, chain.head, outer, ctes)
+    except (g._Unsupported, RecursionError):
+        raise
+    except Exception:  # noqa: BLE001
+        return unknown
+    base = _star(state)
+    if base is None or _is_value_table(state):
+        return unknown
+    base = [g._Col(c.name, g._plain(c.t), c.required) for c in base]
+    if any(c.t.type is None or not c.t.type.complete for c in base):
+        return unknown
+    result = type_chain(ty, chain, outer, {**ctes, name.lower(): g._Rel(list(base))})
+    if result.columns is None or len(result.columns) != len(base):
+        return unknown
+    by_name = {(c.name or "").lower(): c for c in base} if all(c.name for c in base) else None
+    for position, column in enumerate(result.columns):
+        expected = base[position] if by_name is None else by_name.get((column.name or "").lower())
+        if expected is None or column.t.type != expected.t.type:
+            return unknown
+    return g._Rel(list(base))
+
+
+def _word_of(text: str) -> str:
+    tokens = _tokenize(text)
+    return _word(tokens[0]) if tokens else ""

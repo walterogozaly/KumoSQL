@@ -609,7 +609,14 @@ class _Typer:
         for cte in with_.expressions:
             name = cte.alias_or_name.lower()
             body = cte.this
-            if recursive and self._references(body, name):
+            pipe_chain = None
+            if recursive and self.pipes:
+                from . import googlesql_pipe_types
+
+                pipe_chain = googlesql_pipe_types.chain_for(self, body)
+            if pipe_chain is not None and googlesql_pipe_types.mentions(pipe_chain, name):
+                rel = googlesql_pipe_types.recursive_chain(self, pipe_chain, name, outer, ctes)
+            elif recursive and self._references(body, name):
                 rel = self.recursive_cte(body, name, outer, ctes)
             else:
                 rel = self.query(body, outer, ctes)
