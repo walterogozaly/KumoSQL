@@ -44,3 +44,9 @@ An unknown is not a safety guarantee.
 The simulator models appends and merges. A merge can fail if several source rows match one target row; NULL keys do not match and can be inserted repeatedly. It runs adapted SQL in DuckDB, so it only claims the BigQuery behavior explicitly modeled.
 
 The full guide covers watermark rules, lookback windows, deduplication, grouped summaries, unchanged joined tables, pre-operations, and adapted pg_ivm workloads. Always read the contract alongside the verdict.
+
+## How the rules are tested
+
+Every rule that proves a model safe has a test that shows a model it proves, plus "near miss" tests: the same model changed in exactly one way, which must no longer be proven. For a model that re-runs its whole query and merges on a key, the near misses are a query that differs between runs, a key that is not unique, a key that can be NULL, a key that can disappear from the result, and a result that depends on how ties are broken. The same is done for the rules that decide whether keys can disappear, for script variables and statements that change no data, and for ties. A tie-dependent model is reported as `nondeterministic` only when two evaluations of its query actually give different results; a query with a total order is never reported that way.
+
+This is evidence that the rules are not wider than documented, not a proof that they are right. See the [full reference](../docs/incremental.md#test-coverage-for-r7-key-growth-script-variables-and-ties) for the list of tests and the two bugs they found.
