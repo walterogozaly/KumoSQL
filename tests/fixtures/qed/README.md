@@ -24,26 +24,22 @@ inequivalent pairs.
 
 ## Result
 
-444 files: **375 converted**, 69 skipped.
+444 files: **390 converted**, 54 skipped.
 
 | skipped | reason |
 | ---: | --- |
-| 23 | aggregate FILTER clause (not represented in QED's IR) |
+| 16 | aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query) |
+| 7 | aggregate FILTER clause (not represented in QED's IR) |
 | 7 | unsupported operator ST_POINT |
-| 5 | multi-column COUNT(DISTINCT) |
 | 5 | unsupported aggregate LITERAL_AGG |
-| 5 | window function |
 | 4 | integer-typed STDDEV/VAR aggregate (Calcite integer arithmetic not modelled) |
 | 4 | unsupported aggregate SINGLE_VALUE |
-| 3 | projection with no columns |
 | 2 | table is empty only by test-harness convention (not expressible in the schema) |
 | 2 | nondeterministic aggregate ANY_VALUE |
 | 2 | aggregate WITHIN DISTINCT (not represented in QED's IR) |
-| 1 | unsupported operator CURRENT_TIMESTAMP |
 | 1 | unsupported aggregate GROUPING |
 | 1 | implicit cross-type comparison |
 | 1 | column type ANY |
-| 1 | unsupported operator ROW |
 | 1 | unsupported operator USER |
 | 1 | LIMIT/OFFSET without ORDER BY (nondeterministic) |
 
@@ -73,12 +69,22 @@ inequivalent pairs.
   `VARCHAR(255)` because the IR carries no precision or length.
 * Keys: the first key whose columns are all NOT NULL is `PRIMARY KEY`, the rest
   are `UNIQUE`.
+* Read back from the `help` plan dump, because QED's IR drops them: the
+  `OVER (PARTITION BY .. ORDER BY ..)` of a window function, and the grouping
+  sets of an aggregate (written as `GROUP BY GROUPING SETS`). A window with a
+  frame, several windows over one plan, or an ORDER BY key that may be NULL
+  is a skip. Also converted exactly: multi-column `COUNT(DISTINCT a, b)`,
+  `CURRENT_TIMESTAMP` (one value for both queries of a pair), `ROW(..)` in the
+  root projection (its fields as columns), and a projection with no columns
+  where only the row count can matter (the root, or the right side of a SEMI or
+  ANTI correlate; written `SELECT 1`).
 * Skipped, never guessed: aggregate FILTER / WITHIN DISTINCT (the IR drops them;
-  detected from the `help` plan text), window functions, GROUPING, LITERAL_AGG,
-  SINGLE_VALUE, ANY_VALUE, geospatial and dynamic functions, struct (`ANY`)
-  columns, implicit cross-type comparisons, tables that are empty only by
-  Calcite test-harness convention, LIMIT without ORDER BY, and anything else
-  the converter does not model exactly.
+  detected from the `help` plan text; where grouping sets come with a FILTER the
+  reason says so), GROUPING, LITERAL_AGG, SINGLE_VALUE, ANY_VALUE, geospatial and
+  dynamic functions other than `CURRENT_TIMESTAMP`, struct (`ANY`) columns, implicit
+  cross-type comparisons, tables that are empty only by Calcite test-harness
+  convention, LIMIT without ORDER BY, and anything else the converter does not
+  model exactly.
 
 ## Validation
 

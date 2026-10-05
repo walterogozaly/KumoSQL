@@ -25,3 +25,11 @@ Some rules were built while inspecting failing corpus cases, so those scores are
 Other suites overlap. Adding their case counts does not produce a count of unique independent tests.
 
 The reference includes Python and optional Java setup, supported refactors, ORDER BY/LIMIT rules, cases that must remain unknown, source conversion, and corpus-specific results. Start with [provers](../provers.md) for the evidence levels, or [bounded verification](bounded-verification.md) for the separate small-database check.
+
+## QED's Calcite cases in plain words
+
+QED is another prover that ships about 440 Apache Calcite optimizer tests as data. KumoSQL turns each into two SQL queries and asks whether they always return the same rows. Example: a test that moves an aggregate below a `UNION ALL` should give the same rows whichever side runs it.
+
+Two things were fixed so the comparison is fair. First, QED's data file loses the grouping sets and the window `OVER` clause of a query; KumoSQL now reads them back from the readable plan text that ships beside it, so the pair it checks is the one Calcite tested (before, 14 grouping-set pairs were checked as ordinary `GROUP BY`, which is a different query). Second, two pairs that looked like QED errors were a mistake in KumoSQL's own random-data replay, which stored timestamps as dates; with that fixed both pairs are proved.
+
+The limits: a few pairs stay unknown (three window pairs belong to another work stream, three need a rule for summing per-group counts, four QED does not prove either) and the rest of the skipped pairs use features that cannot be converted exactly. The clock pair (`CURRENT_TIMESTAMP`) is proved only under the reading that both queries run at one instant, which the prover never assumes unless asked. Every new proof was found with the pair in view, so treat the score as tuned on its own test. For the recorded numbers and the rule details see the [full reference](../../docs/evals/sqlsolver.md#qeds-calcite-cases).
