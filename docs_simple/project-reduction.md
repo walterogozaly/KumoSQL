@@ -4,6 +4,10 @@
 
 Name the tables of a Dataform project that people actually use. KumoSQL proposes a smaller project that still builds each of them under the same name, with the same columns in the same order and the same rows. It returns a patch for review; it changes your files only if you ask it to.
 
+## In the browser
+
+Open **Reduce** in the sidebar with a project loaded. Search the actions, tick the ones people use, and press **Run**. The page shows whether the smaller project was proved, how many actions and how much complexity were removed, what each kept output's check found, what was deleted or changed and why, and the patch to copy or download. It works on a copy, so your files do not change. **Drop only** deletes what is not needed and rewrites nothing. The [full guide](../docs/project-reduction.md) lists the options and the API.
+
 ## What can change
 
 - Tables, views, declarations and assertions that no kept output needs are deleted.

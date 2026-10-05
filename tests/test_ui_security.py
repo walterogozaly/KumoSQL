@@ -61,7 +61,7 @@ def assert_hardened(headers):
 
 @pytest.mark.parametrize("method,path", [
     ("GET", "/"), ("GET", "/assets/session.js"), ("GET", "/api/version"),
-    ("PUT", "/api/settings/ui"), ("POST", "/api/project/clear"),
+    ("PUT", "/api/settings/ui"), ("POST", "/api/project/clear"), ("POST", "/api/reduce/run"),
     ("DELETE", "/api/settings/ui"), ("OPTIONS", "/"),
 ])
 def test_foreign_host_is_refused_before_assets_or_api(server, method, path):
@@ -91,7 +91,7 @@ def test_own_host_and_origin_allow_authenticated_write(server, host):
 
 
 @pytest.mark.parametrize("method,path", [
-    ("PUT", "/api/settings/ui"), ("POST", "/api/project/clear"), ("DELETE", "/api/settings/ui"),
+    ("PUT", "/api/settings/ui"), ("POST", "/api/project/clear"), ("POST", "/api/reduce/run"), ("DELETE", "/api/settings/ui"),
 ])
 @pytest.mark.parametrize("origin", ["http://other.invalid:{port}", "null", "https://127.0.0.1:{port}", "http://127.0.0.1:1"])
 def test_foreign_origin_is_refused_on_writes(server, method, path, origin):
@@ -107,7 +107,8 @@ def test_foreign_origin_is_refused_on_writes(server, method, path, origin):
 
 @pytest.mark.parametrize("method,path", [
     ("GET", "/api/version"), ("GET", "/api/settings"), ("GET", "/api/catalog/projects?refresh=1"),
-    ("PUT", "/api/settings/ui"), ("POST", "/api/project/clear"), ("DELETE", "/api/settings/ui"),
+    ("PUT", "/api/settings/ui"), ("POST", "/api/project/clear"), ("POST", "/api/reduce/run"), ("DELETE", "/api/settings/ui"),
+    ("GET", "/api/reduce"), ("GET", "/api/reduce/status"),
 ])
 @pytest.mark.parametrize("token", [None, "wrong-session", "", "\u00e9"])
 def test_all_api_calls_require_current_token(server, method, path, token):
@@ -165,6 +166,11 @@ def test_json_only_and_no_cors_are_preserved(server):
     status, headers, _ = request(server, "POST", "/api/project/clear", {
         SESSION_HEADER: token, "Content-Type": "text/plain",
     }, '{}')
+    assert status == 415
+    assert_hardened(headers)
+    status, headers, _ = request(server, "POST", "/api/reduce/run", {
+        SESSION_HEADER: token, "Content-Type": "text/plain",
+    }, '{"keep": ["a"]}')
     assert status == 415
     assert_hardened(headers)
     status, headers, _ = request(server, "OPTIONS", "/api/project/clear", {SESSION_HEADER: token})
