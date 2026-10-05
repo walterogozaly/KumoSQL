@@ -152,6 +152,7 @@ HEAVY_FILES = [
 # Test files that score KumoSQL against a benchmark corpus and hold its floors. They are marked ``eval``, so
 # ``pytest -m eval`` runs just the floors and ``pytest -m "not eval"`` everything else.
 EVAL_FILES = {
+    "test_eval_execution_cache.py",
     "test_proof_format_sqlfluff.py",
     "test_proof_recheck_dialect.py",
     "test_proof_recheck_fuzz_reuse.py",
@@ -188,6 +189,7 @@ EVAL_FILES = {
     "test_model_reuse_evals.py",
     "test_mv_workload_bench.py",
     "test_optimizer_bugs_bench.py",
+    "test_refutation_strength_eval.py",
     "test_output_properties.py",
     "test_pipeline_bench.py",
     "test_qed_benchmarks.py",

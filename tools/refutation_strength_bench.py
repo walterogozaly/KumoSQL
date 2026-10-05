@@ -14,13 +14,13 @@ A refutation whose database the harness cannot replay to a difference also count
 
 Sources (see ``tests/fixtures/refutation_strength/README.md``):
 
-* ``r024``: Luna's R024 sweep of confirmed-different pairs, minus the two parts kept elsewhere
+* ``r024``: an outside research assistant's sweep (R024) of confirmed-different pairs, minus the two parts kept elsewhere
   (``tests/fixtures/refutation_strength/r024.jsonl``): correlated domain joins (R006), aggregation
   pushdown (R009), windows (R011), documented rewrites (R012b) and decorrelation (R002).
 * ``optimizer-bugs``: the 24 pairs of ``tests/fixtures/optimizer_bugs`` (R019 in the sweep), with
   that eval's held-out split.
 * ``verieql``: R013's four VeriEQL pairs (Literature 46 and 47, which need more than 1,000 rows,
-  and Calcite 13 and 232), read from the VeriEQL download (CC BY-NC-SA 4.0, never stored here).
+  and Calcite 12 and 231), read from the VeriEQL download (CC BY-NC-SA 4.0, never stored here).
 
     python tools/refutation_strength_bench.py
     python tools/refutation_strength_bench.py --show unknown
@@ -338,7 +338,7 @@ def results_row(rows: list[dict]) -> dict:
         "size": len(main),
         "score": f"{refuted}/{len(refutable)} refuted, {counts['proven']} proved, {wrong} wrong",
         "metric": (
-            "Query pairs known to return different rows (Luna's R024 sweep, the optimizer wrong-result bugs and VeriEQL's "
+            "Query pairs known to return different rows (the R024 sweep of an outside research assistant, the optimizer wrong-result bugs and VeriEQL's "
             "large-cardinality pairs): refuted means prove_equivalent_algebraic(..., search_counterexample=True) returned a "
             "database that, replayed on DuckDB with the optimizer off, separates the pair. "
             f"R024 {part('r024')}, optimizer bugs {part('optimizer-bugs')}, VeriEQL {part('verieql')}; "
@@ -348,8 +348,7 @@ def results_row(rows: list[dict]) -> dict:
         "correctness": (
             "A proof or a refutation whose database does not replay to a difference counts as wrong. "
             f"Beside the score: {sum(r['outcome'] == 'refuted' for r in escapes)}/{len(escapes)} targeted-data escapes and "
-            f"{sum(r['outcome'] == 'refuted' for r in controls)}/{len(controls)} unsafe-rewrite controls refuted; the refuter "
-            "found no difference in any pair a prover eval labels equivalent."
+            f"{sum(r['outcome'] == 'refuted' for r in controls)}/{len(controls)} unsafe-rewrite controls refuted."
         ),
         "coverage": {k: counts[k] for k in ("proven", "refuted", "unknown") if counts[k]},
         "held_out": f"{sum(r['outcome'] == 'refuted' for r in held)}/{len(held)} refuted (optimizer-bugs' held-out pairs)",
@@ -399,6 +398,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.write_results:
         if args.only or args.baseline:
             raise SystemExit("--write-results needs every case and the synthesized search")
+        if not any(r["source"] == "verieql" for r in rows):
+            raise SystemExit("--write-results needs the VeriEQL download (the verieql pairs were skipped)")
         path = ROOT / "benchmarks" / "results" / "refutation-strength.json"
         path.write_text(json.dumps(results_row(rows), indent=2) + "\n", encoding="utf-8")
         print(f"wrote {path.relative_to(ROOT)}")

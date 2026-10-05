@@ -10,7 +10,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 - **Evidence level.** A score says how strong its positive answers are: an unbounded proof, bounded verification (no difference on any database up to a row limit) or agreement on executed datasets. A suite that mixes levels has one results file per level.
 - **Zero wrong.** An eval reports `X/Y, 0 wrong`. A false proof, an incorrect counterexample or a behaviour-changing rewrite is a bug; an unknown is allowed.
 - **Held-out cases.** Where a held-out split exists, the page and the results file say so. Cases a rule was developed against are marked `tuned on test`.
-- **Rerun.** `command` in each results file reruns the eval. `python tools/run_tests.py --evals` runs every benchmark floor, and `python tools/eval_diff.py` compares every eval on `origin/master` with your checkout. It masks timing before comparing (JSON timing keys, numbers with a unit, `HH:MM:SS`, and the bare elapsed-seconds column that ends a SQLSolver summary row), so only answers and counts count as a difference.
+- **Rerun.** `command` in each results file reruns the eval. `python tools/run_tests.py --evals` runs every benchmark floor, and `python tools/eval_diff.py` compares every eval on `origin/master` with your checkout. It masks timing before comparing (including fields ending in `_seconds`, numbers with a unit, `HH:MM:SS`, and the bare elapsed-seconds column that ends a SQLSolver summary row), so only answers and counts count as a difference. See [eval diff](eval-diff.md) for stable samples, per-eval time caps, process cleanup, and timing records.
 
 ## Source inventory
 
@@ -34,6 +34,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 | [Documented rewrites](documented-rewrites.md) | Rewrites recommended by vendor and style-guide docs, written as KumoSQL's own cases; the ones that change results must not be proved | `documented-rewrites` |
 | [Arcwise-Plat corrections of BIRD](arcwise-corrections.md) | 144 BIRD gold queries against their human repair, downloaded at run time (CC BY-SA, never committed): the two differ in meaning, so none may be proved; refuted by a database KumoSQL builds | `arcwise-corrections` |
 | [Optimizer wrong-result bugs](optimizer-bugs.md) | Query pairs from public optimizer bug reports (Calcite, Spark, CockroachDB, DuckDB, MySQL, ClickHouse): none may be proved | `optimizer-bugs` |
+| [Refutation strength](refutation-strength.md) | Pairs known to differ (an outside sweep, the optimizer bugs, VeriEQL's large-cardinality pairs): how many get a replayable counterexample from the prover's synthesized search | `refutation-strength` |
 | [Paired engine tests](engine-paired-tests.md) | Trino's two-query join assertions, Spark's predicate-subquery tests, a PostgreSQL join-removal regression and a DuckDB collation fixture, with authored JoinEquiv and jOOQ guards: proved, refuted or unknown against hand labels | `engine-paired-tests` |
 | [Numeric traps](numeric-traps.md) | BigQuery number and error rules around the SMT prover (2**53, INT64 overflow, NaN, `-0.0`, NUMERIC, `/` against `DIV`, an operation moved ahead of its guard): trap pairs never proved, and whether a rewrite can raise an error the original cannot | `numeric-traps` |
 | [Join rewrites to LEFT JOIN](join-rewrites.md) | Hand-checked rewrites between CROSS, INNER, RIGHT, FULL, semi and anti joins and LEFT JOIN, proved or refuted | `join-rewrites` |
@@ -92,7 +93,7 @@ These features keep their eval results on the feature's own page.
 
 ## Adding an eval
 
-1. Write the harness under `tools/` and a test under `tests/`; add the test to `EVAL_FILES` in `tests/conftest.py`.
+1. Write the harness under `tools/` and a test under `tests/`; add the test to `EVAL_FILES` in `tests/conftest.py`. Use [eval diff](eval-diff.md) to compare slow evals without running their full corpora.
 2. Pin the source version, keep original and adapted cases apart, and reserve held-out cases.
 3. Add `benchmarks/results/<name>.json` and run `python tools/scoreboard.py`.
 4. Add or extend a page in this folder, list it in the table above and in [docs/README.md](../README.md). `tests/test_docs.py` checks that every page and every results file is listed.
