@@ -10,6 +10,8 @@ limit per solver check live in the ``prover`` section of the saved settings.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 import threading
 
 from . import state
@@ -66,8 +68,30 @@ def save_settings(enabled: object = None, timeout_ms: object = None, bounded_row
     return current
 
 
+_COLUMNS: ContextVar[dict[str, list[str]] | None] = ContextVar("kumosql_prover_columns", default=None)
+
+
+@contextmanager
+def use_columns(columns: dict[str, list[str]]):
+    """Make ``current_schema()`` report exactly these columns (table name to column names) inside the block.
+
+    For callers that hold their own table definitions, and tests: the rule that qualifies columns and the
+    proof that checks it then read the same tables.
+    """
+
+    token = _COLUMNS.set({k.lower(): [c.lower() for c in v] for k, v in columns.items()})
+    try:
+        yield
+    finally:
+        _COLUMNS.reset(token)
+
+
 def current_schema() -> ProverSchema:
     """Facts from the loaded project and the saved BigQuery catalog (nothing is fetched)."""
+
+    override = _COLUMNS.get()
+    if override is not None:
+        return ProverSchema(columns=dict(override), table_count=len(override), sources={"given"})
 
     from . import bigquery_catalog, live_graph
 
@@ -101,11 +125,13 @@ def status() -> dict:
     }
 
 
-def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: ProverSchema | None = None, equivalences_enabled: bool = True, search_counterexample: bool = False) -> SmtEquivalenceResult:
+def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: ProverSchema | None = None, equivalences_enabled: bool = True, search_counterexample: bool = False, conditional: bool = False) -> SmtEquivalenceResult:
     """Prove two queries return the same rows, using the project's declared facts.
 
     ``search_counterexample`` also runs an unproven pair on databases built for it
     (needs declared column types) and returns any database that tells them apart.
+    ``conditional`` retries an unproven pair under facts taken from the queries and returns
+    ``PROVEN_CONDITIONALLY`` with the minimal conditions when they settle it.
     """
 
     from . import equivalences
@@ -130,8 +156,9 @@ def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: 
         types=facts.types or None,
         timeout_ms=timeout_ms if timeout_ms is not None else settings()["timeout_ms"],
         search_counterexample=search_counterexample,
+        conditional=conditional,
     )
-    if (facts.notes or used) and result.status is SmtStatus.PROVEN_EQUIVALENT:
+    if (facts.notes or used) and result.status in (SmtStatus.PROVEN_EQUIVALENT, SmtStatus.PROVEN_CONDITIONALLY):
         wanted = [*facts.notes]
         if used:
             wanted.append("declared equivalences hold in the data: " + "; ".join(i.label for i in used))

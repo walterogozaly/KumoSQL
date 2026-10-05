@@ -52,6 +52,8 @@ consolidate-tables = "kumosql.consolidate:main"
 kumosql-equivalence = "kumosql.pipeline_equivalence:equivalence_main"
 kumosql-refactor = "kumosql.refactor:main"
 minimize-tables = "kumosql.table_minimizer:main"
+reduce-project = "kumosql.project_reduction:main"
+kumosql-shared-model = "kumosql.shared_models:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -67,7 +69,7 @@ kumosql = ["static/*.html", "static/*.css", "static/*.js", "static/*.svg", "stat
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
-    "slow: scans the full SQL workbook fixture",
+    "slow: a long benchmark run, deselected by default (pytest -m slow runs it)",
     "eval: scores KumoSQL on a benchmark corpus and holds its floors (set in tests/conftest.py)",
     "xdist_group(name): keep these tests on one pytest-xdist worker (used with --dist loadgroup)",
 ]

@@ -5,8 +5,8 @@ random and targeted databases) runs BigQuery SQL on DuckDB after sqlglot transla
 two engines disagree on the same SQL, a DuckDB difference can be a false BigQuery refutation, which
 is a wrong answer. This module is the one place that closes those gaps, in three ways:
 
-* **session settings** (:func:`configure`): ``NULL`` sorts first ascending and last descending, as
-  in BigQuery, and timestamps are read in UTC;
+* **session settings** (:func:`configure`): timestamps are read in UTC (sqlglot already spells out
+  BigQuery's NULL order, ``NULLS FIRST`` ascending, against DuckDB's default);
 * **translation fixes** (:func:`faithful`), each checked against BigQuery itself:
   ``NUMERIC`` is ``DECIMAL(38, 9)`` (sqlglot writes a bare ``DECIMAL``, which is ``DECIMAL(18, 3)``),
   ``EXTRACT(DAYOFWEEK)`` counts Sunday as 1, ``EXTRACT(WEEK)`` is Sunday-based (DuckDB's is ISO),
@@ -49,10 +49,9 @@ from sqlglot import exp
 
 MARKER = "BigQuery semantics"
 
-SETTINGS = (
-    "SET default_null_order = 'NULLS_FIRST_ON_ASC_LAST_ON_DESC'",
-    "SET TimeZone = 'UTC'",
-)
+# No NULL-order setting: sqlglot writes BigQuery's order against DuckDB's default (``NULLS FIRST`` on an
+# ascending key, nothing on ``ASC NULLS LAST``), so a session default would flip the keys it leaves bare.
+SETTINGS = ("SET TimeZone = 'UTC'",)
 
 
 def _fail(reason: str) -> str:
@@ -73,7 +72,7 @@ _STRING_FORMS = {
     "timestamp": r"[0-9]{4}-[0-9]{2}-[0-9]{2}( [0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?)?",
 }
 
-MACROS = (
+_MACRO_DEFINITIONS = (
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_div(a, b) AS CASE WHEN b = 0 THEN {_fail('division by zero')} "
     f"WHEN (typeof(a) = {_NUMERIC} AND (typeof(b) = {_NUMERIC} OR typeof(b) IN {_INTEGERS})) "
     f"OR (typeof(b) = {_NUMERIC} AND typeof(a) IN {_INTEGERS}) THEN {_fail('NUMERIC division rounds to 9 digits')} "
@@ -96,8 +95,16 @@ MACROS = (
     f"AND (x > 9223372036854775807 OR x < -9223372036854775808) THEN {_fail('INT64 overflow')} ELSE x END",
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_string(x) AS CASE WHEN typeof(x) IN ('DOUBLE', 'FLOAT') "
     f"THEN {_fail('FLOAT64 to STRING formats differently')} "
+    # BigQuery writes fractional seconds in groups of three digits (.000100), DuckDB as few as needed (.0001)
+    "WHEN typeof(x) IN ('TIMESTAMP WITH TIME ZONE', 'TIMESTAMP', 'TIME') "
+    "AND regexp_matches(CAST(x AS VARCHAR), '[.]([0-9]{1,2}|[0-9]{4,5})([^0-9]|$)') "
+    f"THEN {_fail('fractional seconds format differently')} "
     "WHEN typeof(x) LIKE 'DECIMAL%' AND contains(CAST(x AS VARCHAR), '.') "
     "THEN rtrim(rtrim(CAST(x AS VARCHAR), '0'), '.') ELSE CAST(x AS VARCHAR) END",
+    f"CREATE OR REPLACE TEMP MACRO kumo_bq_avg_arg(x) AS CASE WHEN typeof(x) LIKE 'DECIMAL%' "
+    f"THEN {_fail('AVG, STDDEV and VARIANCE of NUMERIC are exact in BigQuery')} ELSE x END",
+    # SPLIT with a NULL delimiter is NULL; DuckDB's STR_SPLIT returns the whole string
+    "CREATE OR REPLACE TEMP MACRO kumo_bq_split(s, d) AS CASE WHEN d IS NULL THEN NULL ELSE str_split(s, d) END",
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_read(x, form) AS CASE WHEN typeof(x) = 'VARCHAR' "
     f"AND NOT regexp_full_match(CAST(x AS VARCHAR), form) THEN {_fail('string read differently by BigQuery')} ELSE x END",
     # a[OFFSET(i)] (base 0) and a[ORDINAL(i)] (base 1): an index outside the array fails, the SAFE_ forms give NULL;
@@ -113,6 +120,51 @@ MACROS = (
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_substr3(s, p, n) AS CASE WHEN n < 0 THEN {_fail('negative SUBSTR length')} "
     "ELSE substring(s, CASE WHEN p = 0 OR p < -length(s) THEN 1 ELSE p END, n) END",
 )
+_MACRO_HEAD = re.compile(r"CREATE OR REPLACE TEMP MACRO (\w+)\(([^)]*)\) AS (.*)", re.DOTALL)
+_QUOTED = re.compile(r"'(?:[^']|'')*'")
+
+
+def _once(statement: str) -> str:
+    """The macro with each argument evaluated once.
+
+    DuckDB expands a macro by pasting its argument expressions in wherever the body names them, so
+    ``kumo_bq_div(a, b)`` copies ``a`` five times and ``b`` seven: nested calls grow exponentially (a
+    variance written with divisions, products and sums took 0.15 s to plan on an empty table, 20 times
+    the plain query). Packing the arguments into one struct handed to a lambda binds each once, with the
+    same values and types, and ``typeof`` of a field reads the argument's own type.
+    """
+
+    name, parameters, body = _MACRO_HEAD.match(statement).groups()
+    names = [p.strip() for p in parameters.split(",")]
+    # a parameter becomes a field of the lambda's argument (named so that no macro parameter shares its name,
+    # which DuckDB would replace inside the struct too), outside string literals only
+    fields = {n: f"_f{i}" for i, n in enumerate(names)}
+    pattern = re.compile(rf"\b({'|'.join(names)})\b")
+
+    def rename(text: str) -> str:
+        return pattern.sub(lambda m: f"_k.{fields[m.group(1)]}", text)
+
+    parts, last = [], 0
+    for quoted in _QUOTED.finditer(body):
+        parts += [rename(body[last:quoted.start()]), quoted.group()]
+        last = quoted.end()
+    parts.append(rename(body[last:]))
+    packed = ", ".join(f"{fields[n]} := {n}" for n in names)
+    return f"CREATE OR REPLACE TEMP MACRO {name}({parameters}) AS list_transform([struct_pack({packed})], _k -> {''.join(parts)})[1]"
+
+
+# ``kumo_bq_read`` tests ``typeof(x) = 'VARCHAR'`` and a bare NULL argument turns into a VARCHAR field, so it keeps
+# the plain form (its argument is a cast's operand, rarely nested deep)
+# ``HAVING`` cannot bind a lambda around an aggregate (DuckDB reads the field as an ungrouped column), so there the
+# plain form is called, under the name ``<macro>_plain``.
+_PACKED = tuple(_MACRO_HEAD.match(m).group(1) for m in _MACRO_DEFINITIONS if "kumo_bq_read(" not in m)
+MACROS = tuple(
+    statement if "kumo_bq_read(" in statement else _once(statement) for statement in _MACRO_DEFINITIONS
+) + tuple(
+    statement.replace(f"MACRO {_MACRO_HEAD.match(statement).group(1)}(", f"MACRO {_MACRO_HEAD.match(statement).group(1)}_plain(", 1)
+    for statement in _MACRO_DEFINITIONS
+    if "kumo_bq_read(" not in statement
+)
 
 
 class Unfaithful(sqlglot.errors.UnsupportedError):
@@ -124,7 +176,7 @@ class UnfaithfulOutput(ValueError):
 
 
 def configure(connection) -> None:
-    """BigQuery's NULL order and UTC on ``connection``, and the macros :func:`faithful` calls."""
+    """UTC on ``connection``, and the macros :func:`faithful` calls."""
 
     for statement in SETTINGS:
         try:
@@ -155,9 +207,34 @@ _REFUSED = _class(
     "HllCountMerge", "HllCountExtract", "IeeeDivide",
     # sqlglot's ARRAY_SLICE keeps BigQuery's 0-based bounds; PERCENTILE_CONT ignores RESPECT NULLS
     "ArraySlice", "PercentileCont", "PercentileDisc", "ParseJSON",
+    # ANY_VALUE(x HAVING MAX/MIN y) becomes ARG_MAX_NULL, which picks another row on NaN and NULL keys
+    "HavingMax",
 ) + tuple(getattr(exp, name) for name in dir(exp) if name.startswith("JSON") and isinstance(getattr(exp, name), type))
 _APPROX_NAMES = re.compile(r"^(APPROX_|HLL_COUNT|KLL_|IEEE_DIVIDE$|FORMAT$|COLLATE$|ARRAY_SLICE$)", re.IGNORECASE)
 _STRUCT_COMPARISONS = _class("EQ", "NEQ", "LT", "LTE", "GT", "GTE", "NullSafeEQ", "NullSafeNEQ", "In", "Is")
+
+
+def _fields(node: exp.Struct) -> list[str] | None:
+    """The field names of ``STRUCT(.. AS a, .. AS b)``, or ``None`` when a field is unnamed."""
+
+    if not all(isinstance(field, (exp.PropertyEQ, exp.Alias)) for field in node.expressions):
+        return None
+    return [field.alias_or_name for field in node.expressions]
+
+
+def _table_row(node: exp.Struct) -> bool:
+    """A row of ``FROM UNNEST([STRUCT(.. AS a), STRUCT(.. AS a)])``, an inline table. DuckDB reads the
+    rows by field name and BigQuery by position, so every row must name its fields as the first does
+    (sqlglot 26 names an unnamed field ``_0``, which DuckDB reads as a new column)."""
+
+    array, unnest = node.parent, node.parent and node.parent.parent
+    if not (isinstance(array, exp.Array) and isinstance(unnest, exp.Unnest) and isinstance(unnest.parent, (exp.From, exp.Join))):
+        return False
+    if len(unnest.expressions) != 1 or unnest.args.get("offset"):
+        return False
+    rows = [_fields(row) if isinstance(row, exp.Struct) else None for row in array.expressions]
+    first = rows[0]
+    return bool(first) and len({name.lower() for name in first}) == len(first) and all(row == first for row in rows)
 
 
 def struct_refusal(tree: exp.Expression, struct_columns: Iterable[str] = ()) -> str | None:
@@ -170,6 +247,8 @@ def struct_refusal(tree: exp.Expression, struct_columns: Iterable[str] = ()) -> 
 
     names = set()
     for node in tree.find_all(exp.Struct):
+        if _table_row(node):
+            continue
         if isinstance(node.parent, exp.Dot) and node.arg_key == "this" and _named_fields(node):
             continue  # STRUCT(1 AS a, 2 AS b).b reads one field
         if not (isinstance(node.parent, exp.Alias) and isinstance(node.parent.parent, exp.Select)):
@@ -236,12 +315,105 @@ def _source_unnest(node: exp.Unnest) -> bool:
     return not node.args.get("offset") or bool(columns) or bool(alias is not None and alias.name)
 
 
+_GROUPINGS = _class("GroupingSets", "Rollup", "Cube")
+_MOMENTS = _class("Avg", "Stddev", "StddevPop", "StddevSamp", "Variance", "VariancePop")
+# an escape sqlglot leaves in a string as the backslash and the letter (hex, unicode, octal, \?, quotes)
+_UNDECODED_ESCAPE = re.compile(r"\\[xXuU0-7?'\"`]")
+_PARSES = _class("StrToTime", "StrToDate")
+_ZONED = _class("TimeToStr", "String")
+_LIKES = _class("Like", "ILike")
+_ZONE_NAME = re.compile(r"^(Etc/GMT[+-][0-9]{1,2}|[A-Za-z_]+([/-][A-Za-z_]+)*)$")
+# a string literal BigQuery may coerce to a date or time when a set operation lines it up with one
+_TEMPORAL_TEXT = re.compile(r"^\s*([0-9]{1,4}-[0-9]{1,2}-[0-9]{1,2}|[0-9]{1,2}:[0-9]{2})")
+
+
+def _value_table_as_table(node: exp.Select) -> bool:
+    """``SELECT AS STRUCT/VALUE`` read as a table (a derived table or a CTE): BigQuery reads the struct's
+    fields as the columns, DuckDB keeps one struct column."""
+
+    if not node.args.get("kind"):
+        return False
+    holder = node.parent
+    while isinstance(holder, _SET_OPERATIONS):
+        holder = holder.parent
+    return isinstance(holder, exp.CTE) or (isinstance(holder, exp.Subquery) and isinstance(holder.parent, (exp.From, exp.Join)))
+
+
+def _group_by_all_without_keys(node: exp.Select) -> bool:
+    """``GROUP BY ALL`` with no grouping key and nothing to aggregate (``SELECT 1 ... GROUP BY ALL``): BigQuery
+    makes one group, DuckDB drops the grouping and returns every row. With an aggregate in the select list both
+    make one group, so that query is translated as written."""
+
+    group = node.args.get("group")
+    if group is None or not group.args.get("all"):
+        return False
+    for item in node.expressions:
+        if item.find(exp.AggFunc, exp.Window) is not None or item.find(exp.Column) is not None:
+            return False
+    return True
+
+
+def _temporal_text_in_set_operation(node: exp.Expression) -> bool:
+    for side in (node.this, node.expression):
+        for select in ([side] if isinstance(side, exp.Select) else []):
+            for item in select.expressions:
+                item = item.this if isinstance(item, exp.Alias) else item
+                if isinstance(item, exp.Literal) and item.is_string and _TEMPORAL_TEXT.match(item.this):
+                    return True
+    return False
+
+
 def refusal(tree: exp.Expression, struct_columns: Iterable[str] = ()) -> str | None:
     """Why ``tree`` has no faithful DuckDB reading, or ``None``."""
 
     for node in tree.walk():
         if isinstance(node, _REFUSED):
             return type(node).__name__
+        # the cases below were found by the GoogleSQL compliance expected results (tools/googlesql_results_eval.py)
+        if isinstance(node, exp.ByteString) and "\\" in str(node.this):
+            return "BYTES literal with a backslash"  # sqlglot writes the escapes into an e'..' string as they were
+        if (
+            isinstance(node, exp.Literal)
+            and node.is_string
+            and not isinstance(node.parent, exp.RawString)
+            and _UNDECODED_ESCAPE.search(node.this)
+        ):
+            return "string escape sqlglot does not decode"  # \x41, \u20AC, \101, \? and \' stay a backslash
+        if isinstance(node, exp.RegexpInstr) and (node.args.get("occurrence") is not None or node.args.get("option") is not None):
+            return "REGEXP_INSTR with an occurrence or a return position"  # sqlglot's expansion counts them differently
+        if isinstance(node, exp.In) and isinstance(node.this, (exp.Tuple, exp.Struct)) and node.find(exp.Null):
+            return "IN over a struct with a NULL"  # BigQuery compares struct fields with NULL as unknown; DuckDB's lists do not
+        if isinstance(node, _PARSES):
+            # PARSE_DATE/PARSE_TIMESTAMP and CAST .. FORMAT become strptime, which reads format elements and
+            # defaults differently; sqlglot also drops the time zone and a CAST's TIME target
+            return "PARSE_ or CAST .. FORMAT"
+        if isinstance(node, _ZONED) and node.args.get("zone") is not None:
+            return f"{node.sql_name()} in a time zone"  # sqlglot drops the zone or the offset
+        zone = node.args.get("zone")
+        if zone is None and isinstance(node, exp.Datetime) and isinstance(node.expression, exp.Literal):
+            zone = node.expression  # DATETIME(timestamp, 'zone')
+        if isinstance(zone, exp.Expression) and not (
+            isinstance(zone, exp.Literal) and zone.is_string and _ZONE_NAME.match(zone.this)
+        ):
+            return "time zone that is not a named zone"  # DuckDB reads offsets such as 'UTC+1234' differently
+        if isinstance(node, _LIKES) and isinstance(node.expression, (exp.Any, exp.All)) and not isinstance(
+            node.expression.this, exp.Tuple
+        ):
+            return "LIKE ANY/ALL over an array or subquery"  # sqlglot writes LIKE UNNEST(..)
+        if isinstance(node, exp.Round) and node.args.get("truncate") is not None:
+            return "ROUND with a rounding mode"  # DuckDB's ROUND_EVEN goes through DOUBLE
+        if isinstance(node, exp.Pivot) and node.args.get("unpivot"):
+            return "UNPIVOT"  # DuckDB puts the name column before the value columns
+        if isinstance(node, _GROUPINGS) and any(not isinstance(k, exp.Column) for k in node.expressions):
+            # BigQuery reads an integer as a select-list position and matches select items to an expression
+            # key differently from DuckDB
+            return f"{node.key.upper()} key that is not a column"
+        if isinstance(node, exp.Select) and _value_table_as_table(node):
+            return "SELECT AS STRUCT/VALUE read as a table"
+        if isinstance(node, exp.Select) and _group_by_all_without_keys(node):
+            return "GROUP BY ALL without a grouping key"
+        if isinstance(node, _SET_OPERATIONS) and _temporal_text_in_set_operation(node):
+            return "date or time text in a set operation"  # BigQuery coerces it, DuckDB makes the column text
         if isinstance(node, exp.Anonymous) and _APPROX_NAMES.match(str(node.this)):
             return str(node.this).upper()
         if isinstance(node, exp.Unnest) and node.args.get("offset") and not _source_unnest(node):
@@ -342,6 +514,10 @@ def _extract(node: exp.Extract) -> exp.Expression | None:
     unit = _unit(node.this)
     if unit == "DAYOFWEEK":
         return exp.Paren(this=exp.Add(this=node, expression=exp.Literal.number(1)))
+    if unit in ("MILLISECOND", "MICROSECOND"):
+        # DuckDB counts the whole seconds too (56.999 s is 56999 ms); BigQuery only the fraction (999)
+        whole = 1000 if unit == "MILLISECOND" else 1000000
+        return exp.Paren(this=exp.Mod(this=node, expression=exp.Literal.number(whole)))
     start = _week_start(unit)
     if start is None:
         return None
@@ -371,6 +547,10 @@ def _sums(node: exp.Expression) -> bool:
     return isinstance(node, exp.Sum)
 
 
+def _escaped(like: exp.Expression) -> exp.Expression:
+    return exp.Escape(this=like, expression=exp.Literal.string("\\"))
+
+
 def _rewrite(node: exp.Expression) -> exp.Expression | None:
     """The faithful replacement of one node (its children already rewritten), or ``None`` to keep it."""
 
@@ -378,6 +558,8 @@ def _rewrite(node: exp.Expression) -> exp.Expression | None:
         return exp.DataType.build("DECIMAL(38, 9)", dialect="duckdb")
     if isinstance(node, exp.Div) and not node.args.get("safe"):
         return _call("kumo_bq_div", node.this, node.expression)
+    if isinstance(node, exp.CountIf):  # DuckDB's count_if is NULL over no rows or only NULLs, BigQuery's 0
+        return exp.Count(this=exp.Case(ifs=[exp.If(this=node.this, true=exp.Literal.number(1))]))
     if isinstance(node, exp.SafeDivide):
         return _call("kumo_bq_safe_div", node.this, node.expression)
     if isinstance(node, exp.Mul):
@@ -394,6 +576,32 @@ def _rewrite(node: exp.Expression) -> exp.Expression | None:
         isinstance(node, exp.Sum) and isinstance(node.parent, exp.Filter)
     ):
         return _call("kumo_bq_int64", node)
+    if isinstance(node, _LIKES) and not isinstance(node.parent, exp.Escape):
+        # BigQuery reads a backslash in a LIKE pattern as an escape (r'a\_b' matches 'a_b'); DuckDB only with ESCAPE
+        if isinstance(node.expression, (exp.Any, exp.All)):  # LIKE ANY/ALL ('a', 'b'): one LIKE per pattern
+            negate = node.args.get("negate")
+            likes = [
+                _escaped(type(node)(this=node.this.copy(), expression=p.copy(), negate=negate))
+                for p in node.expression.this.expressions
+            ]
+            joined = exp.or_(*likes) if isinstance(node.expression, exp.Any) else exp.and_(*likes)
+            return exp.Paren(this=joined)
+        return _escaped(node)
+    if isinstance(node, exp.Split) and node.expression is not None:
+        return _call("kumo_bq_split", node.this, node.expression)
+    if isinstance(node, _MOMENTS):
+        # DuckDB averages a DECIMAL (and takes its variance) as a DOUBLE; BigQuery keeps NUMERIC exact (rounded to 9 digits)
+        if isinstance(node.this, exp.Distinct):
+            node.this.set("expressions", [_call("kumo_bq_avg_arg", e) for e in node.this.expressions])
+        else:
+            node.set("this", _call("kumo_bq_avg_arg", node.this))
+        return None
+    if isinstance(node, _SET_OPERATIONS):
+        # sqlglot writes a set operation operand without parentheses (A INTERSECT B UNION ALL C)
+        for key in ("this", "expression"):
+            if isinstance(node.args.get(key), _SET_OPERATIONS):
+                node.set(key, exp.Subquery(this=node.args[key]))
+        return None
     if isinstance(node, exp.Bracket) and len(node.expressions) == 1 and not (
         isinstance(node.expressions[0], exp.Literal) and node.expressions[0].is_string
     ):
@@ -550,6 +758,9 @@ def faithful(tree: exp.Expression, columns: Mapping[str, str] | None = None) -> 
         else:
             parent.args[key] = replacement
         replacement.parent, replacement.arg_key, replacement.index = parent, key, index if isinstance(slot, list) else None
+    for call in list(tree.find_all(exp.Anonymous)):
+        if str(call.this).lower() in _PACKED and call.find_ancestor(exp.Having) is not None:
+            call.set("this", f"{call.this}_plain")
     return tree
 
 

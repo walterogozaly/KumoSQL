@@ -12,6 +12,7 @@ equivalence prover can itself use rules without an import cycle.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 import re
@@ -25,6 +26,7 @@ from sqlglot.tokens import TokenType
 from .ast_utils import cte_dependency_errors, parse_statements, render_statement
 from .scripts import has_blocks, is_rewriteable, leaf_statements
 from .sqlx import (
+    opaque_tokens,
     SqlxRestorationError,
     looks_like_sqlx,
     mask_sqlx_interpolations,
@@ -97,6 +99,19 @@ def _token_key(token) -> tuple[TokenType, str]:
     return token.token_type, text
 
 
+def _render_or_source(statement: exp.Expression, source: str) -> str:
+    """Render a statement no rule changed; where sqlglot cannot (a recovered, truncated predicate), use its source text.
+
+    The rendering only checks that the output still parses to the same statements, so the text the
+    statement was parsed from stands in for it.
+    """
+
+    try:
+        return render_statement(_without_comments(statement))
+    except Exception:  # noqa: BLE001 - the compiled generator raises TypeError on a missing operand
+        return source
+
+
 def _without_comments(statement: exp.Expression) -> exp.Expression:
     result = statement.copy()
     for node in result.walk():
@@ -115,6 +130,37 @@ def _uses_pipe_syntax(sql: str) -> bool:
         return any(token.token_type is TokenType.PIPE_GT for token in sqlglot.tokenize(sql, read="bigquery"))
     except Exception:  # noqa: BLE001
         return "|>" in sql
+
+
+def has_template_tags(sql: str) -> bool:
+    """Whether ``sql`` holds a Jinja tag (``{{``, ``{%`` or ``{#``) outside string literals and comments.
+
+    sqlglot reads ``{{ x }}`` as a nested struct literal and prints it back as ``STRUCT(STRUCT(x))``, so a rule
+    would silently rewrite the template; templated SQL is left exactly as written instead.
+    """
+
+    i, n = 0, len(sql)
+    while i < n:
+        char = sql[i]
+        if char == "{" and sql[i + 1 : i + 2] in ("{", "%", "#"):
+            return True
+        if char in "'\"`":
+            quote = sql[i : i + 3] if sql[i : i + 3] in ("'''", '"""') else char
+            j = i + len(quote)
+            while j < n and not sql.startswith(quote, j):
+                j += 2 if sql[j] == "\\" else 1
+            i = j + len(quote)
+            continue
+        if char == "#" or sql.startswith("--", i):
+            end = sql.find("\n", i)
+            i = n if end < 0 else end + 1
+            continue
+        if sql.startswith("/*", i):
+            end = sql.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            continue
+        i += 1
+    return False
 
 
 def _rewriteable_statements(statements: list[exp.Expression]) -> list[tuple[int, exp.Expression]]:
@@ -259,6 +305,9 @@ def _splice_statement(source: str, rendered: str) -> str:
     return result
 
 
+# Sentinels of the SQLX expressions (not table references) in the section a rule is rewriting.
+_OPAQUE_SQLX: ContextVar[frozenset[str]] = ContextVar("kumosql_opaque_sqlx", default=frozenset())
+
 FATAL_DIAGNOSTIC_CODES = frozenset(
     {
         "parse_error",
@@ -316,6 +365,16 @@ class RewriteRule:
     #: Rewrite statements written in pipe syntax. sqlglot parses ``|>`` into nested CTEs and prints them
     #: as standard SQL, so only analysis that never shows its output (the prover) turns this on.
     rewrite_pipe_syntax: ClassVar[bool] = False
+    #: Only the prover's normalization reads the output, never a user: templated SQL is read the way sqlglot
+    #: reads it.
+    analysis_only: ClassVar[bool] = False
+    #: Leave a SQLX statement alone when it holds a ``${...}`` expression other than ``ref()``/``self()``. The rule
+    #: sees only a placeholder name there, but the expression can compile to a looser-binding predicate, a whole
+    #: clause or a query that reads a CTE, so dropping parentheses, predicates or CTEs around it can break it.
+    keep_sqlx_expressions: ClassVar[bool] = False
+    #: Left out of ``canonical_rule_order()`` and of the benchmark and fuzz sweeps over every rule: a style
+    #: choice, or a rule that needs facts (table columns) those inputs do not declare. Run it by name.
+    opt_in: ClassVar[bool] = False
 
     def rewrite_statement(
         self, statement: exp.Expression, index: int
@@ -339,6 +398,11 @@ class RewriteRule:
     def _apply_sql(self, sql: str) -> RuleOutput:
         if not sql or not sql.strip():
             return RuleOutput("", 0, 0, 0, 0, ())
+        if not self.analysis_only and has_template_tags(sql):
+            return RuleOutput(
+                sql, 0, 0, 0, 0,
+                (RuleDiagnostic(-1, "templated_sql_kept", "Jinja templating ({{ }}, {% %}, {# #}) is left as written"),),
+            )
         if _BLOCK_WORDS.search(sql) and has_blocks(sql):
             return self._apply_script(sql)
 
@@ -392,7 +456,15 @@ class RewriteRule:
         edits: list[tuple[int, int, str]] = []
         changed_statements = 0
         changes = 0
+        opaque = _OPAQUE_SQLX.get() if self.keep_sqlx_expressions else frozenset()
         for (index, _), (start, end, statement) in zip(rewriteable, segments):
+            if opaque and any(token in sql[start:end] for token in opaque):
+                diagnostics.append(
+                    RuleDiagnostic(index, "sqlx_expression_kept", "a ${...} expression other than ref() or self() is left as written")
+                )
+                rewritten_statements.append(statement)
+                rendered_statements.append(_render_or_source(statement, sql[start:end]))
+                continue
             if not self.rewrite_pipe_syntax and _uses_pipe_syntax(sql[start:end]):
                 # sqlglot turns pipe syntax into nested CTEs and subqueries when it parses it, so a rule
                 # would rewrite that translation (and print it as standard SQL), not what was written.
@@ -400,7 +472,7 @@ class RewriteRule:
                     RuleDiagnostic(index, "pipe_syntax_kept", "pipe syntax (|>) is left as written")
                 )
                 rewritten_statements.append(statement)
-                rendered_statements.append(render_statement(_without_comments(statement)))
+                rendered_statements.append(_render_or_source(statement, sql[start:end]))
                 continue
             before = statement.copy()
             try:
@@ -434,7 +506,7 @@ class RewriteRule:
                 # Do not keep a partially mutated AST after a failed rule step.
                 statement = before
                 rewritten_statements.append(before)
-            rendered_statements.append(render_statement(_without_comments(statement)))
+            rendered_statements.append(_render_or_source(statement, sql[start:end]))
 
         if changes == 0:
             if not _same_ast(
@@ -546,7 +618,11 @@ class RewriteRule:
                 continue
             try:
                 masked, restorations = mask_sqlx_interpolations(section)
-                result = self._apply_sql(masked)
+                reset = _OPAQUE_SQLX.set(opaque_tokens(restorations))
+                try:
+                    result = self._apply_sql(masked)
+                finally:
+                    _OPAQUE_SQLX.reset(reset)
                 restored = restore_sqlx_interpolations(result.sql, restorations)
                 rendered.append(with_preserved_whitespace(section, restored))
                 statements += result.statements

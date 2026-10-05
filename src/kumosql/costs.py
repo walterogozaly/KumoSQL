@@ -8,6 +8,10 @@ Measured and estimated cost are separate types of value. A :class:`Cost` has a
 (dry run) bytes can never leak into measured totals. Billed bytes, processed
 bytes and slot time are separate fields; reports say which one they use.
 
+A job whose billed bytes are missing, or cannot be read as a whole number, is
+*unmeasured*: it is left out of every total and counted under
+``excluded["unmeasured"]``. A missing measurement is never read as zero cost.
+
 Attribution assigns a job's whole cost to exactly one place and records the
 method. A job's cost is never split across the tables it read, because job
 history does not report bytes per table. Whatever cannot be assigned goes into
@@ -29,6 +33,7 @@ import json
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Literal, Mapping
 
@@ -51,6 +56,13 @@ REASONS = {
     "script_without_children": "A script job whose child jobs are not in the input.",
     "no_tables": "The job records neither a destination nor referenced tables.",
 }
+
+INVOICE_EXCLUSIONS = (
+    "This is billed bytes from the supplied job history times the caller's rate. An invoice also "
+    "covers things this does not: BI Engine and reservation (slot capacity) charges, storage, "
+    "streaming and other services, discounts, credits and taxes, and jobs outside the supplied "
+    "history or window. Jobs without measured bytes billed are left out."
+)
 
 # Job label keys that may carry a target table for a job, in priority order.
 DEFAULT_LABEL_KEYS = ("target", "action_target")
@@ -107,9 +119,9 @@ class ObservedJob:
     statement_type: str = ""
     destination_table: object | None = None
     referenced_tables: tuple[object, ...] = ()
-    total_bytes_processed: int = 0
-    total_bytes_billed: int = 0
-    total_slot_ms: int = 0
+    total_bytes_processed: int | None = None
+    total_bytes_billed: int | None = None
+    total_slot_ms: int | None = None
     cache_hit: bool = False
     dry_run: bool = False
     labels: Mapping[str, str] = field(default_factory=dict)
@@ -119,7 +131,14 @@ class ObservedJob:
 
     @classmethod
     def from_record(cls, record: Mapping[str, object]) -> "ObservedJob":
-        """Build from a job-history export row or an API job resource."""
+        """Build from a job-history export row or an API job resource.
+
+        A nested BigQuery Job resource (``jobReference``, ``configuration``,
+        ``statistics``, ``status``) is flattened first. Measured fields that are
+        absent or unreadable stay ``None``: the job is unmeasured, not free.
+        """
+
+        record = flatten_job_resource(record)
 
         def pick(*names: str, default: object = None) -> object:
             for name in names:
@@ -171,11 +190,29 @@ class ObservedJob:
 
         return not (self.cache_hit or self.dry_run)
 
+    @property
+    def measured(self) -> bool:
+        """Billed bytes, the basis of every cost figure, were recorded."""
+
+        return self.total_bytes_billed is not None
+
+    @property
+    def missing_measurements(self) -> tuple[str, ...]:
+        """Names of the measured fields this job does not carry."""
+
+        return tuple(
+            name
+            for name in ("total_bytes_billed", "total_bytes_processed", "total_slot_ms")
+            if getattr(self, name) is None
+        )
+
     def cost(self) -> Cost:
         if not self.counted:
             return Cost()
+        if self.total_bytes_billed is None:
+            raise ValueError(f"job {self.job_id!r} has no measured bytes billed; it is unmeasured, not free")
         return Cost(
-            "measured", self.total_bytes_billed, self.total_bytes_processed, self.total_slot_ms, 1
+            "measured", self.total_bytes_billed, self.total_bytes_processed or 0, self.total_slot_ms or 0, 1
         )
 
 
@@ -186,13 +223,85 @@ def _parse_json_or(text: str, fallback: object) -> object:
         return fallback
 
 
-def _int(value: object) -> int:
-    if value in (None, ""):
-        return 0
+def _int(value: object) -> int | None:
+    """A whole, non-negative number read exactly, or ``None`` when absent or unreadable.
+
+    Integer strings are parsed as integers, never through a float, so values
+    above 2**53 keep every digit. ``None`` means "not measured"; callers must
+    not turn it into zero.
+    """
+
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    text = str(value).strip()
+    if not text:
+        return None
     try:
-        return max(int(float(str(value))), 0)
+        number = int(text)
     except ValueError:
-        return 0
+        try:
+            decimal = Decimal(text)
+        except InvalidOperation:
+            return None
+        if not decimal.is_finite() or decimal != decimal.to_integral_value():
+            return None
+        number = int(decimal)
+    return number if number >= 0 else None
+
+
+def flatten_job_resource(record: Mapping[str, object]) -> Mapping[str, object]:
+    """Return ``record`` with a nested BigQuery Job resource flattened to export names.
+
+    Reads ``jobReference`` (identity), ``configuration`` (query text, destination,
+    labels, dry run), ``statistics`` (times, bytes, slot time, cache hit, referenced
+    tables, statement type) and ``status`` (error). Names already present at the
+    top level win. A record with none of those sections is returned unchanged.
+    """
+
+    def section(source: object, name: str) -> Mapping[str, object]:
+        value = source.get(name) if isinstance(source, Mapping) else None
+        return value if isinstance(value, Mapping) else {}
+
+    reference = section(record, "jobReference")
+    configuration = section(record, "configuration")
+    statistics = section(record, "statistics")
+    status = section(record, "status")
+    if not (reference or configuration or statistics or status):
+        return record
+    query_config = section(configuration, "query")
+    query_stats = section(statistics, "query")
+
+    def first(*candidates: object) -> object:
+        for candidate in candidates:
+            if candidate not in (None, ""):
+                return candidate
+        return None
+
+    nested = {
+        "job_id": reference.get("jobId"),
+        "project_id": reference.get("projectId"),
+        "location": reference.get("location"),
+        "query": query_config.get("query"),
+        "destination_table": query_config.get("destinationTable"),
+        "dry_run": configuration.get("dryRun"),
+        "labels": configuration.get("labels"),
+        "statement_type": query_stats.get("statementType"),
+        "referenced_tables": first(query_stats.get("referencedTables"), query_config.get("referencedTables")),
+        "total_bytes_billed": query_stats.get("totalBytesBilled"),
+        "total_bytes_processed": first(query_stats.get("totalBytesProcessed"), statistics.get("totalBytesProcessed")),
+        "total_slot_ms": first(statistics.get("totalSlotMs"), query_stats.get("totalSlotMs")),
+        "cache_hit": query_stats.get("cacheHit"),
+        "creation_time": statistics.get("creationTime"),
+        "parent_job_id": statistics.get("parentJobId"),
+        "error_result": status.get("errorResult"),
+    }
+    flat = dict(record)
+    for name, value in nested.items():
+        if value not in (None, "") and flat.get(name) in (None, ""):
+            flat[name] = value
+    return flat
 
 
 def _bool(value: object) -> bool:
@@ -251,6 +360,7 @@ class CostAttribution:
     attributions: list[Attribution]
     skipped: dict[str, int]
     window: dict[str, str | None]
+    missing_fields: dict[str, int] = field(default_factory=dict)
 
     @property
     def attributed(self) -> Cost:
@@ -288,6 +398,7 @@ def attribute_costs(
     jobs = list(jobs)
     parents_with_children = {job.parent_job_id for job in jobs if job.parent_job_id}
     skipped: dict[str, int] = defaultdict(int)
+    missing_fields: dict[str, int] = defaultdict(int)
     upstream = pipeline.upstream
 
     nodes: dict[str, Cost] = {}
@@ -309,6 +420,13 @@ def attribute_costs(
             # The children carry the cost; counting the parent too would double it.
             skipped["script_parent"] += 1
             continue
+        if not job.measured:
+            # Not zero: nothing was recorded, so nothing is added to any total.
+            skipped["unmeasured"] += 1
+            attributions.append(Attribution(job.job_id, None, "unmeasured", "no_measured_cost"))
+            continue
+        for name in job.missing_measurements:
+            missing_fields[name] += 1
         cost = job.cost()
         total = total + cost
         matched_refs = sorted(
@@ -377,7 +495,7 @@ def attribute_costs(
         win.update(window)
     return CostAttribution(
         total, nodes, {k: dict(v) for k, v in methods.items()}, unattributed, reasons,
-        edges, attributions, dict(skipped), win,
+        edges, attributions, dict(skipped), win, dict(missing_fields),
     )
 
 
@@ -387,6 +505,8 @@ def build_cost(
     *,
     usd_per_tib: float | None = None,
     currency: str = "USD",
+    billing_model: str | None = None,
+    region: str | None = None,
     label_keys: tuple[str, ...] = DEFAULT_LABEL_KEYS,
     window: Mapping[str, str | None] | None = None,
 ) -> dict[str, object]:
@@ -394,14 +514,20 @@ def build_cost(
 
     ``measured`` values are billed bytes converted with an explicit
     ``usd_per_tib`` rate. Without a rate no money is invented: values are
-    billed bytes, ``currency`` is null and ``unit`` is ``"bytes_billed"``.
+    billed bytes (integers), ``currency`` is null and ``unit`` is ``"bytes_billed"``.
+
+    ``basis`` echoes what the figures rest on: the caller's rate, currency,
+    ``billing_model`` and ``region`` (``None`` when the caller gave none, never a
+    guess), the job locations seen in the history, and, with a rate, what an
+    invoice includes that this does not.
     """
 
+    jobs = list(jobs)
     result = attribute_costs(pipeline, jobs, label_keys=label_keys, window=window)
 
-    def value(cost: Cost) -> float:
+    def value(cost: Cost) -> int | float:
         if usd_per_tib is None:
-            return float(cost.bytes_billed)
+            return cost.bytes_billed
         return round(cost.bytes_billed / TIB * usd_per_tib, 6)
 
     attributed = result.attributed
@@ -420,7 +546,17 @@ def build_cost(
         }
         for key, cost in sorted(result.nodes.items(), key=lambda item: (-item[1].bytes_billed, item[0]))
     ]
+    basis: dict[str, object] = {
+        "measure": "total_bytes_billed",
+        "rate_per_tib": usd_per_tib,
+        "currency": currency if usd_per_tib is not None else None,
+        "billing_model": billing_model,
+        "region": region,
+        "job_locations": sorted({job.location for job in jobs if job.location}),
+        "invoice_exclusions": INVOICE_EXCLUSIONS if usd_per_tib is not None else None,
+    }
     return {
+        "basis": basis,
         "currency": currency if usd_per_tib is not None else None,
         "unit": "currency" if usd_per_tib is not None else "bytes_billed",
         "window": result.window,
@@ -434,6 +570,8 @@ def build_cost(
             "attributed": attributed.job_count,
             "unattributed": result.unattributed.job_count,
             "excluded": result.skipped,
+            "unmeasured": result.skipped.get("unmeasured", 0),
+            "missing_fields": result.missing_fields,
         },
         "nodes": nodes,
         "unattributed": [
@@ -463,9 +601,11 @@ __all__ = [
     "Attribution",
     "Cost",
     "CostAttribution",
+    "INVOICE_EXCLUSIONS",
     "ObservedJob",
     "REASONS",
     "attribute_costs",
     "build_cost",
+    "flatten_job_resource",
     "load_jobs",
 ]

@@ -1,0 +1,18 @@
+{
+  "suite": "Jaffle Shop authored refactors (refutation)",
+  "order": 117,
+  "size": 7,
+  "score": "7/7 refuted, 0 wrong",
+  "metric": "Breaking refactors of the Jaffle Shop project written for this eval (a join type, a COALESCE around a pivot, COUNT(*), a filter in an exposed staging model) shown different by a database on which an output differs.",
+  "evidence": "executed",
+  "correctness": "0 wrong: no equivalent refactor is called different. 7 refutations come from the prover's counterexample and 0 from random databases, each replayed through both pipelines in DuckDB. 4 of the breaks do not show on the upstream seed data.",
+  "coverage": {
+    "refuted": 7,
+    "unknown": 0
+  },
+  "held_out": "1/1 refuted (a fifth by SHA-1 of the case id)",
+  "docs": "docs/evals/pipeline-equivalence.md#jaffle-shop-a-real-dbt-project",
+  "command": "python tools/jaffle_shop_bench.py --write-results",
+  "date": "2026-10-03",
+  "caveats": "Authored cases on an upstream project (dbt-labs/jaffle_shop_duckdb@20cc90437081 (duckdb branch, Apache-2.0)). Bounded by the databases tried."
+}

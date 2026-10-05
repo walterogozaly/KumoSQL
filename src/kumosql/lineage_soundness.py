@@ -11,6 +11,11 @@ that lineage and impact never confidently miss a dependency:
   that decide whether its subquery returns rows; a key of ``JOIN ... USING`` takes its value from one
   side (left for inner and left joins, right for right joins); a field of a ``STRUCT`` built in a CTE
   comes from that field's expression only.
+* ``star_branch_view``: a set operation with a ``SELECT *`` branch over a table whose columns are
+  unknown. A star branch is still exact before its first ``*`` (and, once the width is known from a
+  branch without one, after its last), so each output column is traced on its own; only the positions
+  a star may fill are unknown, and they keep the sources the other branches give rather than
+  widening to everything the model reads.
 * ``masked_reads``: the columns a masked Dataform expression (``${when(incremental(), ...)}``) names,
   and the tables whose columns are unknown so the masked SQL cannot be resolved.
 
@@ -20,6 +25,7 @@ Reads (consumption) are never narrowed here: these only refine value lineage or 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Callable
 
 from sqlglot import exp
@@ -474,3 +480,107 @@ def masked_sql_words(text: str) -> set[str]:
     for literal in _JS_STRING.findall(text):
         words.update(word.casefold() for word in _WORD.findall(literal[1:-1]))
     return words
+
+
+@dataclass(frozen=True)
+class StarBranchView:
+    """A set operation rewritten for tracing, and the output columns a star branch may fill."""
+
+    query: exp.Expression
+    tainted: frozenset[str]  # output names whose value may come from the unknown columns of a star branch
+    tables: frozenset[exp.Table]  # tables the star branches read, whose unknown columns may flow to any tainted column
+
+
+def _is_star_projection(projection: exp.Expression) -> bool:
+    return projection.is_star or isinstance(projection.unalias(), exp.Star)
+
+
+def _branches(node: exp.Expression) -> list[exp.Select] | None:
+    while isinstance(node, exp.Subquery):
+        node = node.this
+    if isinstance(node, exp.SetOperation):
+        left, right = _branches(node.this), _branches(node.expression)
+        return None if left is None or right is None else left + right
+    return [node] if isinstance(node, exp.Select) else None
+
+
+def _star_root_count(query: exp.Expression) -> int:
+    """Set operations (not nested in another) anywhere in ``query`` with a ``*`` projection in a branch."""
+
+    count = 0
+    for node in query.find_all(exp.SetOperation):
+        if isinstance(node.parent, exp.SetOperation):
+            continue
+        branches = _branches(node)
+        if branches is None:
+            count += 1  # a shape this module does not read: not exact
+        elif any(_is_star_projection(p) for branch in branches for p in branch.expressions):
+            count += 1
+    return count
+
+
+def star_branch_view(qualified: exp.Expression, names: list[str]) -> StarBranchView | None:
+    """Rewrite a set operation with ``*`` branches so each output column traces by position, or ``None``.
+
+    ``names`` are the output names (``*`` for the star in the first branch). The width comes from a
+    branch without a star; with none, positions are unknowable and the caller keeps every column unknown.
+    A branch's projection is exact before its first star and, counted from the end, after its last one;
+    the positions in between are replaced by ``NULL`` (no sources) and reported as tainted. Only a
+    set operation at the top of the query is read; a star set operation in a CTE or subquery returns ``None``.
+    """
+
+    if not isinstance(qualified, exp.SetOperation) or _star_root_count(qualified) != 1:
+        return None
+    branches = _branches(qualified)
+    if not branches:
+        return None
+    stars = [[i for i, p in enumerate(branch.expressions) if _is_star_projection(p)] for branch in branches]
+    widths = {len(branch.expressions) for branch, found in zip(branches, stars) if not found}
+    if len(widths) != 1:
+        return None
+    width = widths.pop()
+
+    def pick(branch: exp.Select, found: list[int], position: int) -> exp.Expression | None:
+        projections = branch.expressions
+        if not found:
+            return projections[position] if position < len(projections) else None
+        if position < found[0]:
+            return projections[position]
+        after = len(projections) - 1 - found[-1]
+        if position >= width - after:
+            return projections[len(projections) - (width - position)]
+        return None
+
+    first_stars = stars[0]
+    # Output position of each name: the first branch's own projections, with a star standing for the unknown middle.
+    positions: dict[str, int] = {}
+    for index, name in enumerate(names):
+        if name == "*":
+            continue
+        if not first_stars or index < first_stars[0]:
+            positions[name] = index
+        elif index > first_stars[-1]:
+            positions[name] = width - (len(names) - index)
+        else:
+            return None
+    if any(not 0 <= p < width for p in positions.values()):
+        return None
+
+    view = qualified.copy()
+    view_branches = _branches(view)
+    tainted_positions: set[int] = set()
+    tables: set[exp.Table] = set()
+    for branch, found, original in zip(view_branches, stars, branches):
+        if not found:
+            continue
+        rewritten: list[exp.Expression] = []
+        for position in range(width):
+            projection = pick(original, found, position)
+            if projection is None:
+                tainted_positions.add(position)
+                projection = exp.alias_(exp.Null(), f"__kumosql_star_{position}__", quoted=False)
+            rewritten.append(projection.copy())
+        branch.set("expressions", rewritten)
+        tables.update(branch.find_all(exp.Table))
+    tainted = frozenset(name for name, position in positions.items() if position in tainted_positions)
+    return StarBranchView(view, tainted, frozenset(tables))

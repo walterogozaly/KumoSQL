@@ -321,13 +321,6 @@ function plainLines(text) {
   return text.split("\n").map(escapeHtml);
 }
 
-/** Rough CTE count: `name AS (` outside strings and comments, not after TABLE/VIEW. */
-function countCtes(text) {
-  const code = text.replace(TOKEN_RE, (token, comment, string) => (comment || string ? " " : token));
-  const matches = code.match(/(?<!\b(?:TABLE|VIEW|FUNCTION)\s+)(?:^|[\s,(])(?:[A-Za-z_]\w*|`[^`]*`)\s+AS\s*\(/gi);
-  return matches ? matches.length : 0;
-}
-
 /* ---------- Input editor ---------- */
 
 function renderInput() {
@@ -533,7 +526,10 @@ function showStats(before, after, elapsed, complexity) {
   const removed = ops ? ops.filter((op) => op.t === "del").length : null;
   const arrow = (x, y) => `${x.toLocaleString()} <span class="arrow">→</span> ${y.toLocaleString()}`;
   $("stat-lines").innerHTML = arrow(lineCount(before), lineCount(after));
-  $("stat-ctes").innerHTML = arrow(countCtes(before), countCtes(after));
+  // CTE counts come from the server's parse (complexity metrics); SQLX and unparseable SQL have none.
+  const ctes = (side) => side?.metrics?.ctes;
+  const [ctesBefore, ctesAfter] = [ctes(complexity?.before), ctes(complexity?.after)];
+  $("stat-ctes").innerHTML = ctesBefore != null && ctesAfter != null ? arrow(ctesBefore, ctesAfter) : "n/a";
   const complexityCell = $("stat-complexity");
   complexityCell.textContent = complexity && complexity.before && complexity.after
     ? `${complexityLabel(complexity.before)} → ${complexityLabel(complexity.after)}`
@@ -731,7 +727,13 @@ async function transform() {
     const reason = data.verification.reason;
     const evidence = data.verification.status;
     if (evidence === "unchanged") {
-      setVerdict("unchanged", "No changes needed", "None of the selected rules changed this SQL.");
+      // A rule can leave SQL alone because it skipped it (SQLX for Format SQL, say); say which.
+      const skipped = data.steps.find((step) => step.diagnostics.length);
+      setVerdict(
+        "unchanged",
+        "Output unchanged",
+        skipped ? `${labelFor(skipped.rule)}: ${stripAnsi(skipped.diagnostics[0].message)}` : "None of the selected rules changed this SQL.",
+      );
     } else if (evidence === "proven") {
       const changes = data.steps.reduce((sum, step) => sum + step.changes, 0);
       setVerdict("proven", "Rewrite verified", `${plural(changes, "change")}. ${reason[0].toUpperCase()}${reason.slice(1)}.`);
@@ -1134,7 +1136,7 @@ $("download-button").addEventListener("click", () => {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-  toast(`Saved ${name}`);
+  toast(`Downloading ${name}`);
 });
 
 $("use-output-button").addEventListener("click", () => {

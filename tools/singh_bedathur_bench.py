@@ -305,7 +305,8 @@ def normalise(rows: list[tuple]) -> Counter:
 def new_database(tables: dict[str, list[str]], kinds: dict[tuple[str, str], str]):
     import duckdb
 
-    db = duckdb.connect(":memory:")
+    from kumosql.duckdb_load import small_database
+    db = small_database()
     db.execute("SET default_null_order = 'nulls_first_on_asc_last_on_desc'")  # MySQL sorts NULL as the smallest value
     db.execute("SET default_collation = 'nocase'")  # and compares strings without case
     for table, columns in tables.items():
@@ -368,7 +369,7 @@ def search_difference(pair: Pair, trees, trials: int, seed: int, extra: list[dic
 
     import duckdb
 
-    from kumosql.duckdb_load import insert_rows, run_unoptimized
+    from kumosql.duckdb_load import TableLoader, rows_key, run_unoptimized
 
     kinds = column_kinds(trees, pair.tables)
     domains = literal_domains(trees)
@@ -380,25 +381,34 @@ def search_difference(pair: Pair, trees, trials: int, seed: int, extra: list[dic
     db = new_database(pair.tables, kinds)
     rng = random.Random(seed)
     used = [t for t in pair.tables if re.search(rf"\b{re.escape(t)}\b", pair.left + " " + pair.right, re.I)]
+    loader = TableLoader(db, empty=[f'"{t}"' for t in pair.tables])
     candidates = [c for c in extra]
     failures = 0
+    # Databases the queries already ran on without a difference -> whether DuckDB rejected them. Small random
+    # databases repeat (empty tables, one-row tables); the answer would too, so it is replayed.
+    tried: dict[tuple, bool] = {}
     for attempt in range(trials + len(candidates)):
         data = candidates[attempt] if attempt < len(candidates) else _random_tables(pair, used, kinds, domains, rng, sizes, skewed=attempt % 2 == 1)
+        database = {f'"{table}"': data.get(table, []) for table in used}
+        key = rows_key(database)
+        if key in tried:
+            failures += tried[key]
+            continue
+        rejected = False
         try:
-            for table in used:
-                db.execute(f'DELETE FROM "{table}"')
-                rows = data.get(table, [])
-                insert_rows(db, f'"{table}"', rows)
+            loader.load(database, key)
             a = normalise(db.execute(left_sql).fetchall())
             b = normalise(db.execute(right_sql).fetchall())
-            if a != b and [normalise(rows) for rows in run_unoptimized(db, left_sql, right_sql)] != [a, b]:
-                continue  # DuckDB's optimizer disagrees with its unoptimized plan: not evidence
+            # DuckDB's optimizer disagreeing with its unoptimized plan is not evidence
+            found = a != b and [normalise(rows) for rows in run_unoptimized(db, left_sql, right_sql)] == [a, b]
         except duckdb.Error:
             failures += 1  # a data-dependent error (a scalar subquery with two rows) or a misfit proposed database
-            continue
-        if a != b:
+            found, rejected = False, True
+        if found:
             tables = {t: [dict(zip(pair.tables[t], r)) for r in data.get(t, [])] for t in used}
             return {"tables": tables, "left": sorted(map(str, a.elements())), "right": sorted(map(str, b.elements()))}
+        if None not in key:
+            tried[key] = rejected
     if failures < trials + len(candidates):
         found = _targeted_witness(pair, left_sql, right_sql, kinds, used)
         if found:
@@ -443,6 +453,24 @@ def _proposed_database(pair: Pair, result) -> list[dict]:
     return [data]
 
 
+def _text_types(pair: Pair) -> dict[str, dict[str, str]]:
+    """The columns the queries compare with a string, declared as text (the pairs carry no types).
+
+    This is the same reading the witness search uses (``column_kinds``), so the prover and the search agree on which columns
+    hold text. Without it every such column is untyped, and the prover declines a proof that two different strings differ.
+    """
+
+    try:
+        trees = [sqlglot.parse_one(sql, read="mysql") for sql in (pair.left, pair.right)]
+    except sqlglot.errors.SqlglotError:
+        return {}
+    types: dict[str, dict[str, str]] = {}
+    for (table, column), kind in column_kinds(trees, pair.tables).items():
+        if kind == "VARCHAR":
+            types.setdefault(table, {})[column] = "STRING"
+    return types
+
+
 def prove(pair: Pair):
     """``(proved, proposed databases, reason)``: the prover's verdict, any counterexample it proposed, and why not."""
 
@@ -451,6 +479,9 @@ def prove(pair: Pair):
     from kumosql.canonical_rules import canonicalize
 
     options = dict(schema=pair.tables, compare_names=False, dialect="mysql", timeout_ms=4000)
+    text = _text_types(pair)
+    if text:
+        options["types"] = text
     first = prove_equivalent_algebraic(pair.left, pair.right, **options)
     if first.proven:
         return True, [], first.reason

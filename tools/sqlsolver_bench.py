@@ -130,7 +130,8 @@ def new_database(tables: dict[str, Table]):
 
     import duckdb
 
-    db = duckdb.connect(":memory:")
+    from kumosql.duckdb_load import small_database
+    db = small_database()
     for table in tables.values():
         columns = ", ".join(f'"{c.name}" {_duck_type(c)}' for c in table.columns)
         db.execute(f'CREATE TABLE "{table.name}" ({columns})')
@@ -238,7 +239,7 @@ def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60
 
     import duckdb
 
-    from kumosql.duckdb_load import insert_rows, run_unoptimized
+    from kumosql.duckdb_load import TableLoader, rows_key, run_unoptimized
 
     rng = random.Random(seed)
     left, right = spark_days(left), spark_days(right)
@@ -255,23 +256,28 @@ def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60
     for literal in [lit for sql in (left, right) for lit in sqlglot.parse_one(sql, read="mysql").find_all(exp.Literal)]:
         if not literal.is_string and re.fullmatch(r"-?\d+", literal.this) and abs(int(literal.this)) < 10**6:
             numbers.update({int(literal.this) - 1, int(literal.this), int(literal.this) + 1})
+    loader = TableLoader(db)
+    agreed: set[tuple] = set()  # databases the queries were already run on without a difference
     # Plain databases first, then skewed ones whose numbers sit next to the queries' literals
     for trial in range(2 * trials):
         # every table of a skewed database draws its numbers from the same few, so join keys meet
         shared = rng.sample(sorted(numbers), min(len(numbers), rng.choice([2, 3, 4]))) if trial >= trials else None
+        database = {f'"{table.name}"': random_rows(table, rng, shared if trial >= trials else None) for table in used}
+        key = rows_key(database)
+        if key in agreed:
+            continue  # small random databases repeat (empty tables, one-row tables); the answer would too
         try:
-            for table in used:
-                db.execute(f'DELETE FROM "{table.name}"')
-                rows = random_rows(table, rng, shared if trial >= trials else None)
-                insert_rows(db, f'"{table.name}"', rows)
+            loader.load(database, key)
             a = _bag(db.execute(left_sql).fetchall())
             b = _bag(db.execute(right_sql).fetchall())
-            if a != b and [_bag(rows) for rows in run_unoptimized(db, left_sql, right_sql)] != [a, b]:
-                continue  # DuckDB's optimizer disagrees with its unoptimized plan: not evidence
+            # DuckDB's optimizer disagreeing with its unoptimized plan is not evidence
+            found = a != b and [_bag(rows) for rows in run_unoptimized(db, left_sql, right_sql)] == [a, b]
         except duckdb.Error:
             return False
-        if a != b:
+        if found:
             return (left_sql, right_sql, a, b)
+        if None not in key:
+            agreed.add(key)
     return targeted_differ(left_sql, right_sql, used)
 
 
@@ -298,7 +304,7 @@ def targeted_differ(left_sql: str, right_sql: str, used: list[Table]):
         for t in used
     }
     foreign = [(t.name, c, p, pc) for t in used for c, p, pc in t.foreign if p in names]
-    found = find_targeted_difference(left_sql, right_sql, schema, rules, foreign_keys=foreign, dialect="duckdb", budget=20.0)
+    found = find_targeted_difference(left_sql, right_sql, schema, rules, foreign_keys=foreign, dialect="duckdb", budget=20.0, booleans_are_integers=True)
     if found is None:
         return None
     return (left_sql, right_sql, Counter(found.left.rows), Counter(found.right.rows))

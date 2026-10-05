@@ -1,5 +1,7 @@
 # Bounded verification (z3, at most N rows per table)
 
+[Plain-language version](../../docs_simple/evals/bounded-verification.md)
+
 `kumosql.bounded_equivalence` checks that two queries return the same bag of rows on **every database with at most N rows per table**, with symbolic values, so the solver covers every combination of values and NULLs up to the bound. It is a third evidence level, next to an unbounded proof and agreement on executed random databases:
 
 | Evidence | What it says | Where it comes from |
@@ -24,11 +26,13 @@ Each table has N slots. A slot has a presence flag and, per column, a symbolic v
 
 Two relations are compared as bags: a difference exists when some row's multiplicity differs. `sat` gives a model; `unsat` is "equivalent within the bound".
 
-Anything the encoding does not model (`GROUP_CONCAT`, regular expressions, `UPPER`, date parts, `GROUPING SETS`, recursive CTEs, explicit window frames, MySQL's `date + 1`, a `LIMIT` or `OFFSET` on a set operation itself, a table missing from the schema) raises `Unsupported` and the answer is **unknown**, never a verdict.
+Anything the encoding does not model (`GROUP_CONCAT`, regular expressions, `UPPER`, date parts, `GROUPING SETS`, recursive CTEs, explicit window frames, MySQL's `date + 1`, a `LIMIT` or `OFFSET` on a set operation itself, `SELECT * EXCEPT/REPLACE/RENAME/ILIKE`, a table missing from the schema) raises `Unsupported` and the answer is **unknown**, never a verdict.
 
 ## Replay, assumptions, and what a result means
 
 A counterexample is returned only after both queries were executed on DuckDB over the model's database, the two result bags differ, and the difference survives three shuffles of every table's rows (so a `LIMIT` tie, or MySQL's arbitrary pick of an ungrouped column, never produces one). A model the replay does not confirm gives `unknown`, after two retries with printable strings and quarter-step reals.
+
+Column domains: a `NUMERIC(p, s)` column holds only values with `s` decimals and `|value| < 10**(p - s)`, and a `DATE` or `DATETIME` / `TIMESTAMP` column only values from year 1 to year 9999, so the solver cannot pick a value the replayed database cannot hold. (Until 2026-10 a model date below year 1 was clamped to `0001-01-01` when decoded, so two rows that differ only in a DATE key column came out equal and the counterexample repeated the primary key; the range is now a constraint instead and nothing is clamped.)
 
 Assumptions reported with every result: bounded databases only; exact arithmetic (no `FLOAT64` rounding or integer overflow); runtime errors are not modeled (division by zero gives NULL, a scalar subquery with several rows takes the first); strings compare case-sensitively; results are compared as bags; ties in `ORDER BY` (`LIMIT`, `ROW_NUMBER`, `LAG`, `LEAD`, `FIRST_VALUE`) are broken by row position, so a difference that depends on the tie-break is reported only if it survives the replay's shuffles, otherwise the answer is unknown.
 

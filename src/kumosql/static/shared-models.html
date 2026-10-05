@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="kumosql-session-token" content="__KUMOSQL_SESSION_TOKEN__">
+  <script src="/assets/session.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Shared models · KumoSQL</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/assets/shell.css">
+  <script src="/assets/shell.js"></script>
+  <link rel="stylesheet" href="/assets/shared-models.css">
+  <script defer src="/assets/shared-models.js"></script>
+</head>
+<body>
+  <main class="sm-page" aria-label="Shared models">
+    <header class="sm-head">
+      <h1>Shared models</h1>
+      <span id="sm-status" class="sm-status" role="status" aria-live="polite"></span>
+    </header>
+    <div class="sm-layout">
+      <section class="sm-groups" aria-label="Repeated CTEs">
+        <input id="sm-filter" type="search" placeholder="Filter by model or CTE" aria-label="Filter repeated CTEs">
+        <div id="sm-list" class="sm-list"></div>
+      </section>
+      <section id="sm-detail" class="sm-detail" aria-label="Selected CTE"></section>
+    </div>
+  </main>
+</body>
+</html>

@@ -1,5 +1,7 @@
 # Public SQL evaluation sources for KumoSQL
 
+[Plain-language version](../docs_simple/public-sql-evaluation-sources.md)
+
 Research date: **October 2, 2026** (America/New_York).
 
 This is the research input as written. What KumoSQL already scores, and what is being added from it, is in the [inventory](evals/public-sources.md).
@@ -23,7 +25,7 @@ Orders, subsets, and proposed deliverables are recommendations based on the curr
 
 ## Current repo coverage and integration limits
 
-The checked-in workbook contains 32 hand-authored `{id, sql_text}` records in `tests/fixtures/sql_subquery_samples.json`. Its shape and exact count are asserted in `tests/test_generic_fixture.py`; keep that fixture intact and add external collections separately. The full workbook test is marked `slow` and excluded by normal CI. The workflow's comment about a private CSV is stale: the default fixture is now the public JSON in this repo.
+The checked-in workbook contains 32 hand-authored `{id, sql_text}` records in `tests/fixtures/sql_subquery_samples.json`. Its shape and exact count are asserted in `tests/test_generic_fixture.py`; keep that fixture intact and add external collections separately. `tests/test_workbook_fixture.py` scores every record against labelled expectations in `tests/fixtures/sql_subquery_samples.expected.json` (strict parse, DuckDB input validity, change, structural removal and verified status, all 32 in the denominator) and runs in the default suite and CI; see [rewrite-rules.md](rewrite-rules.md#authored-fixture-gate).
 
 The existing APIs already provide three useful evaluation lanes:
 
@@ -39,7 +41,7 @@ Synthetic generation supports INT64, FLOAT64, NUMERIC, STRING, BOOL, DATE and TI
 
 `QueryOutput` carries column names and values but not result types. Use native BigQuery planning/schema checks to cover types, modes and nested fields. Static rewrite verification does not automatically use SMT; report the two outcomes separately.
 
-The local execution comparator defaults to unordered bags, compares column names case-insensitively and normalizes floats to 12 significant digits. Record the comparison policy per case. Ordered results need `ignore_row_order=False` and a defined tie contract; exact floating-point/name contracts need stricter handling than these defaults. Pipeline fingerprints/checksums provide screening evidence and can collide; use row-level bag comparison for stronger fixed-snapshot confirmation.
+The local execution comparator defaults to unordered bags, compares column names case-insensitively and normalizes floats to 12 significant digits (`float_digits=None` compares floats exactly; the policy used is recorded on each result as `float_digits`). Booleans, NaN, arrays and structs are kept apart by type; integers, floats and decimals compare by value. Record the comparison policy per case. Ordered results need `ignore_row_order=False` and a defined tie contract; exact column-name contracts need stricter handling than these defaults. Pipeline fingerprints/checksums provide screening evidence and can collide; use row-level bag comparison for stronger fixed-snapshot confirmation.
 
 Local SQLX execution strips config/JS/pre/post-operation blocks and resolves only literal `ref()` calls. It does not compile Dataform or evaluate incremental branches, `self()`, `when()` or dynamic JavaScript. Use pinned compiled SQL and explicit incremental input state for execution claims; source-block preservation is a different test.
 

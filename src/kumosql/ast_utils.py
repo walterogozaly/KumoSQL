@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import decimal
 import logging
+import re
 
 import sqlglot
 from sqlglot import ErrorLevel, exp
@@ -28,6 +30,95 @@ class _UnknownSubqueryScope(logging.Filter):
 
 _scope_filter = _UnknownSubqueryScope()
 logging.getLogger("sqlglot.lineage").addFilter(_scope_filter)
+
+
+# The FROM argument's name: sqlglot 28 renamed it from "from" to "from_".
+FROM_KEY = "from_" if "from_" in exp.Select.arg_types else "from"
+
+
+def is_call(node: object, kind: str) -> bool:
+    """``node`` calls the sqlglot function class named ``kind``, e.g. ``"DenseRank"``.
+
+    Older sqlglot versions lack some classes (sqlglot 26 has no ``Rank``, ``DenseRank`` or ``Grouping``)
+    and parse such a call as an anonymous function, matched here by its SQL name (``DENSE_RANK``).
+    """
+
+    cls = getattr(exp, kind, None)
+    if cls is not None:
+        return isinstance(node, cls)
+    return isinstance(node, exp.Anonymous) and str(node.this).upper() == re.sub(r"(?<!^)(?=[A-Z])", "_", kind).upper()
+
+
+def _duckdb_printing() -> tuple[bool, bool, bool]:
+    with quiet_parser():
+        division = sqlglot.parse_one("SELECT a / b", read="mysql").sql(dialect="duckdb")
+        concat = sqlglot.parse_one("SELECT CONCAT(a, b)", read="mysql").sql(dialect="duckdb")
+        stamp = sqlglot.parse_one("SELECT TIMESTAMP_SUB(a, INTERVAL 1 HOUR)", read="bigquery").sql(dialect="duckdb")
+    return "NULLIF" in division, "||" in concat, "INTERVAL" in stamp
+
+
+def spell_for_duckdb(tree: exp.Expression) -> exp.Expression:
+    """Spell what DuckDB would read differently from the query's own engine, in place, where sqlglot does not.
+
+    A division that is NULL on a zero divisor (MySQL's ``/``) becomes ``a / NULLIF(b, 0)``, and a
+    ``CONCAT`` that is NULL when an argument is NULL becomes ``a || b``. ``TIMESTAMP_ADD`` and
+    ``TIMESTAMP_SUB`` become ``a + INTERVAL ...``. Current sqlglot prints all of these that way itself;
+    sqlglot 26 prints a plain ``/`` (infinity in DuckDB), ``CONCAT`` (which skips NULLs in DuckDB) and
+    ``TIMESTAMP_SUB(a, '1', HOUR)`` (no such DuckDB function), so a query run there for a check would
+    answer differently or not run.
+    """
+
+    global _DUCKDB_PRINTING
+    if _DUCKDB_PRINTING is None:
+        _DUCKDB_PRINTING = _duckdb_printing()
+    division, concat, stamp = _DUCKDB_PRINTING
+    if not division:
+        for div in list(tree.find_all(exp.Div)):
+            if div.args.get("safe"):
+                div.set("expression", exp.Nullif(this=div.expression, expression=exp.Literal.number(0)))
+                div.set("safe", None)
+    if not concat:
+        for node in list(tree.find_all(exp.Concat)):
+            parts = list(node.expressions)
+            if node.args.get("coalesce") or len(parts) < 2:
+                continue
+            chain = parts[0]
+            for part in parts[1:]:
+                chain = exp.DPipe(this=chain, expression=part)
+            node.replace(exp.Paren(this=chain))
+    if not stamp:
+        for node in list(tree.find_all(exp.TimestampAdd, exp.TimestampSub)):
+            amount = node.expression
+            amount = exp.Literal.string(str(amount.name)) if isinstance(amount, exp.Literal) else exp.Paren(this=amount.copy())
+            interval = exp.Interval(this=amount, unit=exp.var(str(node.args["unit"].name).upper())) if node.args.get("unit") is not None else None
+            if interval is not None:
+                operator = exp.Add if isinstance(node, exp.TimestampAdd) else exp.Sub
+                replacement = operator(this=node.this.copy(), expression=interval)
+                if node is tree:
+                    tree = replacement
+                else:
+                    node.replace(replacement)
+    return tree
+
+
+_DUCKDB_PRINTING: tuple[bool, bool, bool] | None = None
+
+
+def grouping_elements(group: exp.Group | None) -> list[exp.Expression]:
+    """The elements of a ``GROUP BY``: plain keys and any ``ROLLUP``, ``CUBE`` or ``GROUPING SETS``.
+
+    sqlglot 26 keeps ``ROLLUP(...)``, ``CUBE(...)`` and ``GROUPING SETS (...)`` under their own arguments
+    of the Group node, where later versions list them with the plain keys. MySQL's ``GROUP BY a WITH
+    ROLLUP`` stays under its argument in every version, as a ROLLUP with no keys of its own.
+    """
+
+    if group is None:
+        return []
+    return list(group.expressions) + [node for key in ("grouping_sets", "cube", "rollup") for node in group.args.get(key) or []]
+
+
+# The EXCEPT list of ``SELECT * EXCEPT (...)``: sqlglot 30 renamed the argument from "except" to "except_".
+EXCEPT_KEY = "except_" if "except_" in exp.Star.arg_types else "except"
 
 
 def is_function_table(table: exp.Table) -> bool:
@@ -127,7 +218,7 @@ _UNMODELED_ARGS = (
 
 
 # sqlglot reads ``a = b IS TRUE`` as ``a = (b IS TRUE)``; BigQuery, MySQL, PostgreSQL, DuckDB and Calcite read
-# ``(a = b) IS TRUE``. Written without parentheses the query is declined rather than proved under one reading.
+# ``(a = b) IS TRUE`` (see ``read_is_after_comparison``).
 _COMPARISONS = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.NullSafeEQ, exp.NullSafeNEQ)
 
 
@@ -138,6 +229,38 @@ def parenthesize_is_operands(tree: exp.Expression) -> exp.Expression:
         operand = node.expression
         if isinstance(operand, exp.Is) or (isinstance(operand, exp.Not) and isinstance(operand.this, exp.Is)):
             operand.replace(exp.Paren(this=operand.copy()))
+    return tree
+
+
+def read_is_after_comparison(tree: exp.Expression) -> exp.Expression:
+    """Read ``a = b IS TRUE`` as the engines do, ``(a = b) IS TRUE``, in place.
+
+    sqlglot parses an ``IS`` test after a comparison as the comparison's right operand. In
+    PostgreSQL, DuckDB and Calcite ``IS`` binds more loosely than ``=``; in MySQL they share a level
+    and associate to the left: all read the test as applying to the whole comparison (so
+    ``NULL = 1 IS NULL`` is true, not NULL). The tree is rebuilt as sqlglot parses the parenthesized
+    text ``(a = b) IS TRUE``. An explicit ``a = (b IS TRUE)`` keeps its ``Paren`` and is left alone.
+
+    ``a = b IS NOT TRUE`` and ``a = NOT b IS TRUE`` parse to the same tree but read differently
+    (DuckDB: ``(a = b) IS NOT TRUE`` and ``a = NOT (b IS TRUE)``), so a ``NOT`` among the operand's
+    ``IS`` tests is declined.
+    """
+
+    for node in list(tree.find_all(*_COMPARISONS)):
+        tests, operand = [], node.expression
+        while isinstance(operand, exp.Is):
+            tests.append(operand)
+            operand = operand.this
+        if isinstance(operand, exp.Not) and isinstance(operand.this, exp.Is):
+            raise UnmodeledConstruct("a comparison followed by IS NOT without parentheses reads differently across engines")
+        if not tests:
+            continue
+        # comparison(a, IS_1(... IS_n(b) ...)) becomes IS_1(... IS_n((comparison(a, b))) ...)
+        if node is tree:
+            tree = tests[0]
+        node.replace(tests[0])
+        tests[-1].set("this", exp.Paren(this=node))
+        node.set("expression", operand)
     return tree
 
 
@@ -161,6 +284,28 @@ def table_function_reads_cte(tree: exp.Expression) -> bool:
             if isinstance(node, exp.Table) and not node.db and node.name.lower() in names:
                 return True
     return False
+
+
+# Aggregates that older sqlglot versions parse as anonymous functions (sqlglot 26 knows none of these).
+# The provers would read such a call as a row-level function, so a global one over no rows would seem
+# to return no rows instead of one; a query that calls one outside a window is refused instead.
+_NEWER_AGGREGATES = {
+    "BitwiseAndAgg": ("BIT_AND", "BITWISE_AND_AGG"), "BitwiseOrAgg": ("BIT_OR", "BITWISE_OR_AGG"),
+    "BitwiseXorAgg": ("BIT_XOR", "BITWISE_XOR_AGG"), "BoolxorAgg": ("BOOLXOR_AGG",), "GroupingId": ("GROUPING_ID",),
+    "Mode": ("MODE",), "Kurtosis": ("KURTOSIS",), "Skewness": ("SKEWNESS",), "ArrayConcatAgg": ("ARRAY_CONCAT_AGG",),
+    "ObjectAgg": ("OBJECT_AGG",), "ApproxQuantiles": ("APPROX_QUANTILES",), "ApproxTopSum": ("APPROX_TOP_SUM",),
+    "HashAgg": ("HASH_AGG",), "Minhash": ("MINHASH",), "BitmapOrAgg": ("BITMAP_OR_AGG",),
+    "BitmapConstructAgg": ("BITMAP_CONSTRUCT_AGG",), "RegrCount": ("REGR_COUNT",), "RegrAvgx": ("REGR_AVGX",),
+    "RegrAvgy": ("REGR_AVGY",), "RegrIntercept": ("REGR_INTERCEPT",), "RegrR2": ("REGR_R2",), "RegrSlope": ("REGR_SLOPE",),
+    "RegrSxx": ("REGR_SXX",), "RegrSxy": ("REGR_SXY",), "RegrSyy": ("REGR_SYY",),
+}
+_UNCLASSED_AGGREGATES = frozenset(name for cls, names in _NEWER_AGGREGATES.items() if not hasattr(exp, cls) for name in names)
+
+
+def is_aggregate(node: object) -> bool:
+    """An aggregate call, including one an older sqlglot version parses as an anonymous function."""
+
+    return isinstance(node, exp.AggFunc) or (isinstance(node, exp.Anonymous) and str(node.this).upper() in _UNCLASSED_AGGREGATES)
 
 
 # sqlglot parses IS [NOT] DISTINCT FROM (NullSafeEQ, NullSafeNEQ) beside LIKE, IN and BETWEEN: tighter than ``=`` and ``<``,
@@ -194,14 +339,132 @@ def check_distinct_from_grouping(tree: exp.Expression) -> None:
             raise UnmodeledConstruct("IS DISTINCT FROM next to another comparison without parentheses reads differently across engines")
 
 
+def _uncorrelated(select: exp.Select) -> bool:
+    """Whether ``select`` sits only under derived tables, CTEs and set operations, so its columns are its own."""
+
+    node = select
+    while node.parent is not None:
+        parent = node.parent
+        if isinstance(parent, (exp.Subquery, exp.CTE, exp.With, exp.From, exp.Join, exp.SetOperation)):
+            pass
+        elif isinstance(parent, exp.Select) and node.arg_key in ("from", "from_", "joins", "with", "with_"):
+            pass
+        else:
+            return False
+        node = parent
+    return True
+
+
+def expand_group_by_all(tree: exp.Expression) -> exp.Expression:
+    """Spell ``GROUP BY ALL`` as the grouping keys it infers, in place, or raise :class:`UnmodeledConstruct`.
+
+    The keys are the select items that reference a column and hold no aggregate, written as positions.
+    With no keys the query has one group even on empty input, so an aggregate-only select becomes a
+    plain global aggregate. Correlated selects, stars, windows, subqueries, unknown functions (which may
+    be aggregates) and a select of only constants (engines differ on whether constants are keys) are declined.
+    """
+
+    for group in list(tree.find_all(exp.Group)):
+        if not group.args.get("all"):
+            continue
+        select = group.parent
+        if not isinstance(select, exp.Select) or group.expressions or not _uncorrelated(select):
+            raise UnmodeledConstruct("GROUP BY ALL is not modeled here")
+        keys: list[int] = []
+        key_sql: set[str] = set()
+        aggregated: list[exp.Expression] = []
+        constants = False
+        for position, item in enumerate(select.expressions, start=1):
+            value = item.this if isinstance(item, exp.Alias) else item
+            if isinstance(value, exp.Star) or (isinstance(value, exp.Column) and isinstance(value.this, exp.Star)):
+                raise UnmodeledConstruct("GROUP BY ALL with a star select is not modeled")
+            if value.find(exp.Window, exp.Subquery, exp.Select, exp.Exists, exp.Lambda):
+                raise UnmodeledConstruct("GROUP BY ALL next to a window or subquery is not modeled")
+            if value.find(exp.AggFunc):
+                aggregated.append(value)
+            elif value.find(exp.Anonymous):
+                raise UnmodeledConstruct("GROUP BY ALL with an unknown function is not modeled")
+            elif value.find(exp.Column):
+                keys.append(position)
+                key_sql.add(value.sql())
+            else:
+                constants = True
+        for value in aggregated:
+            # A column outside the aggregates must be a key, or the query is not valid.
+            for column in value.find_all(exp.Column):
+                if not column.find_ancestor(exp.AggFunc) and column.sql() not in key_sql:
+                    raise UnmodeledConstruct("GROUP BY ALL with an ungrouped column is not modeled")
+        if keys:
+            group.set("all", None)
+            group.set("expressions", [exp.Literal.number(p) for p in keys])
+        elif aggregated and not constants:
+            select.set("group", None)
+        else:
+            raise UnmodeledConstruct("GROUP BY ALL without grouping keys is not modeled")
+    return tree
+
+
+# Table reads a query makes once every CTE reference is expanded in place. Provers inline CTEs, so a CTE
+# read twice per level doubles the work each level; past this the pair is declined rather than run for minutes.
+MAX_EXPANDED_READS = 256
+
+
+def expanded_reads(tree: exp.Expression, limit: int = MAX_EXPANDED_READS) -> int:
+    """An upper bound on the table reads of ``tree`` with its CTEs inlined, counting stops past ``limit``."""
+
+    definitions: dict[str, list[exp.CTE]] = {}
+    for cte in tree.find_all(exp.CTE):
+        definitions.setdefault(cte.alias_or_name.lower(), []).append(cte)
+    if not definitions:
+        return 0
+    memo: dict[int, int] = {}
+
+    def reads(node: exp.Expression) -> int:
+        total = 0
+        for table in node.find_all(exp.Table):
+            ancestor = table.parent
+            while ancestor is not None and ancestor is not node and not isinstance(ancestor, exp.CTE):
+                ancestor = ancestor.parent
+            if ancestor is not None and ancestor is not node:
+                continue  # inside a CTE definition: counted where it is read
+            name = table.name.lower()
+            if not table.args.get("db") and not table.args.get("catalog") and name in definitions:
+                total += max(cte_reads(cte) for cte in definitions[name])
+            else:
+                total += 1
+            if total > limit:
+                break
+        return total
+
+    def cte_reads(cte: exp.CTE) -> int:
+        key = id(cte)
+        if key not in memo:
+            memo[key] = 1  # a recursive reference
+            memo[key] = reads(cte.this)
+        return memo[key]
+
+    return reads(tree)
+
+
 def check_modeled(tree: exp.Expression) -> exp.Expression:
     """Raise :class:`UnmodeledConstruct` for a flag the provers would silently ignore.
 
     Covers ``TABLESAMPLE``, time travel, ``SYMMETRIC`` ranges, ``WITH TIES`` and ``PERCENT``
     limits, ``OUTER APPLY`` and the like. sqlglot versions differ in which of these they parse, so
-    anything carried on the node is refused whichever version produced it.
+    anything carried on the node is refused whichever version produced it. ``GROUP BY ALL`` is
+    spelled out first (see :func:`expand_group_by_all`). An ``IS`` test after a
+    comparison is re-read as the engines read it (:func:`read_is_after_comparison`).
     """
 
+    tree = expand_group_by_all(tree)
+    for literal in tree.find_all(exp.Literal):
+        if not literal.is_string and len(literal.this) > 100:
+            # No FLOAT64, INT64 or NUMERIC needs this many characters; int() and Fraction() on it can take minutes.
+            raise UnmodeledConstruct("a numeric literal longer than 100 characters is not modeled")
+        if not literal.is_string and exponent_out_of_range(literal.this):
+            raise UnmodeledConstruct(f"numeric literal {literal.this[:40]!r} is outside FLOAT64's exponent range")
+    if expanded_reads(tree) > MAX_EXPANDED_READS:
+        raise UnmodeledConstruct(f"the query reads more than {MAX_EXPANDED_READS} tables once its CTEs are expanded")
     check_distinct_from_grouping(tree)
     for node in tree.walk():
         for kind, arg in _UNMODELED_ARGS:
@@ -215,13 +478,56 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
             raise UnmodeledConstruct("PERCENT and WITH TIES limits are not modeled")
         if type(node).__name__ == "LimitOptions" and (node.args.get("percent") or node.args.get("with_ties")):
             raise UnmodeledConstruct("PERCENT and WITH TIES limits are not modeled")
-    for node in tree.find_all(*_COMPARISONS):
-        operand = node.expression
-        if isinstance(operand, exp.Is) or (isinstance(operand, exp.Not) and isinstance(operand.this, exp.Is)):
-            raise UnmodeledConstruct("a comparison followed by IS without parentheses reads differently across engines")
+        if isinstance(node, exp.Anonymous) and str(node.this).upper() in _UNCLASSED_AGGREGATES and not isinstance(node.parent, exp.Window):
+            raise UnmodeledConstruct(f"{str(node.this).upper()} is an aggregate this sqlglot version does not know")
+    tree = read_is_after_comparison(tree)
     if table_function_reads_cte(tree):
         raise UnmodeledConstruct("a table function that reads a CTE by name is not modeled")
     return tree
+
+
+def exponent_out_of_range(text: str) -> bool:
+    """Whether the numeric literal ``text`` is a nonzero number outside FLOAT64's exponent range (``1e100000000``).
+
+    Every prover declines these (``Fraction(Decimal('1e100000000'))`` would build a hundred-million-digit integer);
+    checking here makes the algebraic and structural paths decline them too, not only the SMT and bounded compilers.
+    """
+
+    try:
+        value = decimal.Decimal(text)
+    except decimal.InvalidOperation:
+        return False
+    return value.is_finite() and bool(value) and not -400 <= value.adjusted() <= 400
+
+
+def drop_case_conflicts(tables: dict | None) -> dict | None:
+    """``tables`` (a schema, types or constraints mapping) without the entries whose names differ only in case and disagree.
+
+    The provers look tables up case-insensitively, so ``{"t": ["a"], "T": ["b"]}`` used to mean whichever entry
+    came last. Both entries are dropped instead (the prover then knows nothing about that table's columns);
+    entries that agree once lower-cased are kept.
+    """
+
+    if not tables:
+        return tables
+
+    def folded(value):
+        if isinstance(value, dict):
+            return sorted((str(k).lower(), str(v)) for k, v in value.items())
+        if isinstance(value, (list, tuple)):
+            return [str(c).lower() for c in value]
+        return value
+
+    seen: dict[str, object] = {}
+    clashes: set[str] = set()
+    for name, value in tables.items():
+        key = str(name).lower()
+        if key in seen and seen[key] != folded(value):
+            clashes.add(key)
+        seen.setdefault(key, folded(value))
+    if not clashes:
+        return tables
+    return {name: value for name, value in tables.items() if str(name).lower() not in clashes}
 
 
 def _output_names(query: exp.Expression) -> list[str] | None:
@@ -459,6 +765,33 @@ def distinct_on(select: exp.Expression) -> bool:
     return isinstance(distinct, exp.Distinct) and bool(distinct.args.get("on"))
 
 
+def star_of(item: exp.Expression) -> exp.Star | None:
+    """The Star of a select item ``*`` or ``t.*`` (``t.*`` keeps its EXCEPT, REPLACE .. on that Star), else ``None``."""
+
+    if isinstance(item, exp.Column) and isinstance(item.this, exp.Star):
+        return item.this
+    return item if isinstance(item, exp.Star) else None
+
+
+def star_modifier(item: exp.Expression, key: str):
+    """The ``"except"``, ``"replace"``, ``"rename"`` or ``"ilike"`` modifier of ``*`` or ``t.*`` (``None`` without one).
+
+    sqlglot 30 calls EXCEPT ``except_`` where 26 calls it ``except``: both spellings are read.
+    """
+
+    star = star_of(item)
+    if star is None:
+        return None
+    return star.args.get(key) or star.args.get(f"{key}_")
+
+
+def star_modified(item: exp.Expression) -> bool:
+    """Whether ``*`` or ``t.*`` carries any modifier: EXCEPT, REPLACE, RENAME, ILIKE or one a later sqlglot adds."""
+
+    star = star_of(item)
+    return star is not None and any(star.args.values())
+
+
 def table_parts(table: exp.Table) -> list[str]:
     """Lower-case catalog, dataset and table names of a table reference, skipping empty parts."""
 
@@ -496,6 +829,42 @@ def with_arg_key(node: exp.Expression) -> str:
     # compatible with expression implementations that expose neither key until
     # the first value is assigned.
     return "with_"
+
+
+def merge_wrapper_tails(node: exp.Expression) -> exp.Expression | None:
+    """The query inside any parentheses around ``node``, with the wrappers' ORDER BY / LIMIT / OFFSET on it.
+
+    In sqlglot the tail of ``(a UNION b) ORDER BY k LIMIT 1`` hangs on the enclosing ``Subquery``, so code that
+    unwraps the parentheses to reach the set operation silently drops it. This returns the innermost query
+    carrying the tail of whichever layer held the LIMIT or OFFSET (a copy when it had to move), or ``None``
+    when the layers cannot be folded into one tail: two layers cut rows (``((q LIMIT 3) LIMIT 1)``), or an
+    ORDER BY sits outside the layer that cuts them (``((q ORDER BY k LIMIT 3) ORDER BY k DESC)``) and so reorders
+    the survivors. Without a LIMIT or OFFSET anywhere the ordering cannot change the bag and is left alone.
+    """
+
+    layers = [node]
+    while isinstance(layers[-1], exp.Subquery):
+        layers.append(layers[-1].this)
+    inner = layers[-1]
+    cutting = [i for i, layer in enumerate(layers) if layer.args.get("limit") or layer.args.get("offset")]
+    if not cutting:
+        return inner
+    if len(cutting) > 1 or any(layer.args.get("order") for layer in layers[: cutting[0]]):
+        return None
+    holder = layers[cutting[0]]
+    if holder is inner:
+        return inner
+    merged = inner.copy()
+    outer_with = [layer.args[key] for layer in layers[:-1] for key in ("with", "with_") if layer.args.get(key)]
+    if outer_with:
+        if len(outer_with) > 1 or any(inner.args.get(key) for key in ("with", "with_")):
+            return None
+        merged.set(with_arg_key(merged), outer_with[0].copy())
+    merged.set("limit", holder.args["limit"].copy() if holder.args.get("limit") else None)
+    merged.set("offset", holder.args["offset"].copy() if holder.args.get("offset") else None)
+    order = next((layer.args["order"] for layer in layers[cutting[0] :] if layer.args.get("order")), None)
+    merged.set("order", order.copy() if order is not None else None)
+    return merged
 
 
 def top_level_query(statement: exp.Expression) -> exp.Expression | None:
@@ -631,14 +1000,15 @@ def extended_grouping(group: exp.Expression | None) -> bool:
 
     Recent sqlglot keeps ``ROLLUP (x)`` as an item of ``group.expressions``, older versions (and MySQL's
     ``WITH ROLLUP``) in ``group.args``, so both are checked. Such a grouping can add a grand-total row
-    that exists even over no input rows.
+    that exists even over no input rows. So can the empty grouping set ``GROUP BY ()`` (a key-less
+    ``Tuple`` item), which is counted too.
     """
 
     if group is None:
         return False
     if any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
         return True
-    return any(isinstance(e, _EXTENDED_GROUPING) for e in group.expressions)
+    return any(isinstance(e, _EXTENDED_GROUPING) or (isinstance(e, exp.Tuple) and not e.expressions) for e in group.expressions)
 
 
 def visible_ctes(node: exp.Expression, top: exp.Expression | None = None) -> set[str]:
@@ -661,6 +1031,46 @@ def visible_ctes(node: exp.Expression, top: exp.Expression | None = None) -> set
                 names |= {c.alias_or_name.lower() for c in clause.expressions}
         child = parent
     return names
+
+
+def is_cte_reference(table: exp.Table) -> bool:
+    """Whether ``table`` reads a WITH table that is in scope at that place (not a physical table of the same name).
+
+    A WITH table is visible only inside its own query: a one-part read elsewhere in the statement that
+    happens to share its name is still a read of the physical table.
+    """
+
+    return is_cte_reference_candidate(table) and bool(table.name) and table.name.lower() in visible_ctes(table)
+
+
+def binding_cte(table: exp.Expression) -> exp.CTE | None:
+    """The WITH table a one-part table reference reads, or ``None`` when it names a real table (or is not a table).
+
+    Only a WITH in a scope enclosing ``table`` binds it, the nearest one first, with the visibility of
+    :func:`visible_ctes`: a non-recursive WITH table's body sees only the ones listed before it, so
+    ``WITH t AS (SELECT * FROM t)`` reads the real ``t``. Names collected from the whole statement would let a nested
+    ``WITH t AS (...)`` hide a read of the real table ``t`` elsewhere in the statement.
+    """
+
+    if not isinstance(table, exp.Table) or not table.name or table.args.get("db") or table.args.get("catalog"):
+        return None
+    name = table.name.casefold()
+    child, parent = table, table.parent
+    while parent is not None:
+        ctes: list = []
+        if isinstance(parent, exp.With):
+            ctes = list(parent.expressions)
+            if not parent.args.get("recursive"):
+                ctes = ctes[: next((i for i, c in enumerate(ctes) if c is child), len(ctes))]
+        else:
+            clause = parent.args.get("with_") or parent.args.get("with")
+            if isinstance(clause, exp.With) and child is not clause:
+                ctes = list(clause.expressions)
+        for cte in reversed(ctes):
+            if isinstance(cte, exp.CTE) and cte.alias_or_name.casefold() == name:
+                return cte
+        child, parent = parent, parent.parent
+    return None
 
 
 def free_reads(body: exp.Expression) -> set[str]:

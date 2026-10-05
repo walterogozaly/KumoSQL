@@ -1,0 +1,22 @@
+{
+  "suite": "Sample databases (Chinook, Northwind): workload rewrites",
+  "order": 340,
+  "size": 515,
+  "score": "0 wrong in 510 executed; 242 rewrites verified on the real data",
+  "metric": "75 workload queries (25 upstream, adapted to BigQuery; 50 authored), each through KumoSQL's canonical rule pipeline (plain and wrapped/padded variants, as the engine-suites eval), lift_subqueries and the proof-gated query optimizer with the declared keys, then run on the full database in DuckDB; a rewrite that changes the result multiset or stops running is wrong.",
+  "evidence": "executed",
+  "correctness": "0 behaviour-changing rewrites (0 of them labelled proven); every rewrite is compared with an unrewritten control on the real Chinook and Northwind data, a difference confirmed with DuckDB's optimizer off",
+  "coverage": {
+    "proven": 242,
+    "unknown": 268,
+    "unsupported": 0,
+    "timeout": 0,
+    "error": 5
+  },
+  "usefulness": "242 of 510 executed cases changed by a rewrite: pipeline 231, lift_subqueries 4, optimizer 7; upstream queries 0 wrong / 87 changed, authored 0 wrong / 155 changed",
+  "held_out": "dev 0 wrong / 205 changed; held out (a fifth of the queries by SHA-1 of their id) 0 wrong / 37 changed of 82 executed",
+  "docs": "docs/evals/sample-databases.md",
+  "command": "python tools/sample_db_bench.py --write-results",
+  "date": "2026-10-03",
+  "caveats": "Pinned: Chinook lerocha/chinook-database@7f67772503 ChinookDatabase/DataSources/Chinook_Sqlite.sql (SHA-256 caf31d698a4a, MIT-style, Copyright (c) 2008-2024 Luis Rocha); Northwind microsoft/sql-server-samples@beaab06ef7 samples/databases/northwind-pubs/instnwnd.sql (SHA-256 3cc62b3fca6d, MIT, Copyright (c) Microsoft Corporation). Loaded and checked against upstream: chinook 11 tables / 15,607 rows, northwind 13 tables / 3,308 rows, 24 primary and 24 foreign keys. Northwind's 16 views and 7 stored procedures (parameters bound) and Chinook's 2 test-fixture queries are adapted from T-SQL/SQLite to BigQuery (each adaptation recorded in the workload file); the authored queries were written for this eval. In coverage, 'proven' counts rewrites whose executed result matched the control and 'unknown' counts cases no rule changed. No rule was changed for this eval."
+}

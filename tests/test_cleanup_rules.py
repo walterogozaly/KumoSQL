@@ -491,3 +491,23 @@ def test_trivial_filter_clause_is_not_emptied():
     sql = "SELECT COUNT(*) FILTER (WHERE TRUE) FROM x"
     result = apply_rule("remove_trivial_predicates", sql)
     assert sqlglot.parse_one(result.sql, read="bigquery") is not None and "WHERE" in result.sql.upper()
+
+
+def test_data_modifying_ctes_are_never_removed_or_inlined():
+    # sqlfluff ST03's refusal case: PostgreSQL runs a data-modifying CTE even when nothing reads it
+    source = "WITH ins AS (INSERT INTO t (foo) VALUES (1)), del AS (DELETE FROM t) SELECT 1"
+    for rule in ("remove_unused_ctes", "deduplicate_ctes", "inline_single_use_ctes"):
+        result = apply_rule(rule, source)
+        assert result.sql == source, rule
+
+
+def test_templated_sql_is_left_as_written():
+    from kumosql.engine import has_template_tags
+
+    source = "WITH unused AS (SELECT 1) SELECT * FROM (SELECT id, {{ 'm' }} AS m FROM {{ ref('b') }}) AS b"
+    for rule in ("remove_unused_ctes", "lift_subqueries", "inline_single_use_ctes"):
+        result = apply_rule(rule, source)
+        assert result.sql == source and result.verification.status.value == "unchanged", rule
+        assert [d.code for d in result.diagnostics] == ["templated_sql_kept"]
+    assert not has_template_tags("SELECT '{{ x }}' FROM `{{ p }}.d.t` -- {{ y }}\n/* {% z %} */")
+    assert has_template_tags("SELECT {# note #} 1")

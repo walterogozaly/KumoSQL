@@ -13,13 +13,12 @@ blocking gap exists, so a partial graph is never presented as complete.
 
 from __future__ import annotations
 
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Iterable
 import csv
 import io
 import json
 import os
-import pickle
 import shutil
 import tempfile
 import hashlib
@@ -30,7 +29,7 @@ from contextlib import contextmanager
 
 from . import console
 from .pipeline import Pipeline, load_sqlx_project
-from .resilience import extended_path
+from .resilience import extended_path, is_windows_device_name
 from .scripts import expand_script_jobs
 from .timing import stage
 
@@ -56,7 +55,7 @@ _PROJECT_CACHE: "OrderedDict[str, Pipeline]" = OrderedDict()
 _PROJECT_CACHE_SIZE = 3
 _ACTIVITY: dict[int, dict] = {}  # what the server is busy with, for the sidebar
 _ACTIVITY_IDS = iter(range(1, 1 << 62))
-_CACHE_VERSION = "5"
+_CACHE_VERSION = "9"  # 9: models carry logical, disabled, has_output, incremental_sql; project prefixes and suffixes apply; 8: models carry config_reads; comments no longer hold refs; 7: validated JSON model snapshots; never load legacy pickle
 _CACHE_KEEP = 12
 _SNAPSHOT_KEEP = 3
 _ANALYSIS: dict = {}  # id(pipeline) -> {"state", "stage", "started", "finished"}
@@ -156,7 +155,7 @@ def _snapshot_file(key: str):
 
         from . import __version__, lineage_limits, schema_fetch
         tag = hashlib.sha256(f"{_CACHE_VERSION}|{__version__}|{sqlglot.__version__}|{lineage_limits.cache_tag()}|{schema_fetch.cache_tag()}|{key}".encode()).hexdigest()[:32]
-        return state.data_path("parse-cache", f"{tag}.pkl")
+        return state.data_path("parse-cache", f"{tag}.json")
     except OSError:
         return None
 
@@ -166,11 +165,11 @@ def _load_snapshot(key: str):
     if path is None or not path.is_file():
         return None
     try:
+        from .storage import pipeline_from_snapshot
+
         with stage("parse cache hit", file=path.name):
-            pipeline = pickle.loads(path.read_bytes())
+            pipeline = pipeline_from_snapshot(json.loads(path.read_text(encoding="utf-8")), key)
     except Exception:  # noqa: BLE001 - a damaged or older snapshot is just a miss
-        return None
-    if not isinstance(pipeline, Pipeline):
         return None
     pipeline.content_key = key
     return pipeline
@@ -181,19 +180,20 @@ def _save_snapshot(pipeline: Pipeline, key: str) -> None:
     if path is None:
         return
     try:
-        pipeline._analyse()
-        temp = path.with_suffix(".tmp")
-        temp.write_bytes(pickle.dumps(pipeline, protocol=pickle.HIGHEST_PROTOCOL))
-        os.replace(temp, path)
-        files = sorted(path.parent.glob("*.pkl"), key=lambda f: f.stat().st_mtime, reverse=True)
+        from .storage import pipeline_snapshot, atomic_json
+
+        atomic_json(path, pipeline_snapshot(pipeline, key))
+        files = sorted(path.parent.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
         for old in files[_SNAPSHOT_KEEP:]:
             old.unlink(missing_ok=True)
+        for legacy in path.parent.glob("*.pkl"):  # executable-format caches from earlier versions are never read
+            legacy.unlink(missing_ok=True)
     except Exception:  # noqa: BLE001 - the snapshot is an optimisation; never fail a load over it
         pass
 
 
 def restore_snapshot(key: object, label: str, remote: dict | None = None) -> bool:
-    """Show a previously parsed project straight from the data folder, without git or parsing."""
+    """Show saved model metadata without git or SQLX parsing; SQL analysis is rebuilt."""
 
     if not isinstance(key, str) or not key:
         return False
@@ -399,7 +399,7 @@ def _restore_jobs() -> None:
             label = json.loads(handle.readline() or "{}").get("label", "")
             records = tuple(json.loads(line) for line in handle if line.strip())
     except (OSError, ValueError, AttributeError) as exc:
-        console.error(f"could not read the saved job history in {path}: {exc}", trace=False)
+        console.error(f"could not read the saved job history in {path}", exc, trace=False)
         return
     _JOBS.update(records=records, label=str(label or "saved job history"))
 
@@ -415,7 +415,7 @@ def _save_jobs(records: list[dict], label: str) -> None:
                 handle.write(json.dumps(record, default=str) + "\n")
         partial.replace(path)
     except OSError as exc:
-        console.error(f"could not save the job history to {path}: {exc}; it is kept until KumoSQL stops", trace=False)
+        console.error(f"could not save the job history to {path}; it is kept until KumoSQL stops", exc, trace=False)
     _JOBS["restored_from"] = str(path)
 
 
@@ -424,7 +424,7 @@ def _forget_saved_jobs() -> None:
     try:
         path.unlink(missing_ok=True)
     except OSError as exc:
-        console.error(f"could not delete the saved job history {path}: {exc}", trace=False)
+        console.error(f"could not delete the saved job history {path}", exc, trace=False)
     _JOBS["restored_from"] = str(path)
 
 
@@ -541,10 +541,14 @@ def empty_payload(needs: str, message: str, scope_name: str | None = None) -> di
 
 
 def _safe_path(path: object) -> PurePosixPath:
-    if not isinstance(path, str) or not path or len(path) > 1024 or "\\" in path or "\0" in path:
+    if not isinstance(path, str) or not path or len(path) > 1024 or "\\" in path or "\0" in path or ":" in path:
         raise ProjectError("invalid file path")
     posix = PurePosixPath(path)
-    if posix.is_absolute() or ".." in posix.parts or "." in posix.parts:
+    windows = PureWindowsPath(path)
+    if posix.is_absolute() or windows.drive or windows.root or any(
+        p in ("", ".", "..") or p.endswith((".", " ")) or is_windows_device_name(p)
+        for p in path.split("/")
+    ):
         raise ProjectError("invalid file path")
     name = posix.name.lower()
     if not (name.endswith(_ALLOWED_SUFFIXES) or name in _CONFIG_FILES):
@@ -560,6 +564,7 @@ def _write_files(files: object, directory: str) -> None:
     if len(files) > MAX_FILES:
         raise ProjectError(f"too many files (limit {MAX_FILES})")
     total = 0
+    root = Path(directory).resolve()
     for path, text in files.items():
         relative = _safe_path(path)
         if not isinstance(text, str):
@@ -567,8 +572,12 @@ def _write_files(files: object, directory: str) -> None:
         total += len(text.encode("utf-8"))
         if total > MAX_TOTAL_BYTES:
             raise ProjectError("project is too large")
-        target = Path(directory, *relative.parts)
+        target = root.joinpath(*relative.parts)
+        if not target.resolve().is_relative_to(root):
+            raise ProjectError("invalid file path")
         target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.resolve().is_relative_to(root):
+            raise ProjectError("invalid file path")
         target.write_text(text, encoding="utf-8")
 
 
@@ -631,6 +640,7 @@ def pipeline_from_files(files: object, repo_url: str | None = None):
             with stage("parse project"):
                 pipeline = load_sqlx_project(directory, compiled_targets=_compiled_targets(repo_url))
             pipeline.completeness()  # analyse now: the folder is deleted on exit
+            pipeline.source_files = dict(files)  # the text a patch edits (kumosql.shared_models)
         except Exception as exc:  # loader errors are user-facing
             from . import console
 

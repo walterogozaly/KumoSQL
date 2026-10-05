@@ -30,5 +30,6 @@ jobs:
         if: matrix.compiled
         run: python -m pip install "sqlglotc==${{ matrix.sqlglot }}"
       - name: Run unit tests
-        # The slow workbook test needs a private local CSV, so it stays deselected.
+        # Tests marked slow (long benchmark runs) stay deselected; the authored SQL fixture gate
+        # (tests/test_workbook_fixture.py) is not slow and runs here.
         run: python -m pytest -m "not slow" -n auto --dist loadgroup

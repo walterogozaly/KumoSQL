@@ -1,5 +1,7 @@
 # Join rewrites to LEFT JOIN
 
+[Plain-language version](../../docs_simple/evals/join-rewrites.md)
+
 Can the prover show that a query written with one join type equals one written with a LEFT JOIN? This eval is a hand-checked set of such pairs. Each rewrites a CROSS, comma, INNER, RIGHT or FULL join, or a semi or anti join, into or out of a LEFT JOIN, or moves an equality through one. Results file: `benchmarks/results/join-rewrites.json`.
 
 ## What proves

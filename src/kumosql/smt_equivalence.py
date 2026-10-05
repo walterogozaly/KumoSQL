@@ -28,15 +28,23 @@ nondeterministic functions and the like yield ``not_proven``.
 Values use three-valued logic with explicit NULL flags over an untyped domain
 (an exact rational, a string or a boolean), so no schema types are needed.
 Every proof assumes ``BASE_ASSUMPTIONS``: no NaN, runtime errors not modeled,
-SUM/AVG independent of row order, result column types not compared; with
+SUM/AVG independent of row order (dropped or narrowed by ``float_sum_order``), result column types not compared; with
 ``exact_arithmetic`` also that ``+``, ``-`` and ``*`` never round or overflow.
 Numeric conversions that the query text makes visible are kept: a CASE, IF,
 COALESCE, NULLIF or set operation with a FLOAT64 branch (a FLOAT64 literal or
 cast, or arithmetic over one) reads each other non-literal branch as
-``CAST(.. AS FLOAT64)``, and ``x * 1`` is ``x`` only for an integer (or exact
+``CAST(.. AS FLOAT64)``, a comparison (``=``, ``<``, ``IN``, ``BETWEEN``, a
+simple ``CASE``) with a FLOAT64 operand reads each other one the same way (a
+FLOAT64 literal below 2**53 converts nothing: an integer and its rounding
+compare alike with it), and ``x * 1`` is ``x`` only for an integer (or exact
 decimal) ``1``; declared column types (``types``) count as visible. Values
 from different sources whose types are not known (two undeclared columns) are
-combined as they are, under ``MIXED_NUMERIC_ASSUMPTION``.
+compared and combined as they are, under ``MIXED_NUMERIC_ASSUMPTION``. A
+decimal or exponent literal is its exact value, which keeps its order against
+every FLOAT64 value only with at most 15 significant digits and inside the
+normal FLOAT64 range; other literals (``1e-324`` is 0, ``1e400`` overflows)
+are not modeled. FLOAT64 arithmetic is never computed on its literals (BigQuery's
+``0.1 + 0.2`` is not ``0.3``), except under ``exact_arithmetic``.
 
 When a proof fails the prover looks for a small concrete database on which
 the two queries return different rows; if it finds one the result is
@@ -57,6 +65,7 @@ from enum import Enum
 from fractions import Fraction
 import argparse
 import hashlib
+import contextlib
 import itertools
 import json
 import re
@@ -64,9 +73,17 @@ import sys
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, expand_alias_columns, faithful_sql
+from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, merge_wrapper_tails, plain_distinct, star_modified
+from .parse_check import refuse_misread_proofs
+from . import proof_columns
 from .set_operations import positional_sql_pair
+from .smt_args import check_args
+from .solver_lock import bound, bounded_solver, serialized
 from .string_literals import canonical_literals
+from .type_names import invalid_type_name
+from .sqlx_fragments import masked_template_problem
+from . import numeric_column_reading, smt_errors, smt_group_sums, smt_numeric, smt_values, string_number_compare, string_number_literals
+from .float_sum_order import Ledger
 
 try:  # pragma: no cover - exercised by the import itself
     import z3
@@ -80,6 +97,8 @@ class SmtStatus(str, Enum):
     PROVEN_EQUIVALENT = "proven_equivalent"
     NOT_EQUIVALENT = "not_equivalent"
     NOT_PROVEN = "not_proven"
+    # Equivalent on every database that meets ``SmtEquivalenceResult.conditions``; never counted as proven.
+    PROVEN_CONDITIONALLY = "proven_conditionally"
 
 
 @dataclass(frozen=True)
@@ -97,10 +116,18 @@ class SmtEquivalenceResult:
     reason: str
     counterexample: Counterexample | None = None
     assumptions: tuple[str, ...] = ()
+    # ``kumosql.conditional_equivalence.Condition`` items of a PROVEN_CONDITIONALLY result.
+    conditions: tuple = ()
+    # ``kumosql.smt_errors.ErrorReport`` of a proof in the BigQuery dialect: what the rewrite does to runtime errors.
+    errors: object = None
 
     @property
     def proven(self) -> bool:
         return self.status is SmtStatus.PROVEN_EQUIVALENT
+
+    @property
+    def conditionally_proven(self) -> bool:
+        return self.status is SmtStatus.PROVEN_CONDITIONALLY
 
 
 @dataclass(frozen=True)
@@ -129,7 +156,7 @@ BASE_ASSUMPTIONS = (
 )
 EXACT_ARITHMETIC_ASSUMPTION = "+, - and * are exact (no FLOAT64 rounding or INT64 overflow)"
 MIXED_NUMERIC_ASSUMPTION = (
-    "values combined by CASE, IF, COALESCE or a set operation have the same numeric type (no INT64 to FLOAT64 conversion)"
+    "values compared, or combined by CASE, IF, COALESCE or a set operation, have the same numeric type (no INT64 to FLOAT64 conversion)"
 )
 
 _NONDETERMINISTIC_NAMES = {
@@ -191,6 +218,9 @@ _CANONICAL_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _CANONICAL_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
 _MAX_MAPPINGS = 5000
 _MAX_EVAL_COMBINATIONS = 50000
+# Select bodies and table reads compiled for one pair: a CTE read twice per level doubles each level, so
+# fourteen short lines would expand to 16,384 reads, and the solver timeout does not cover compiling.
+_MAX_EXPANSION = 4000
 
 
 _UNNEST_TABLE = "$unnest"
@@ -204,6 +234,23 @@ class _Env(dict):
 
 class Unsupported(Exception):
     """The query uses something outside the modeled subset."""
+
+
+def _lost_null_ordering(body: exp.Expression, text: str) -> str:
+    """A suffix naming every NULLS FIRST/LAST of ``body`` when its BigQuery ``text`` lost one, else "".
+
+    sqlglot drops a NULLS placement BigQuery cannot spell there, such as ``ASC NULLS LAST`` in an aggregate's
+    window, so ``SUM(v) OVER (ORDER BY t NULLS FIRST)`` and ``.. NULLS LAST`` would print alike.
+    """
+
+    before = [bool(o.args.get("nulls_first")) for o in body.find_all(exp.Ordered)]
+    if not before:
+        return ""
+    try:
+        after = [bool(o.args.get("nulls_first")) for o in sqlglot.parse_one(text, read="bigquery").find_all(exp.Ordered)]
+    except sqlglot.errors.ParseError:
+        after = None
+    return "" if before == after else " NULLS[" + "".join("F" if b else "L" for b in before) + "]"
 
 
 def _names_output_alias(column: exp.Column, select: exp.Select) -> bool:
@@ -224,11 +271,12 @@ def _names_output_alias(column: exp.Column, select: exp.Select) -> bool:
     return False
 
 
-def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None = None) -> exp.Expression:
+def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None = None, reader=None) -> exp.Expression:
     """A copy of ``body`` whose tables and derived tables carry positional aliases (``kq0``, ``kq1``..),
     so two spellings of the same relation get the same identity. A column is renamed through the
     nearest enclosing SELECT that declares its qualifier, so an alias reused in a nested scope is fine.
-    With a schema, a bare column of a select over one known table is qualified first."""
+    With a schema, a bare column of a select over one known table is qualified first; given the independent
+    ``reader`` of the statement (``proof_columns``), each such qualifier must name the owner it finds."""
 
     body = body.copy()
     ctes = {c.alias_or_name.lower() for c in body.find_all(exp.CTE)}
@@ -263,6 +311,10 @@ def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None
                 key = ".".join(p.name for p in sources[0].parts).lower()
                 known = schema.get(key)
                 if known is not None and column.name.lower() in [c.lower() for c in known]:
+                    if reader is not None:
+                        verdict = reader.judge_tagged(column, proof_columns.Claim(source=proof_columns.source_tag(sources[0])), "smt_schema_qualification")
+                        if verdict.refused:
+                            raise Unsupported(f"independent check of column resolution: {verdict.reason}")
                     qualifier = (sources[0].alias_or_name or "").lower()
                     column.set("table", exp.to_identifier(sources[0].alias_or_name))
         if not qualifier:
@@ -321,11 +373,14 @@ def _implied(conjuncts: list, fact, ids: set) -> bool:
 
     if fact.get_id() in ids:
         return True
-    solver = z3.Solver()
-    solver.set("timeout", 2000)
+    solver = bounded_solver(2000)
     solver.add(*conjuncts)
     solver.add(z3.Not(fact))
     return solver.check() == z3.unsat
+
+
+class _Exhausted(Unsupported):
+    """The compilation budget ran out; never retried as an opaque relation."""
 
 
 class _SetSourceUnresolved(Exception):
@@ -356,6 +411,19 @@ def _string_rank():
     if _STRING_RANK is None:
         _STRING_RANK = z3.Function("string_rank", z3.StringSort(), z3.RealSort())
     return _STRING_RANK
+
+
+_CONVERTED = None
+
+
+def _converted_functions():
+    """Uninterpreted ``eq`` and ``lt`` over values, for a string compared with a number."""
+
+    global _CONVERTED
+    if _CONVERTED is None:
+        value = _value_sort()
+        _CONVERTED = (z3.Function("converted_eq", value, value, z3.BoolSort()), z3.Function("converted_lt", value, value, z3.BoolSort()))
+    return _CONVERTED
 
 
 def _value_sort():
@@ -598,6 +666,50 @@ class _Source:
         return [(name, self.occ.col(name)) for name in self.occ.columns]
 
 
+def _star_columns(star: exp.Star, columns: list[tuple[str, _Val]]) -> list[tuple[str, _Val | exp.Expression]]:
+    """What ``*`` or ``t.*`` lists, given what it would list bare (``columns``), after its EXCEPT, REPLACE and RENAME.
+
+    They apply in that order, the order sqlglot reads them in. sqlglot 30 calls EXCEPT ``except_`` and 26
+    ``except``: both are read. A REPLACE value comes back as its expression, for the select to compile in its
+    FROM scope. A name the star lacks or lists twice (the query fails, or engines differ on the column it
+    means), a RENAME onto a name the star has, and any other modifier (``ILIKE``) are declined.
+    """
+
+    modifiers = {key.rstrip("_"): value for key, value in star.args.items() if value}
+    if set(modifiers) - {"except", "replace", "rename"}:
+        raise Unsupported(f"SELECT * {' '.join(sorted(m.upper() for m in modifiers))}")
+    out: list = list(columns)
+
+    def position(name: str) -> int:
+        found = [i for i, (n, _) in enumerate(out) if n == name]
+        if len(found) != 1:
+            raise Unsupported(f"SELECT * modifier naming {name}, which the star lists {len(found)} times")
+        return found[0]
+
+    def named(node) -> str:
+        if isinstance(node, exp.Column) and not node.table and isinstance(node.this, exp.Identifier):
+            return node.name.lower()
+        raise Unsupported(f"SELECT * modifier naming {node.sql(dialect='bigquery')}")
+
+    for column in modifiers.get("except", ()):
+        del out[position(named(column))]
+    for key in ("replace", "rename"):
+        if any(not isinstance(a, exp.Alias) or not a.alias for a in modifiers.get(key, ())):
+            raise Unsupported(f"SELECT * {key.upper()} of this shape")
+    replace = [(position(a.alias.lower()), a.this) for a in modifiers.get("replace", ())]
+    rename = [(position(named(a.this)), a.alias.lower()) for a in modifiers.get("rename", ())]
+    if len({i for i, _ in replace}) != len(replace) or len({i for i, _ in rename}) != len(rename):
+        raise Unsupported("SELECT * modifier naming a column twice")
+    # Renames read the names before any of them applies; one onto a name the star has (a swap, say) is declined.
+    if len({n for _, n in rename}) != len(rename) or any(out[j][0] == n for i, n in rename for j in range(len(out)) if j != i):
+        raise Unsupported("SELECT * RENAME onto a name the star has")
+    for i, value in replace:
+        out[i] = (out[i][0], value)
+    for i, name in rename:
+        out[i] = (name, out[i][1])
+    return out
+
+
 # --------------------------------------------------------------------------
 # Compiler: sqlglot AST -> normal form
 # --------------------------------------------------------------------------
@@ -624,6 +736,9 @@ def _parse_number(text: str) -> Fraction:
         raise Unsupported(f"numeric literal {text!r}") from error
     if not dec.is_finite():
         raise Unsupported(f"numeric literal {text!r}")
+    if dec and not -400 <= dec.adjusted() <= 400:
+        # Outside FLOAT64's range (and Fraction(1e100000000) would build a hundred-million-digit integer).
+        raise Unsupported(f"numeric literal {text[:40]!r} is out of range")
     value = Fraction(dec)
     if value.denominator == 1 and "." not in text and "e" not in text.lower():
         if abs(value) > 2**53:
@@ -633,10 +748,42 @@ def _parse_number(text: str) -> Fraction:
     # and rounding preserves its order against every other FLOAT64 value.
     if len(dec.normalize().as_tuple().digits) > 15:
         raise Unsupported(f"numeric literal {text} has more than 15 significant digits")
+    # Only in the normal FLOAT64 range: below it a literal rounds to a subnormal with fewer digits or to
+    # 0 (1e-324 and 2e-324 are both 0), above it to infinity.
+    if value and not _FLOAT64_MIN_NORMAL <= abs(value) <= _FLOAT64_MAX:
+        raise Unsupported(f"numeric literal {text} is outside the normal FLOAT64 range")
     return value
 
 
+_FLOAT64_MIN_NORMAL = Fraction(sys.float_info.min)
+_FLOAT64_MAX = Fraction(sys.float_info.max)
+
+
 _INTEGER_TYPES = {exp.DataType.Type.INT, exp.DataType.Type.BIGINT, exp.DataType.Type.SMALLINT, exp.DataType.Type.TINYINT}
+
+# Functions that read the sign of a zero (``IEEE_DIVIDE(1, -0.0)`` is -inf, ``SIGN(-0.0)`` is -0.0).
+_SIGN_OBSERVERS = ("IEEE_DIVIDE", "Atan2", "Sign")
+_NOT_FLOAT = ("INT64", "NUMERIC", "BIGNUMERIC", "STRING", "BOOL", "NULL", "OTHER")
+# Calls that never raise an error in BigQuery, whatever their arguments.
+_NEVER_FAILS = frozenset((
+    "Upper", "Lower", "Length", "Trim", "Concat", "DPipe", "Like", "ILike", "Greatest", "Least", "Coalesce", "Nullif", "If",
+    "StartsWith", "EndsWith", "Contains", "IEEE_DIVIDE", "Atan2", "Sign", "Is", "Not", "Paren", "Case",
+))
+
+
+def _nonzero_literal(node: exp.Expression) -> bool:
+    node = node.unnest() if isinstance(node, exp.Paren) else node
+    if isinstance(node, exp.Neg):
+        node = node.this
+    return isinstance(node, exp.Literal) and not node.is_string and not _float_is_zero(node.this)
+
+
+def _float_is_zero(text: str) -> bool:
+    try:
+        return float(text) == 0
+    except ValueError:
+        return True
+
 
 # Scalar functions that return NULL whenever an argument is NULL, in every dialect.
 _STRICT_FUNCTIONS = tuple(
@@ -655,6 +802,12 @@ def _literal_arithmetic(node: exp.Expression, dialect: str) -> Fraction | None:
     """The value of ``+``, ``-``, ``*`` and parentheses over numeric literals, when the engine computes it
     exactly: integers anywhere, decimals only where decimal literals are exact."""
 
+    if dialect == "bigquery":
+        typed = smt_values.fold_typed(node)
+        if typed is None:
+            return None
+        kind, value = typed
+        return value if kind == "float" or abs(value) <= 2**53 else None
     if isinstance(node, exp.Paren):
         return _literal_arithmetic(node.this, dialect)
     if isinstance(node, exp.Literal) and not node.is_string:
@@ -662,7 +815,8 @@ def _literal_arithmetic(node: exp.Expression, dialect: str) -> Fraction | None:
             value = _parse_number(node.this)
         except Unsupported:
             return None
-        if value.denominator != 1 and dialect not in _EXACT_DECIMAL_LITERALS:
+        # An exponent literal is FLOAT64/DOUBLE even where decimals are exact (NUMERIC only in PostgreSQL).
+        if value.denominator != 1 and (dialect not in _EXACT_DECIMAL_LITERALS or ("e" in node.this.lower() and dialect != "postgres")):
             return None
         return value
     if isinstance(node, exp.Neg):
@@ -753,6 +907,26 @@ def _plain_literal(node: exp.Expression, dialect: str) -> bool:
     return _literal_arithmetic(node, dialect) is not None
 
 
+def _literal_value(node: exp.Expression, dialect: str) -> Fraction:
+    """The model value of a numeric ``_plain_literal`` (0 for NULL and booleans)."""
+
+    def number(text: str, negate: bool) -> Fraction:
+        if dialect != "bigquery":
+            value = _parse_number(text)
+            return -value if negate else value
+        try:
+            return smt_values.literal_value(text, negate)  # the FLOAT64 nearest a decimal, not its exact text
+        except smt_values.NotModeled as error:
+            raise Unsupported(str(error)) from error
+
+    node = node.unnest() if isinstance(node, exp.Paren) else node
+    if isinstance(node, exp.Literal) and not node.is_string:
+        return number(node.this, False)
+    if isinstance(node, exp.Neg) and isinstance(node.this, exp.Literal) and not node.this.is_string:
+        return number(node.this.this, True)
+    return _literal_arithmetic(node, dialect) or Fraction(0)
+
+
 def _branch_values(node: exp.Expression, dialect: str) -> list[exp.Expression]:
     """The expressions whose common type is the type of a CASE, COALESCE, IF or NULLIF."""
 
@@ -801,15 +975,17 @@ class _Compiler:
         # Declared column types by table key, and the table of each base-table occurrence.
         self.types = {key.lower(): {c.lower(): t for c, t in cols.items()} for key, cols in (types or {}).items()}
         self.occ_tables: dict[str, str] = {}
-        # A CASE/COALESCE/IF/NULLIF or set-operation column combined values whose numeric types are not known
-        # to agree: the proof assumes they do (MIXED_NUMERIC_ASSUMPTION).
+        # A comparison, or a CASE/COALESCE/IF/NULLIF or set-operation column, met values whose numeric types are
+        # not known to agree: the proof assumes they do (MIXED_NUMERIC_ASSUMPTION).
         self.mixed_numeric = False
         self.schema = {
             key.lower(): [c.lower() for c in cols] for key, cols in (schema or {}).items()
         }
         self.exact = exact_arithmetic
         self.counter = itertools.count()
+        self.expansion = 0
         self.uses_uf = False
+        self.bounded_sums = False  # a SUM of a plain column can only overflow on a database of large values
         self.functions: dict[tuple[str, int], tuple] = {}
         # Hypotheses every valid query satisfies, e.g. arithmetic operands are
         # numbers in exact mode.
@@ -832,8 +1008,22 @@ class _Compiler:
         self.window_opaque = False
         # Whether values are ordered (<, MIN, ..): then string ordering facts are needed.
         self.ordered = False
+        # Runtime errors (BigQuery dialect): every operation that can fail (``smt_errors.Site``), the guards of the
+        # CASE/IF/COALESCE branch being compiled, and the base-table occurrences read (for declared-type facts).
+        self.sites: list = []
+        self._guard: list = []
+        self._safe = 0  # inside SAFE.function(..): its own failures are NULL
+        self.occs_seen: list = []
+        self.untyped_sources = False  # an UNNEST or opaque source, whose columns have no declared type
+        self.big_literals: list[str] = []  # INT64 literals past 2**53, which need an all-INT64 context
+        self.float_capable = False  # a literal, cast or function in the queries that may produce a FLOAT64
+        self.sums = Ledger()  # SUM and AVG calls, for the row-order assumption (float_sum_order.py)
         self.string_literals: set[str] = set()
         self.timestamp_literals: set[str] = set()
+        # The independent reader of the statement being compiled (``proof_columns``) and the FROM-item number of each
+        # source it has seen, to compare a bare column's owner with the one the text names.
+        self.column_reader = None
+        self.source_tags: dict[int, tuple] = {}
 
     def fresh(self, prefix: str) -> str:
         return f"{prefix}{next(self.counter)}"
@@ -842,12 +1032,17 @@ class _Compiler:
 
     def compile(self, sql: str) -> _Union:
         try:
-            statements = [expand_alias_columns(check_modeled(canonical_negation(s)), self.schema) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
+            self.column_reader = proof_columns.reader_for(sql, self.schema, self.dialect)
+            statements = [expand_alias_columns(check_args(check_modeled(canonical_negation(s))), self.schema) for s in proof_columns.parse_tagged(sql, self.dialect, self.column_reader)]
         except UnmodeledConstruct as error:
             raise Unsupported(str(error)) from error
+        except proof_columns.ColumnResolutionRefused as refusal:
+            raise Unsupported(f"independent check of column resolution: {refusal}") from None
         if len(statements) != 1:
             raise Unsupported(f"expected one statement, found {len(statements)}")
         statement = statements[0]
+        self.float_capable = self.float_capable or smt_values.float_capable(statement)
+        self.sums.statement(statement)
         if any(statement.find_all(exp.Pivot)):
             # PIVOT / UNPIVOT reshape columns and rows; they are not modeled, so never claim equivalence.
             raise Unsupported("PIVOT and UNPIVOT are not modeled")
@@ -872,8 +1067,10 @@ class _Compiler:
                     raise Unsupported(f"{name.upper()} is not modeled")
 
     def _query(self, node: exp.Expression, ctes: dict) -> _Union:
-        while isinstance(node, exp.Subquery):
-            node = node.this
+        # The tail of a parenthesized query hangs on the parentheses, not on the query inside.
+        node = merge_wrapper_tails(node)
+        if node is None:
+            raise Unsupported("LIMIT is not modeled")
         if node.args.get("limit") or node.args.get("offset"):
             if _is_limit_zero(node):
                 # Nothing survives LIMIT 0: the columns, with no rows.
@@ -985,7 +1182,13 @@ class _Compiler:
             )
         return _Union(blocks, True, column_names=list(left.names))
 
+    def _expand(self) -> None:
+        self.expansion += 1
+        if self.expansion > _MAX_EXPANSION:
+            raise _Exhausted(f"the queries expand to more than {_MAX_EXPANSION} selects and table reads")
+
     def _select(self, node: exp.Select, ctes: dict):
+        self._expand()
         for key in ("qualify", "laterals", "pivots", "connect", "match", "prewhere", "windows", "into"):
             if node.args.get(key):
                 raise Unsupported(f"{key.upper()} clause")
@@ -1046,10 +1249,12 @@ class _Compiler:
                 offset_arg = source_node.args.get("offset")
                 offset = ((offset_arg.name if isinstance(offset_arg, exp.Expression) and offset_arg.name else "offset") if offset_arg else "").lower()
                 occ = _Occ(_UNNEST_TABLE, self.fresh("u"), ["arr", "value", "offset"])
+                self.untyped_sources = True
                 cols = {element: occ.col("value")}
                 if offset:
                     cols[offset] = occ.col("offset")
                 source = _Source(cols=cols, order=list(cols), value_table=alias == element)
+                self._tag_source(source, source_node)
                 new_states = []
                 for st in states:
                     if alias in st.env:
@@ -1075,6 +1280,7 @@ class _Compiler:
                 alias, source = self._source(source_node, ctes, b_occs, b_conds)
             finally:
                 self.collector = saved
+            self._tag_source(source, source_node)
             on = join.args.get("on") if join is not None else None
             new_states: list[_State] = []
             for st in states:
@@ -1125,7 +1331,22 @@ class _Compiler:
                     self.collector = saved
         return states
 
+    def _tag_source(self, source: "_Source", node: exp.Expression, of: "_Source | None" = None) -> None:
+        """Remember which FROM item of the statement ``source`` stands for (``proof_columns.source_tag``)."""
+
+        if self.column_reader is None:
+            return
+        number = proof_columns.source_tag(node) if of is None else self.source_tags.get(id(of), (None, None))[1]
+        previous = self.source_tags.get(id(source))
+        self.source_tags[id(source)] = (source, number if previous is None or previous[1] == number else None)
+
     def _null_source(self, source: "_Source") -> "_Source":
+        result = self._null_source_of(source)
+        if result is not source:
+            self._tag_source(result, None, of=source)
+        return result
+
+    def _null_source_of(self, source: "_Source") -> "_Source":
         V = _value_sort()
         null = _Val(z3.BoolVal(True), V.Num(0))
         if source.all_null is not None:
@@ -1134,6 +1355,19 @@ class _Compiler:
             return _Source(all_null=null)
         names = [name for name, _ in source.star()]
         return _Source(cols={name: null for name in names}, order=list(names))
+
+    def _judge_column(self, col: exp.Column, claim: "proof_columns.Claim") -> None:
+        """Have the independent reader confirm the owner the compiler chose for a bare column."""
+
+        if self.column_reader is None:
+            return
+        verdict = self.column_reader.judge_tagged(col, claim, "smt")
+        if verdict.refused:
+            raise Unsupported(f"independent check of column resolution: {verdict.reason}")
+
+    def _chosen(self, source: "_Source") -> "proof_columns.Claim":
+        entry = self.source_tags.get(id(source))
+        return proof_columns.Claim(source=entry[1] if entry is not None and entry[0] is source else None)
 
     def _null_env(self, env: "_Env") -> "_Env":
         """The scope with every source's columns replaced by NULL (the unmatched side of an outer join)."""
@@ -1144,7 +1378,15 @@ class _Compiler:
             result[alias] = self._null_source(source)
         return result
 
+    def _assign_scope(self, start: int, states: list) -> None:
+        """The tables of this ``FROM`` are part of the scope of every error site compiled since ``start``."""
+
+        scope = {occ.uid: occ for st in states for occ in st.occs}
+        for site in self.sites[start:]:
+            site.scope.update(scope)
+
     def _select_body(self, node: exp.Select, ctes: dict, distinct_node, facts_start: int):
+        sites_start = len(self.sites)
         states = self._scan(node, ctes)
         blocks = []
         for st in states:
@@ -1153,6 +1395,7 @@ class _Compiler:
                 blocks.append(self._finish_select(node, distinct_node, facts_start, st, len(states) > 1))
             finally:
                 self.collector = saved
+        self._assign_scope(sites_start, states)
         if len(blocks) == 1:
             return blocks[0]
         union = _Union(blocks, distinct_node is not None)
@@ -1165,13 +1408,12 @@ class _Compiler:
         group = node.args.get("group")
         having = node.args.get("having")
         agg_ctx = _AggCtx(self)
+        sites_start = len(self.sites)
         names: list[str] = []
         outputs: list[_Val] = []
         aliases: dict[str, exp.Expression] = {}
         for item in node.expressions:
             if isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star)):
-                if item.args.get("except") or item.args.get("replace"):
-                    raise Unsupported("SELECT * EXCEPT/REPLACE")
                 if isinstance(item, exp.Star):
                     sources = list(env.values())
                 else:
@@ -1179,10 +1421,14 @@ class _Compiler:
                     if table not in env or env[table].value_table:
                         raise Unsupported(f"unknown alias {table}")
                     sources = [env[table]]
-                for source in sources:
-                    for name, val in source.star():
-                        names.append(name)
-                        outputs.append(val)
+                # ``t.*`` keeps its EXCEPT/REPLACE/RENAME on the Star under the column.
+                star = item if isinstance(item, exp.Star) else item.this
+                for name, val in _star_columns(star, [pair for source in sources for pair in source.star()]):
+                    if isinstance(val, exp.Expression):
+                        aliases[name] = val  # ``* REPLACE (e AS a)`` names ``e`` as ``e AS a`` does
+                        val = self._val(val, env, agg_ctx, None)
+                    names.append(name)
+                    outputs.append(val)
                 continue
             expr = item.this if isinstance(item, exp.Alias) else item
             name = item.alias_or_name.lower() if isinstance(item, (exp.Alias, exp.Column)) else ""
@@ -1202,11 +1448,12 @@ class _Compiler:
 
         keys: list[_Val] = []
         if group is not None:
-            for key in ("rollup", "cube", "grouping_sets", "totals"):
-                if group.args.get(key):
-                    raise Unsupported(f"GROUP BY {key.upper()}")
+            if extended_grouping(group):
+                raise Unsupported("GROUP BY ROLLUP / CUBE / GROUPING SETS / ()")
             for key_expr in group.expressions:
                 if isinstance(key_expr, exp.Literal) and not key_expr.is_string:
+                    if not key_expr.this.isdigit():
+                        raise Unsupported(f"GROUP BY {key_expr.this}")
                     position = int(key_expr.this)
                     if not 1 <= position <= len(outputs):
                         raise Unsupported(f"GROUP BY {position}")
@@ -1214,7 +1461,7 @@ class _Compiler:
                 else:
                     keys.append(self._val(key_expr, env, None, aliases))
         having_pred = self._pred(having.this, env, agg_ctx, aliases) if having is not None else None
-        return _Agg(
+        block = _Agg(
             occs,
             cond,
             keys,
@@ -1227,6 +1474,8 @@ class _Compiler:
             facts=self.facts[facts_start:],
             subs=state.subs,
         )
+        smt_group_sums.attach(self, sites_start, block)
+        return block
 
     def _source(self, node, ctes, occs, conds) -> tuple[str, _Source]:
         if isinstance(node, exp.Table):
@@ -1240,8 +1489,10 @@ class _Compiler:
                 body, cte_env = ctes[name]
                 return alias, self._derived(body, cte_env, occs, conds)
             key = self._table_key(node)
+            self._expand()
             occ = _Occ(key, self.fresh("r"), self.schema.get(key.lower()))
             self.occ_tables[occ.uid] = key.lower()
+            self.occs_seen.append(occ)
             occs.append(occ)
             return alias, _Source(occ=occ)
         if isinstance(node, exp.Subquery):
@@ -1255,12 +1506,16 @@ class _Compiler:
         return ".".join(parts)
 
     def _derived(self, body, ctes, occs, conds) -> _Source:
-        saved = len(self.facts)
+        saved, saved_sites = len(self.facts), len(self.sites)
         try:
             sub = self._query(body, ctes)
+        except _Exhausted:
+            raise
         except Unsupported:
             del self.facts[saved:]
-            return self._opaque(body, ctes, occs)
+            dropped = len(self.sites) > saved_sites
+            del self.sites[saved_sites:]  # what the failed read recorded is not scoped: the relation kept whole stands for it
+            return self._opaque(body, ctes, occs, read=False, dropped=dropped)
         one_row = self._one_row_source(sub, body, ctes)
         if one_row is not None:
             return one_row
@@ -1304,7 +1559,7 @@ class _Compiler:
         expanded = self._expand_ctes(body.copy(), ctes)
         self._check_nondeterminism(expanded)
         self.uses_uf = True  # the values are free: a model is not a database, so no counterexample
-        key = _canonical_aliases(expanded, self.schema).sql(dialect="bigquery", normalize_functions="upper")
+        key = _canonical_aliases(expanded, self.schema, self.column_reader).sql(dialect="bigquery", normalize_functions="upper")
         tag = hashlib.sha1(key.encode()).hexdigest()[:16]
         V = _value_sort()
         counts = {id(call.var): call for call in block.aggs if call.func in ("COUNT", "COUNTIF")}
@@ -1340,7 +1595,7 @@ class _Compiler:
         self.used_setsrc = True
         return _Source(cols=dict(zip(names, columns)), order=list(names))
 
-    def _opaque(self, body, ctes, occs) -> _Source:
+    def _opaque(self, body, ctes, occs, read: bool = True, dropped: bool = False) -> _Source:
         """A derived relation kept whole: identified by its CTE-expanded SQL."""
 
         body = self._expand_ctes(body.copy(), ctes)
@@ -1376,7 +1631,7 @@ class _Compiler:
             names.append(item.alias_or_name.lower())
         if "" in names or len(set(names)) != len(names):
             raise Unsupported("derived relation with unnamed or duplicate columns")
-        canonical = _canonical_aliases(body, self.schema)
+        canonical = _canonical_aliases(body, self.schema, self.column_reader)
         position = {i: i for i in range(len(names))}
         root = canonical
         while isinstance(root, exp.Subquery):
@@ -1396,10 +1651,16 @@ class _Compiler:
                     order.sort(key=lambda n: values[n].sql(dialect="bigquery", normalize_functions="upper"))
                 position = {old: new for new, old in enumerate(order)}
                 root.set("expressions", [exp.alias_(values[old].copy(), f"c{new}") for new, old in enumerate(order)])
-        key = "(" + canonical.sql(dialect="bigquery", normalize_functions="upper") + ")"
+        text = canonical.sql(dialect="bigquery", normalize_functions="upper")
+        lost = _lost_null_ordering(canonical, text)
+        key = "(" + text + ")" + lost
         occ = _Occ(key, self.fresh("d"), names, opaque=True)
+        self.untyped_sources = True
         occs.append(occ)
-        self.opaque_bodies[key] = (key[1:-1], len(names))
+        if not read and (dropped or any(body.find_all(exp.Sum))):
+            smt_group_sums.opaque_site(self, occ, any(body.find_all(exp.Sum)))  # what the compiler did not read can still fail
+        if not lost:  # a body whose text lost a NULLS placement is matched by its key alone, never re-proved
+            self.opaque_bodies[key] = (key[1:-1], len(names))
         if isinstance(inner, exp.Select) and _selects_a_set(inner):
             self.opaque_sets.add(key)
         return _Source(cols={name: occ.col(f"c{position[i]}") for i, name in enumerate(names)}, order=list(names))
@@ -1415,6 +1676,7 @@ class _Compiler:
             if table.db or table.catalog or name not in local:
                 continue
             inner_body, inner_env = local[name]
+            self._expand()
             expanded = self._expand_ctes(inner_body.copy(), inner_env)
             table.replace(exp.Subquery(this=expanded, alias=exp.TableAlias(this=exp.to_identifier(table.alias_or_name))))
         return body
@@ -1451,10 +1713,13 @@ class _Compiler:
             if not same_column:
                 if definite or maybe:
                     raise Unsupported(f"{name} is both a SELECT alias and a possible column")
+                self._judge_column(col, proof_columns.Claim(alias=True))
                 return alias_expr
         if len(definite) == 1 and not maybe:
+            self._judge_column(col, self._chosen(definite[0]))
             return definite[0].lookup(name)
         if not definite and len(maybe) == 1 and len(env) == 1:
+            self._judge_column(col, self._chosen(maybe[0]))
             return maybe[0].lookup(name)
         raise Unsupported(f"cannot resolve column {name} without a schema")
 
@@ -1477,9 +1742,15 @@ class _Compiler:
         comparisons = {exp.EQ: "=", exp.NEQ: "<>", exp.LT: "<", exp.LTE: "<=", exp.GT: ">", exp.GTE: ">="}
         for cls, op in comparisons.items():
             if type(e) is cls:
-                return self._compare(op, self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases))
+                if self.dialect == "bigquery":
+                    kinds = {self._class_of(e.this, env, agg, aliases), self._class_of(e.expression, env, agg, aliases)}
+                    if "BOOL" in kinds and kinds & {smt_values.INT64, smt_values.NUMERIC, smt_values.BIGNUMERIC, smt_values.FLOAT64}:
+                        raise Unsupported("a number compared with a BOOL (a type error in BigQuery)")
+                if string_number_compare.mismatched(e, self.types):
+                    return self._converted_compare(op, self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases))
+                return self._compare(op, *self._compared_vals([e.this, e.expression], env, agg, aliases))
         if isinstance(e, (exp.NullSafeEQ, exp.NullSafeNEQ)):
-            eq = _null_eq(self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases))
+            eq = _null_eq(*self._compared_vals([e.this, e.expression], env, agg, aliases))
             eq = eq if isinstance(e, exp.NullSafeEQ) else z3.Not(eq)
             return _Pred(eq, z3.Not(eq))
         if isinstance(e, exp.Is):
@@ -1497,16 +1768,16 @@ class _Compiler:
                 return self._in_subquery(e, env, agg, aliases)
             if e.args.get("query") is not None or e.args.get("unnest") is not None or e.args.get("field") is not None:
                 raise Unsupported("IN subquery/UNNEST")
-            left = self._val(e.this, env, agg, aliases)
+            left, *items = self._compared_vals([e.this, *e.expressions], env, agg, aliases)
             result = _const_pred(False)
-            for item in e.expressions:
-                c = self._compare("=", left, self._val(item, env, agg, aliases))
+            for item in items:
+                c = self._compare("=", left, item)
                 result = _Pred(z3.Or(result.t, c.t), z3.And(result.f, c.f))
             return result
         if isinstance(e, exp.Between):
-            v = self._val(e.this, env, agg, aliases)
-            lo = self._compare(">=", v, self._val(e.args["low"], env, agg, aliases))
-            hi = self._compare("<=", v, self._val(e.args["high"], env, agg, aliases))
+            v, low, high = self._compared_vals([e.this, e.args["low"], e.args["high"]], env, agg, aliases)
+            lo = self._compare(">=", v, low)
+            hi = self._compare("<=", v, high)
             return _Pred(z3.And(lo.t, hi.t), z3.Or(lo.f, hi.f))
         if isinstance(e, exp.Exists):
             atom = self._existence(e.this, env)
@@ -1527,9 +1798,9 @@ class _Compiler:
         Correlated column references resolve through ``env``.
         """
 
-        node = query
-        while isinstance(node, exp.Subquery):
-            node = node.this
+        node = merge_wrapper_tails(query)
+        if node is None:
+            raise Unsupported("LIMIT inside a predicate subquery")
         if not isinstance(node, exp.Select):
             raise Unsupported(f"{type(node).__name__} inside a predicate subquery")
         for key in ("group", "having", "qualify", "windows", "limit", "offset", "laterals", "pivots", "with_", "with"):
@@ -1541,6 +1812,7 @@ class _Compiler:
             # a global aggregate returns one row even over no input, so it is not an existence test on its rows
             raise Unsupported("aggregate inside a predicate subquery")
         outer_collector, self.collector = self.collector, []
+        sites_start = len(self.sites)
         try:
             states = self._scan(node, self.ctes, env)
             if len(states) != 1:
@@ -1548,6 +1820,7 @@ class _Compiler:
             occs, cond, inner = states[0].occs, states[0].cond(), states[0].env
             self.collector.extend(states[0].subs)
             guard = cond.t if match is None else z3.And(cond.t, match(inner, node))
+            self._assign_scope(sites_start, states)
             nested = self.collector
         finally:
             self.collector = outer_collector
@@ -1563,9 +1836,9 @@ class _Compiler:
         """
 
         query = e.args["query"]
-        inner_node = query
-        while isinstance(inner_node, exp.Subquery):
-            inner_node = inner_node.this
+        inner_node = merge_wrapper_tails(query)
+        if inner_node is None:
+            raise Unsupported("LIMIT inside an IN subquery")
         lefts = list(e.this.expressions) if isinstance(e.this, exp.Tuple) else [e.this]
         if not isinstance(inner_node, exp.Select) or len(inner_node.expressions) != len(lefts):
             raise Unsupported("IN subquery shape")
@@ -1577,8 +1850,9 @@ class _Compiler:
 
         def compare(scope, node):
             tests = []
-            for left, item in zip(left_values, node.expressions):
-                right = self._val(item.this if isinstance(item, exp.Alias) else item, scope, None, None)
+            for left_expr, left, item in zip(lefts, left_values, node.expressions):
+                item = item.this if isinstance(item, exp.Alias) else item
+                left, right = self._compared([left_expr, item], [left, self._val(item, scope, None, None)])
                 tests.append(self._compare("=", left, right))
             # A row value equals another when every pair is equal; it differs when some pair differs.
             return _Pred(z3.And(*[t.t for t in tests]), z3.Or(*[t.f for t in tests]))
@@ -1586,6 +1860,31 @@ class _Compiler:
         true_atom = self._existence(query, env, lambda scope, node: compare(scope, node).t)
         unknown_or_true = self._existence(query, env, lambda scope, node: z3.Not(compare(scope, node).f))
         return _Pred(true_atom, z3.Not(unknown_or_true))
+
+    def _converted_compare(self, op: str, a: _Val, b: _Val) -> _Pred:
+        """A string compared with a number: an engine converts one side, so the result is an unknown function of the two values.
+
+        ``'2' = 2`` is true on MySQL, DuckDB and PostgreSQL and a type error on BigQuery; calling the kinds unequal
+        is wrong. ``converted_eq`` and ``converted_lt`` are uninterpreted, so only a pair that compares the same
+        values the same way on both sides is proven through them.
+        """
+
+        self.uses_uf = True  # a model of the unknown conversion is not a counterexample
+        eq, lt = _converted_functions()
+        if op == "=":
+            r = eq(a.val, b.val)
+        elif op == "<>":
+            r = z3.Not(eq(a.val, b.val))
+        elif op == "<":
+            r = lt(a.val, b.val)
+        elif op == ">":
+            r = lt(b.val, a.val)
+        elif op == "<=":
+            r = z3.Not(lt(b.val, a.val))
+        else:
+            r = z3.Not(lt(a.val, b.val))
+        known = z3.And(z3.Not(a.null), z3.Not(b.null))
+        return _Pred(z3.And(known, r), z3.And(known, z3.Not(r)))
 
     def _compare(self, op: str, a: _Val, b: _Val) -> _Pred:
         if op not in ("=", "<>"):
@@ -1639,7 +1938,11 @@ class _Compiler:
         if isinstance(e, exp.AggFunc):
             raise Unsupported(f"aggregate {e.sql(dialect='bigquery')}")
         if isinstance(e, exp.Coalesce):
-            args = [self._val(a, env, agg, aliases) for a in [e.this, *e.expressions]]
+            args = []
+            for a in [e.this, *e.expressions]:
+                # An argument is evaluated only when every earlier one is NULL (BigQuery stops at the first value).
+                with self._guarded(*[prev.null for prev in args]):
+                    args.append(self._val(a, env, agg, aliases))
             args = self._common_type([e.this, *e.expressions], args)
             result = args[-1]
             for a in reversed(args[:-1]):
@@ -1647,36 +1950,58 @@ class _Compiler:
             return result
         if isinstance(e, exp.If):
             cond = self._pred(e.this, env, agg, aliases)
-            then = self._val(e.args["true"], env, agg, aliases)
+            with self._guarded(cond.t):
+                then = self._val(e.args["true"], env, agg, aliases)
             other = e.args.get("false")
             if other is not None:
-                then, other = self._common_type([e.args["true"], other], [then, self._val(other, env, agg, aliases)])
+                with self._guarded(z3.Not(cond.t)):
+                    other_val = self._val(other, env, agg, aliases)
+                then, other = self._common_type([e.args["true"], other], [then, other_val])
             else:
                 other = _Val(z3.BoolVal(True), V.Num(0))
             return _Val(z3.If(cond.t, then.null, other.null), z3.If(cond.t, then.val, other.val))
         if isinstance(e, exp.Case):
             operand = e.args.get("this")
-            operand_val = self._val(operand, env, agg, aliases) if operand is not None else None
             default = e.args.get("default")
             ifs = e.args.get("ifs") or []
+            operand_val, whens = None, []
+            if operand is not None:
+                operand_val, *whens = self._compared_vals([operand, *[b.this for b in ifs]], env, agg, aliases)
             branches = [b.args["true"] for b in ifs] + ([default] if default is not None else [])
-            values = self._common_type(branches, [self._val(b, env, agg, aliases) for b in branches])
+            # WHEN conditions run in order, and only the chosen THEN (or ELSE) is evaluated.
+            conds = []
+            for k, branch in enumerate(ifs):
+                with self._guarded(*[z3.Not(c.t) for c in conds]):
+                    if operand_val is not None:
+                        conds.append(self._compare("=", operand_val, whens[k]))
+                    else:
+                        conds.append(self._pred(branch.this, env, agg, aliases))
+            raw = []
+            for k, b in enumerate(branches):
+                taken = [z3.Not(c.t) for c in conds[:k]] + ([conds[k].t] if k < len(conds) else [])
+                with self._guarded(*taken):
+                    raw.append(self._val(b, env, agg, aliases))
+            values = self._common_type(branches, raw)
             result = values.pop() if default is not None else _Val(z3.BoolVal(True), V.Num(0))
-            for branch, then in reversed(list(zip(ifs, values))):
-                if operand_val is not None:
-                    cond = self._compare("=", operand_val, self._val(branch.this, env, agg, aliases))
-                else:
-                    cond = self._pred(branch.this, env, agg, aliases)
+            for cond, then in reversed(list(zip(conds, values))):
                 result = _Val(z3.If(cond.t, then.null, result.null), z3.If(cond.t, then.val, result.val))
             return result
         if isinstance(e, exp.Nullif):
             a, b = self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases)
-            eq = self._compare("=", a, b)
+            eq = self._compare("=", *self._compared([e.this, e.expression], [a, b]))
             if self.dialect in _NULLIF_SUPERTYPE:
                 a = self._common_type([e.this, e.expression], [a, b])[0]
             elif self.dialect not in _NULLIF_FIRST_TYPE and _float64_kind(e.expression, self.dialect):
                 raise Unsupported(f"NULLIF result type in {self.dialect}")
             return _Val(z3.Or(a.null, eq.t), a.val)
+        if self.dialect == "bigquery" and isinstance(e, (exp.Add, exp.Sub, exp.Mul, exp.Div)):
+            typed = smt_values.fold_typed(e)
+            if typed is not None:
+                if typed[0] == "int":
+                    self._note_integer(typed[1])
+                return _Val(z3.BoolVal(False), V.Num(z3.RealVal(f"{typed[1].numerator}/{typed[1].denominator}")))
+        if self.dialect == "bigquery" and (scaled := smt_numeric.compile_node(self, e, env, agg, aliases)) is not None:
+            return _Val(*scaled)  # NUMERIC and BIGNUMERIC values of known scale: the rounded result (smt_numeric)
         if isinstance(e, (exp.Add, exp.Sub, exp.Mul)) and not self.exact:
             folded = _literal_arithmetic(e, self.dialect)
             if folded is not None:
@@ -1699,15 +2024,18 @@ class _Compiler:
             a, b = self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases)
             self._numeric(a)
             self._numeric(b)
+            self._arithmetic_site(e, a, b, env, agg, aliases)
             x, y = V.num(a.val), V.num(b.val)
             r = x + y if isinstance(e, exp.Add) else x - y if isinstance(e, exp.Sub) else x * y
             return _Val(z3.Or(a.null, b.null), V.Num(r))
         if isinstance(e, exp.Neg) and self.exact:
             a = self._val(e.this, env, agg, aliases)
             self._numeric(a)
+            self._negation_site(e, a, e.this, env, agg, aliases)
             return _Val(a.null, V.Num(-V.num(a.val)))
         if isinstance(e, (exp.Add, exp.Mul)):
             a, b = self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases)
+            self._arithmetic_site(e, a, b, env, agg, aliases)
             # Commutative: apply the function to the arguments in a canonical order.
             self.ordered = True
             self.facts.append(_rank_injective(_canon(a), _canon(b)))
@@ -1723,6 +2051,13 @@ class _Compiler:
                 # x / NULLIF(y, 0) is the quotient with the zero divisor read as NULL (the mean of no values).
                 parts = [e.this, e.expression.this]
             vals = [self._val(p, env, agg, aliases) for p in parts]
+            if isinstance(e, exp.Sub):
+                self._arithmetic_site(e, vals[0], vals[1], env, agg, aliases)
+            elif isinstance(e, exp.Neg):
+                self._negation_site(e, vals[0], e.this, env, agg, aliases)
+            elif isinstance(e, (exp.Div, exp.Mod)):
+                divisor = vals[1] if parts == [e.this, e.expression] else self._val(e.expression, env, agg, aliases)
+                self._division_site(e, vals[0], divisor, False)
             null_fn, val_fn = self._function(type(e).__name__, len(vals))
             args = self._uf_args(vals)
             nulls = z3.Or(*[v.null for v in vals])
@@ -1732,10 +2067,18 @@ class _Compiler:
         if isinstance(e, exp.Abs) and self.exact:
             a = self._val(e.this, env, agg, aliases)
             self._numeric(a)
+            self._negation_site(e, a, e.this, env, agg, aliases)
             x = V.num(a.val)
             return _Val(a.null, V.Num(z3.If(x < 0, -x, x)))
         if isinstance(e, exp.Abs) and isinstance(e.this.unnest() if isinstance(e.this, exp.Paren) else e.this, exp.Sub):
             return self._abs_difference(e, env, agg, aliases)
+        if isinstance(e, exp.SafeDivide):
+            # SAFE_DIVIDE is the quotient, and NULL where it would fail (a zero divisor).
+            a, b = self._val(e.this, env, agg, aliases), self._val(e.expression, env, agg, aliases)
+            null_fn, val_fn = self._function("Div", 2)
+            args = self._uf_args([a, b])
+            zero = z3.And(V.is_Num(b.val), V.num(b.val) == 0)
+            return _Val(z3.Or(a.null, b.null, zero, null_fn(*args)), val_fn(*args))
         if isinstance(e, exp.Cast) and not isinstance(e, exp.TryCast):
             to = e.args["to"]
             inner = e.this.unnest() if isinstance(e.this, exp.Paren) else e.this
@@ -1752,8 +2095,21 @@ class _Compiler:
             ):
                 return self._literal(e.this, negate=False)
             v = self._val(e.this, env, agg, aliases)
+            source = self._class_of(e.this, env, agg, aliases)
+            if source == smt_values.FLOAT64 and smt_values.type_class(to.sql(dialect="bigquery")) == smt_values.STRING and not _nonzero_literal(e.this):
+                raise Unsupported("CAST of a FLOAT64 to STRING (the sign of a zero is not modeled)")
+            failing = self._cast_sites(e, to, source, v)
+            if failing is not None:
+                self._site("failed cast", e, z3.And(z3.Not(v.null), failing[0]), under=failing[1])
             _, val_fn = self._function(f"CAST:{to.sql(dialect='bigquery')}", 1)
             return _Val(v.null, val_fn(*self._uf_args([v])))
+        if isinstance(e, exp.TryCast):
+            # SAFE_CAST is the cast, and NULL where the cast fails.
+            to = e.args["to"]
+            v = self._val(e.this, env, agg, aliases)
+            failing = self._cast_sites(e, to, self._class_of(e.this, env, agg, aliases), v)
+            _, val_fn = self._function(f"CAST:{to.sql(dialect='bigquery')}", 1)
+            return _Val(v.null if failing is None else z3.Or(v.null, failing[0]), val_fn(*self._uf_args([v])))
         if isinstance(e, (exp.Func, exp.Binary, exp.Unary)):
             return self._generic(e, env, agg, aliases)
         if isinstance(e, exp.Interval) and all(isinstance(n, (exp.Interval, exp.Literal, exp.Var)) for n in e.walk()):
@@ -1849,8 +2205,200 @@ class _Compiler:
             (_float64_kind(e, self.dialect), _plain_literal(e, self.dialect) or z3.is_true(v.null), v) for e, v in zip(exprs, vals)
         ])
 
+    def _compared(self, exprs: list, vals: list[_Val]) -> list[_Val]:
+        """``vals`` of the operands ``exprs`` of one comparison (``=``, ``<``, ``IN``, ``BETWEEN``, a simple
+        CASE) in the type they are compared in, as ``_common_type`` does for branches: an INT64 operand
+        compared with a FLOAT64 one is converted first, so ``a = b AND b = c`` over INT64 ``a``, ``c`` and
+        FLOAT64 ``b`` does not give ``a = c``. A FLOAT64 literal below 2**53 in magnitude converts nothing:
+        an integer and its FLOAT64 rounding compare alike with it."""
+
+        entries = []
+        for e, v in zip(exprs, vals):
+            kind, literal = _float64_kind(e, self.dialect), _plain_literal(e, self.dialect) or z3.is_true(v.null)
+            if literal and kind and abs(_literal_value(e, self.dialect)) < 2**53:
+                kind = False
+            entries.append((kind, literal, v))
+        return self._coerce(entries)
+
+    def _compared_vals(self, exprs: list, env, agg, aliases) -> list[_Val]:
+        return self._compared(exprs, [self._val(e, env, agg, aliases) for e in exprs])
+
     def _numeric(self, v: _Val) -> None:
         self.facts.append(z3.Implies(z3.Not(v.null), _value_sort().is_Num(v.val)))
+
+    # ---- types and runtime errors (BigQuery) -----------------------------------------------
+
+    def _declared_class(self, v: _Val) -> str | None:
+        """INT64, NUMERIC, BIGNUMERIC, FLOAT64 or OTHER for a base-table column value with a declared type."""
+
+        if not (z3.is_const(v.val) and v.val.decl().kind() == z3.Z3_OP_UNINTERPRETED):
+            return None
+        uid, _, name = str(v.val).partition(".")
+        declared = self.types.get(self.occ_tables.get(uid, ""), {}).get(name)
+        return smt_values.type_class(declared) if declared else None
+
+    def _class_of(self, e, env, agg, aliases) -> str | None:
+        """The type of expression ``e`` where it is visible (a declared column, a literal, a cast, arithmetic over
+        those), ``None`` when it is not."""
+
+        S = smt_values
+        if isinstance(e, exp.Paren):
+            return self._class_of(e.this, env, agg, aliases)
+        if isinstance(e, exp.Literal):
+            return "STRING" if e.is_string else S.INT64 if S.is_integer_text(e.this) else S.FLOAT64
+        if isinstance(e, exp.Null):
+            return "NULL"
+        if isinstance(e, exp.Boolean):
+            return "BOOL"
+        if isinstance(e, exp.Column):
+            try:
+                return self._declared_class(self._val(e, env, agg, aliases))
+            except Unsupported:
+                return None
+        if isinstance(e, exp.Neg):
+            return self._class_of(e.this, env, agg, aliases)
+        if isinstance(e, (exp.Add, exp.Sub, exp.Mul, exp.Mod)):
+            return S.arithmetic_class(self._class_of(e.this, env, agg, aliases), self._class_of(e.expression, env, agg, aliases))
+        if isinstance(e, exp.Div):
+            return S.division_class(self._class_of(e.this, env, agg, aliases), self._class_of(e.expression, env, agg, aliases))
+        if isinstance(e, (exp.IntDiv, exp.Count, exp.CountIf)):
+            return S.INT64
+        if isinstance(e, (exp.Abs, exp.Sum, exp.Min, exp.Max)) and isinstance(e.this, exp.Expression):
+            inner = e.this.expressions[0] if isinstance(e.this, exp.Distinct) and e.this.expressions else e.this
+            return self._class_of(inner, env, agg, aliases)
+        if isinstance(e, exp.Avg) and isinstance(e.this, exp.Expression):
+            inner = self._class_of(e.this, env, agg, aliases)
+            return S.FLOAT64 if inner in (S.INT64, S.FLOAT64) else inner
+        if isinstance(e, (exp.Cast, exp.TryCast)):
+            return S.type_class(e.args["to"].sql(dialect="bigquery")) or None
+        if isinstance(e, (exp.Coalesce, exp.If, exp.Case, exp.Nullif)):
+            return S.supertype([self._class_of(b, env, agg, aliases) for b in _branch_values(e, self.dialect)])
+        return None
+
+    def _site(self, kind: str, e, cond, under=None) -> None:
+        """Record an operation that can raise a runtime error where ``cond`` holds, and assume it does not.
+
+        The operation only runs where every enclosing CASE/IF/COALESCE guard holds; ``WHERE`` and ``ON`` do not guard
+        it (BigQuery promises no evaluation order). ``under`` is a condition that implies the error for a concrete
+        value (used to show a database when ``cond`` mentions an uninterpreted function)."""
+
+        if self.dialect != "bigquery" or self._safe:
+            return
+        guarded = z3.And(*self._guard, cond) if self._guard else cond
+        fire = z3.simplify(guarded)
+        if z3.is_false(fire):
+            return
+        text = e.sql(dialect="bigquery") if isinstance(e, exp.Expression) else str(e)
+        if z3.is_true(fire):
+            raise Unsupported(f"{kind} on constant operands: {text[:80]}")
+        site = smt_errors.Site(kind, text[:120], fire, certain=smt_errors.uninterpreted_free(fire))
+        site.under = fire if site.certain else (z3.simplify(z3.And(*self._guard, under)) if under is not None and self._guard else under)
+        self.sites.append(site)
+        self.facts.append(z3.Not(fire))
+
+    @contextlib.contextmanager
+    def _guarded(self, *conditions):
+        """Compile an expression that runs only where ``conditions`` hold."""
+
+        self._guard.extend(conditions)
+        try:
+            yield
+        finally:
+            if conditions:
+                del self._guard[-len(conditions):]
+
+    def _may_fail(self, name: str, vals: list[_Val]):
+        """The condition ``fails:name(args)``: an operation that may raise an error for these arguments, as one
+        uninterpreted Boolean, equal for equal calls."""
+
+        self.uses_uf = True  # a model of an unknown failing condition is not a counterexample
+        V = _value_sort()
+        key = ("fails:" + name, len(vals))
+        if key not in self.functions:
+            self.functions[key] = z3.Function(f"fails:{name}/{len(vals)}", *([z3.BoolSort(), V] * len(vals)), z3.BoolSort()) if vals else z3.Bool(f"fails:{name}")
+        function = self.functions[key]
+        known = z3.And(*[z3.Not(v.null) for v in vals]) if vals else z3.BoolVal(True)
+        return z3.And(known, function(*self._uf_args(vals))) if vals else function
+
+    def _arithmetic_site(self, e, a: _Val, b: _Val, env, agg, aliases) -> None:
+        """``a + b``, ``a - b`` and ``a * b`` fail on INT64 overflow (and on FLOAT64 or NUMERIC overflow)."""
+
+        if self.dialect != "bigquery":
+            return
+        V = _value_sort()
+        S = smt_values
+        cls = S.arithmetic_class(self._class_of(e.this, env, agg, aliases), self._class_of(e.expression, env, agg, aliases))
+        if cls == S.INT64:
+            x, y = V.num(a.val), V.num(b.val)
+            r = x + y if isinstance(e, exp.Add) else x - y if isinstance(e, exp.Sub) else x * y
+            cond = z3.And(z3.Not(a.null), z3.Not(b.null), V.is_Num(a.val), V.is_Num(b.val), z3.Or(r > S.INT64_MAX, r < S.INT64_MIN))
+            self._site("INT64 overflow", e, cond)
+            return
+        kind = "floating point overflow" if cls == S.FLOAT64 else "NUMERIC overflow" if cls in (S.NUMERIC, S.BIGNUMERIC) else "overflow"
+        pair = [a, b]
+        if isinstance(e, (exp.Add, exp.Mul)):  # commutative: one canonical argument order
+            swap = _pair_lt(b, a)
+            pair = [_Val(z3.If(swap, b.null, a.null), z3.If(swap, b.val, a.val)), _Val(z3.If(swap, a.null, b.null), z3.If(swap, a.val, b.val))]
+        self._site(kind, e, self._may_fail(f"{type(e).__name__}:{cls}", pair))
+
+    def _negation_site(self, e, a: _Val, operand, env, agg, aliases) -> None:
+        """``-x`` and ``ABS(x)`` overflow at the smallest INT64."""
+
+        if self.dialect != "bigquery":
+            return
+        V = _value_sort()
+        S = smt_values
+        cls = self._class_of(operand, env, agg, aliases)
+        if cls == S.INT64:
+            cond = z3.And(z3.Not(a.null), V.is_Num(a.val), V.num(a.val) == S.INT64_MIN)
+            self._site("INT64 overflow", e, cond)
+        elif cls is None:
+            self._site("overflow", e, self._may_fail(f"{type(e).__name__}", [a]))
+
+    def _division_site(self, e, a: _Val, divisor: _Val, integer: bool) -> None:
+        """``/``, ``DIV`` and ``MOD`` fail on a zero divisor (``DIV`` also on INT64_MIN / -1)."""
+
+        if self.dialect != "bigquery":
+            return
+        V = _value_sort()
+        zero = z3.And(z3.Not(a.null), z3.Not(divisor.null), V.is_Num(divisor.val), V.num(divisor.val) == 0)
+        cond = zero
+        if integer and isinstance(e, exp.IntDiv):
+            cond = z3.Or(zero, z3.And(z3.Not(a.null), z3.Not(divisor.null), V.is_Num(a.val), V.is_Num(divisor.val),
+                                      V.num(a.val) == smt_values.INT64_MIN, V.num(divisor.val) == -1))
+        self._site("division by zero", e, cond)
+
+    def _function_sites(self, e, name: str, vals: list[_Val], env, agg, aliases) -> None:
+        """The failures of a function call: ``DIV`` and ``ABS`` by their rule, any other call that is not known never to
+        fail as one unknown failing condition over its arguments."""
+
+        if self.dialect != "bigquery" or name in _NEVER_FAILS or name.startswith("Safe") or name.startswith("SAFE_"):
+            return
+        if isinstance(e, exp.IntDiv):
+            self._division_site(e, vals[0], vals[1], True)
+        elif isinstance(e, exp.Abs):
+            self._negation_site(e, vals[0], e.this, env, agg, aliases)
+        else:
+            self._site("function call", e, self._may_fail(name, vals))
+
+    def _cast_sites(self, e, to, source: str | None, v: _Val):
+        """The condition under which ``CAST(v AS to)`` fails, or ``None`` when it cannot. A string that is not a
+        number (``'x'``) and a FLOAT64 past INT64 are concrete failures."""
+
+        name = re.sub(r"[(<].*", "", to.sql(dialect="bigquery")).strip().upper()
+        S = smt_values
+        if source is not None and source not in ("NULL",) and S.cast_is_safe(source, name):
+            return None
+        literal = e.this.unnest() if isinstance(e.this, exp.Paren) else e.this
+        if isinstance(literal, exp.Literal) and literal.is_string and S.string_cast_ok(literal.this, name):
+            return None
+        V = _value_sort()
+        under = None
+        if source == "STRING" and name in ("INT64", "INT", "BIGINT", "FLOAT64", "FLOAT", "NUMERIC", "BIGNUMERIC", "BOOL", "BOOLEAN", "DATE", "TIMESTAMP"):
+            under = z3.And(z3.Not(v.null), V.is_Str(v.val), V.str(v.val) == z3.StringVal("x"))
+        elif source == S.FLOAT64 and name in ("INT64", "INT", "BIGINT"):
+            under = z3.And(z3.Not(v.null), V.is_Num(v.val), V.num(v.val) >= 2**63)
+        return self._may_fail(f"CAST:{name}", [v]), under
 
     def _literal(self, e: exp.Literal, negate: bool) -> _Val:
         V = _value_sort()
@@ -1862,10 +2410,77 @@ class _Compiler:
             elif _DATEISH.match(text) and not _CANONICAL_DATE.match(text):
                 raise Unsupported(f"date/time-like literal {text!r} (only 'YYYY-MM-DD' and 'YYYY-MM-DD HH:MM:SS' are modeled)")
             return _Val(z3.BoolVal(False), V.Str(z3.StringVal(text)))
-        value = _parse_number(e.this)
-        if negate:
-            value = -value
+        value = self._number(e.this, negate)
         return _Val(z3.BoolVal(False), V.Num(z3.RealVal(f"{value.numerator}/{value.denominator}")))
+
+    def _number(self, text: str, negate: bool) -> Fraction:
+        """The value of a numeric literal. In BigQuery an integer is an INT64 and a decimal or exponent literal the
+        FLOAT64 nearest its text (``smt_values``); other dialects read decimals exactly."""
+
+        if self.dialect != "bigquery":
+            value = _parse_number(text)
+            return -value if negate else value
+        try:
+            value = smt_values.literal_value(text, negate)
+        except smt_values.NotModeled as error:
+            raise Unsupported(str(error)) from error
+        if smt_values.is_integer_text(text):
+            self._note_integer(value)
+        return value
+
+    def _note_integer(self, value: Fraction) -> None:
+        """An INT64 past 2**53 has no exact FLOAT64: it is only modelled in an all-INT64 context (``_integer_context``)."""
+
+        if abs(value) > smt_values.FLOAT_EXACT_INT:
+            self.big_literals.append(str(value))
+
+    def typed_facts(self, occs=None) -> list:
+        """What the declared type of each base-table column says about its values: INT64 and NUMERIC values are numbers
+        in range (INT64: integers; NUMERIC: nine decimal digits), STRING and BOOL values are strings and Booleans.
+
+        ``occs`` limits the facts to those table occurrences: a block's checks must not mention (and so
+        give arbitrary values to) the rows of the other query, or a counterexample built from the model
+        reads them as free."""
+
+        V = _value_sort()
+        S = smt_values
+        facts = []
+        if self.dialect != "bigquery":
+            return facts
+        for occ in (self.occs_seen if occs is None else occs):
+            declared = self.types.get(self.occ_tables.get(occ.uid, ""), {})
+            for name, v in occ.cols.items():
+                cls = S.type_class(declared.get(name))
+                x = V.num(v.val)
+                if cls == S.INT64:
+                    typed = z3.And(V.is_Num(v.val), z3.IsInt(x), x >= S.INT64_MIN, x <= S.INT64_MAX)
+                elif cls in (S.NUMERIC, S.BIGNUMERIC):
+                    typed = smt_numeric.typed_fact(cls, V, v)
+                elif cls == S.FLOAT64:
+                    typed = V.is_Num(v.val)
+                elif cls == S.STRING:
+                    typed = V.is_Str(v.val)
+                elif cls == S.BOOL:
+                    typed = V.is_Bool(v.val)
+                else:
+                    continue
+                facts.append(z3.Implies(z3.Not(v.null), typed))
+        return facts
+
+    def integer_context_problem(self) -> str | None:
+        """Why an INT64 literal past 2**53 cannot be read as an exact integer: a FLOAT64 value in the queries would
+        convert it (rounding it), and a column without a declared integer-compatible type may be one."""
+
+        if self.float_capable:
+            return "a FLOAT64 value may meet it"
+        if self.untyped_sources:
+            return "an UNNEST or derived table has no declared column types"
+        for occ in self.occs_seen:
+            declared = self.types.get(self.occ_tables.get(occ.uid, ""), {})
+            for name in occ.cols:
+                if smt_values.type_class(declared.get(name)) not in (smt_values.INT64, smt_values.NUMERIC, smt_values.STRING, smt_values.BOOL, smt_values.OTHER):
+                    return f"column {occ.table}.{name} has no declared INT64 type"
+        return None
 
     def order_facts(self) -> list:
         """Facts about the string ordering that the compiled queries may rely on."""
@@ -1897,11 +2512,24 @@ class _Compiler:
         return args
 
     def _generic(self, e, env, agg, aliases) -> _Val:
+        if type(e).__name__ != "SafeFunc":
+            return self._generic_call(e, env, agg, aliases)
+        self._safe += 1  # SAFE.function(..) is NULL where the function fails
+        try:
+            return self._generic_call(e, env, agg, aliases)
+        finally:
+            self._safe -= 1
+
+    def _generic_call(self, e, env, agg, aliases) -> _Val:
         if isinstance(e, (exp.Lambda, exp.Window)):
             raise Unsupported(type(e).__name__)
         name_parts = [e.name.upper() if isinstance(e, exp.Anonymous) else type(e).__name__]
         vals: list[_Val] = []
-        for key, value in e.args.items():
+        sign_observer = name_parts[0] in _SIGN_OBSERVERS
+        # Named arguments in the class's declared order, not the order the node happened to be built in.
+        declared = list(type(e).arg_types)
+        for key in declared + sorted(k for k in e.args if k not in type(e).arg_types):
+            value = e.args.get(key)
             if key.startswith("_") or value is None:
                 continue
             children = value if isinstance(value, list) else [value]
@@ -1913,6 +2541,10 @@ class _Compiler:
                 else:
                     name_parts.append(f"{key}=?")
                     vals.append(self._val(child, env, agg, aliases))
+                    if sign_observer and self._class_of(child, env, agg, aliases) not in _NOT_FLOAT:
+                        # -0.0 and 0.0 are one value to the prover, but IEEE_DIVIDE(1, -0.0) is -inf.
+                        raise Unsupported(f"{name_parts[0]} of a FLOAT64 (the sign of a zero is not modeled)")
+        self._function_sites(e, name_parts[0], vals, env, agg, aliases)
         null_fn, val_fn = self._function("|".join(name_parts), len(vals))
         if not vals:
             return _Val(null_fn, val_fn)
@@ -1922,12 +2554,12 @@ class _Compiler:
             return _Val(z3.Or(*[v.null for v in vals], null_fn(*args)), val_fn(*args))
         return _Val(null_fn(*args), val_fn(*args))
 
-    def _aggregate(self, func: str, e, env, agg: _AggCtx | None) -> _Val:
+    def _aggregate(self, func: str, e, env, agg: _AggCtx | None, from_avg: bool = False) -> _Val:
         if agg is None:
             raise Unsupported(f"aggregate in a non-aggregate position: {e.sql(dialect='bigquery')}")
         if func == "AVG" and e.this is not None and not any(e.args.get(k) for k in ("having_max", "ignore_nulls", "order", "limit", "separator")):
             # AVG(x) is SUM(x) / COUNT(x): NULL when no value is present, and shared with a spelled-out quotient.
-            total = self._aggregate("SUM", exp.Sum(this=e.this.copy()), env, agg)
+            total = self._aggregate("SUM", exp.Sum(this=e.this.copy()), env, agg, from_avg=True)
             count = self._aggregate("COUNT", exp.Count(this=e.this.copy()), env, agg)
             null_fn, val_fn = self._function("Div", 2)
             args = self._uf_args([total, count])
@@ -1935,6 +2567,15 @@ class _Compiler:
         V = _value_sort()
         target = e.this
         distinct = False
+        # COUNT(a, b, ..) counts the rows where no argument is NULL, and COUNT(DISTINCT a, b, ..) the
+        # distinct tuples among them: the argument is the tuple, NULL when any component is, and its
+        # value an uninterpreted function of the components (a claim valid for every such function
+        # holds for the injective one that a tuple is).
+        arguments = None
+        if func == "COUNT" and isinstance(target, exp.Distinct) and len(target.expressions) > 1:
+            arguments, distinct, target = list(target.expressions), True, None
+        elif func == "COUNT" and e.args.get("expressions") and not isinstance(target, exp.Distinct):
+            arguments, target = [target, *e.args["expressions"]], None
         if isinstance(target, exp.Distinct):
             if len(target.expressions) != 1:
                 raise Unsupported("multi-argument DISTINCT aggregate")
@@ -1947,12 +2588,22 @@ class _Compiler:
                 raise Unsupported(f"aggregate modifier {key}")
         if func in _DUPLICATE_INSENSITIVE:
             distinct = False
-        if func == "COUNT" and (target is None or isinstance(target, exp.Star)):
+        if arguments is not None:
+            if any(isinstance(a, exp.Star) for a in arguments):
+                raise Unsupported("* among several COUNT arguments")
+            vals = [self._val(a, env, None, None) for a in arguments]
+            arg = _Val(z3.Or(*[v.null for v in vals]), self._function("Tuple", len(vals))[1](*self._uf_args(vals)))
+        elif func == "COUNT" and (target is None or isinstance(target, exp.Star)):
             arg = None
         elif func in ("COUNTIF", "LOGICAL_AND", "LOGICAL_OR"):
             arg = _box(self._pred(target, env, None, None))
         else:
             arg = self._val(target, env, None, None)
+        if func == "SUM" and self.dialect == "bigquery":
+            try:
+                self.sums.observe_sum(e, self._class_of(target, env, None, None))
+            except Unsupported:
+                self.sums.observe_sum(e, None)
         all_null = arg is not None and func in ("COUNT", "SUM", "MIN", "MAX", "AVG") and z3.is_true(z3.simplify(arg.null))
         if all_null:
             # An aggregate of values that are all NULL: COUNT is 0, the others are NULL. The call is still
@@ -1971,6 +2622,19 @@ class _Compiler:
         never_null = func in ("COUNT", "COUNTIF")
         var = _Val(z3.BoolVal(False) if never_null else z3.Bool(f"{uid}#null"), z3.Const(uid, V))
         agg.calls.append(_AggCall(func, distinct, arg, var))
+        if func == "SUM" and self.dialect == "bigquery":
+            # A sum can overflow (INT64, NUMERIC) whichever order the rows are added in: a site per call, completed with
+            # the rows of its group when its select is (``smt_group_sums``). A counterexample database must not hold a
+            # sum that can overflow: a plain column of small values cannot, anything else is not known.
+            try:
+                cls = self._class_of(target, env, None, None)
+            except Unsupported:
+                cls = None
+            smt_group_sums.note(self, e, arg, distinct, cls, maybe=from_avg)
+            if isinstance(target, exp.Column):
+                self.bounded_sums = True
+            else:
+                self.uses_uf = True
         return var
 
 
@@ -1980,7 +2644,18 @@ class _Compiler:
 
 
 def _subst(term, pairs):
-    return z3.substitute(term, *pairs) if pairs else term
+    """``z3.substitute(term, *pairs)``: the same call into Z3, without z3py's per-pair checks (which
+    took most of a proof's time; Z3 itself still rejects a pair of different sorts)."""
+
+    if not pairs:
+        return term
+    if not isinstance(term, z3.ExprRef):
+        return z3.substitute(term, *pairs)
+    count = len(pairs)
+    old, new = (z3.Ast * count)(), (z3.Ast * count)()
+    for i, (x, y) in enumerate(pairs):
+        old[i], new[i] = x.as_ast(), y.as_ast()
+    return z3.z3._to_expr_ref(z3.Z3_substitute(term.ctx.ref(), term.as_ast(), count, old, new), term.ctx)
 
 
 def _subst_val(v: _Val, pairs) -> _Val:
@@ -2035,6 +2710,62 @@ def _occ_pairs(src: _Occ, dst: _Occ) -> list:
     return pairs
 
 
+class _CaseSearch:
+    """The answers of one ``set_contained_by_cases`` search, so that no check is made twice.
+
+    ``targets`` holds ``(block, parent)`` pairs. A case of a target whose tables and tests are
+    those of ``parent`` only adds a filter to it, so it holds no row ``parent`` lacks: ``parent`` is
+    the target's index, or ``("joined", index)`` for the target with the tests its own condition
+    requires made joins (``joined`` holds those blocks; every case of the target makes the same
+    joins), else ``None``. ``known`` maps ``(case key, target index or parent)`` to
+    ``(contained, decided)``, decided meaning no check timed out. ``kept`` holds every split, so
+    no id in a key is reused while the search runs.
+    """
+
+    def __init__(self, targets: list):
+        self.targets = targets
+        self.joined: dict = {}
+        self.known: dict = {}
+        self.kept: list = []
+
+    @staticmethod
+    def key(parts: frozenset, block) -> tuple:
+        """A case by the disjuncts it adds (z3 ids), its tables and its tests. Two cases with one
+        key differ only in the order of their conjuncts (``a AND p AND q`` split in either order,
+        or ``a AND p AND p`` and ``a AND p`` when no test became a join), so they have the same
+        rows and the same answers."""
+
+        return parts, _CaseSearch.shape(block)
+
+    @staticmethod
+    def shape(block) -> tuple:
+        return tuple(map(id, block.occs)), tuple(map(id, block.subs))
+
+    def answer(self, key, index: int, block, probe=None):
+        """Whether target ``index`` contains the case, when that is already known, else ``None``
+        (a refutation in which a check timed out is asked again, as before).
+
+        A target ``b AND q`` that only adds a filter to ``b`` needs ``b``'s condition and ``q``
+        under the same mappings, so a model refuting ``b`` refutes it too. ``probe(b)`` checks a
+        case against a joined target that is not itself a target (only to skip its cases).
+        """
+
+        contained, decided = self.known.get((key, index), (None, False))
+        if contained or decided:
+            return contained
+        parent = self.targets[index][1]
+        if parent is None or not isinstance(block, _Spj):
+            return None
+        if (key, parent) not in self.known and probe is not None and parent in self.joined:
+            self.known[key, parent] = probe(self.joined[parent])
+        return False if self.known.get((key, parent)) == (False, True) else None
+
+    def outside(self, key, block) -> bool:
+        """No target contains the case, as far as is already known."""
+
+        return all(self.answer(key, i, block) is False for i in range(len(self.targets)))
+
+
 class _Prover:
     def __init__(self, timeout_ms: int, constraints: dict[str, TableConstraints] | None = None):
         self.timeout_ms = timeout_ms
@@ -2042,8 +2773,9 @@ class _Prover:
         # UNNEST is read as a table of (array, element, offset) rows with one row per array and offset.
         self.constraints[_UNNEST_TABLE] = TableConstraints(keys=(("arr", "offset"),))
         self.unknown = False
+        self.wall_clock = False  # a check stopped on the wall clock, not the work cap: the verdict can vary by machine
         self.opaque_sets: set[str] = set()
-        self.candidates: list[tuple[object, list[_Occ]]] = []
+        self.candidates: list[tuple[object, object, list[_Occ], list[_Val]]] = []
 
     @staticmethod
     def _typing(occs: list[_Occ]):
@@ -2140,8 +2872,7 @@ class _Prover:
         return facts
 
     def valid(self, formula, occs: list[_Occ], facts=()) -> bool:
-        solver = z3.Solver()
-        solver.set("timeout", self.timeout_ms)
+        solver = bounded_solver(self.timeout_ms)
         solver.add(*self._typing(occs))
         solver.add(*self._constraint_facts(occs))
         solver.add(*self._group_member_facts(occs))
@@ -2151,32 +2882,48 @@ class _Prover:
         if result == z3.unsat:
             return True
         if result == z3.sat:
-            self.candidates.append((self._counterexample(solver, occs), list(occs)))
+            self._candidate(solver, occs)
         else:
             self.unknown = True
+            self.wall_clock = self.wall_clock or solver.reason_unknown() == "timeout"
         return False
 
-    def _counterexample(self, solver, occs):
-        """A model of the last satisfiable check, preferring an integral one.
+    def _candidate(self, solver, occs):
+        # Internal proof attempts often discard their candidates or prove the pair.
+        # Only extract a model if refutation search actually consumes this candidate.
+        # Keep the asserted terms and the plain model, not the solver: a solver holds its whole search state,
+        # and a prover that collects many candidates would hold all of it until the search ends.
+        # Snapshot the values now: occurrences can acquire more columns later.
+        values = [v for occ in occs for v in occ.cols.values()]
+        self.candidates.append((solver.assertions(), solver.model(), list(occs), values))
 
-        The plain model is read first: ``_nice_model`` runs further checks, and
-        after those the solver holds no model to fall back on.
+    def _counterexample(self, assertions, base, values):
+        """A model of a satisfiable check, preferring an integral one.
+
+        Extract candidates in a fresh context: the shared context's term ids can
+        change which unconstrained NULL flags Z3 picks across identical calls.
+        The proof check above is unchanged, and every candidate is still checked
+        against the constraints and both queries before it is returned.
         """
 
-        base = solver.model()
-        return self._nice_model(solver, occs) or base
+        context = z3.Context()
+        isolated = bound(z3.Solver(ctx=context), self.timeout_ms)  # a fresh solver has no limits of its own
+        isolated.add(*[assertion.translate(context) for assertion in assertions])
+        if isolated.check() != z3.sat:
+            return base  # A timeout in the extra search must not lose a satisfiable model.
+        model = self._nice_model(isolated, values) or isolated.model()
+        return model.translate(base.ctx)
 
-    def _nice_model(self, solver, occs):
+    def _nice_model(self, solver, values):
         """Prefer integer-valued numeric counterexamples (they fit INT64 and FLOAT64), then any numbers, so a
         column the queries only compare with numbers is not given a string."""
 
         V = _value_sort()
-        values = [v for occ in occs for v in occ.cols.values()]
         integral = [z3.Implies(V.is_Num(v.val), z3.IsInt(V.num(v.val))) for v in values]
         numeric = [z3.Implies(z3.Not(v.null), V.is_Num(v.val)) for v in values]
         for extra in (integral + numeric, numeric, integral):
             solver.push()
-            solver.add(*extra)
+            solver.add(*[fact.translate(solver.ctx) for fact in extra])
             model = solver.model() if solver.check() == z3.sat else None
             solver.pop()
             if model is not None:
@@ -2184,14 +2931,13 @@ class _Prover:
         return None
 
     def witness(self, pred, occs: list[_Occ], facts=()) -> None:
-        solver = z3.Solver()
-        solver.set("timeout", self.timeout_ms)
+        solver = bounded_solver(self.timeout_ms)
         solver.add(*self._typing(occs))
         solver.add(*self._constraint_facts(occs))
         solver.add(*facts)
         solver.add(pred)
         if solver.check() == z3.sat:
-            self.candidates.append((self._counterexample(solver, occs), list(occs)))
+            self._candidate(solver, occs)
 
     def unify_subs(self, a_subs: list, b_subs: list, base_pairs: list, scope: list, facts):
         """Group equivalent existence tests so equal tests share one atom.
@@ -2235,8 +2981,7 @@ class _Prover:
         return False
 
     def unsatisfiable(self, pred, occs: list[_Occ], facts=()) -> bool:
-        solver = z3.Solver()
-        solver.set("timeout", self.timeout_ms)
+        solver = bounded_solver(self.timeout_ms)
         solver.add(*self._typing(occs))
         solver.add(*self._constraint_facts(occs))
         solver.add(*facts)
@@ -2396,16 +3141,23 @@ class _Prover:
         tables1 = Counter(o.table for o in occs1)
         if tables1 != Counter(o.table for o in occs2):
             return
-        groups = sorted(tables1)
-        per_table = []
-        for table in groups:
-            left = [o for o in occs1 if o.table == table]
-            right = [o for o in occs2 if o.table == table]
-            per_table.append([list(zip(right, perm)) for perm in itertools.permutations(left)])
-        for count, combo in enumerate(itertools.product(*per_table)):
-            if count >= _MAX_MAPPINGS:
+        sides = [
+            ([o for o in occs1 if o.table == table], [o for o in occs2 if o.table == table]) for table in sorted(tables1)
+        ]
+
+        def mappings(index: int):
+            # itertools.product order over each table's permutations, built lazily: eight occurrences of
+            # one table have 40,320 permutations, of which at most _MAX_MAPPINGS are ever read.
+            if index == len(sides):
+                yield []
                 return
-            yield [pair for group in combo for pair in group]
+            left, right = sides[index]
+            for perm in itertools.permutations(left):
+                head = list(zip(right, perm))
+                for rest in mappings(index + 1):
+                    yield head + rest
+
+        yield from itertools.islice(mappings(0), _MAX_MAPPINGS)
 
     @staticmethod
     def _homomorphisms(src: list[_Occ], dst: list[_Occ]):
@@ -3077,25 +3829,76 @@ class _Prover:
         (a row passes the filter only if one disjunct is TRUE, so the cases cover
         every row). Each case of ``a`` may land in a different target, and a case
         of a target is part of that target. Up to two disjunctions of ``a`` are split.
+
+        No check is made twice (see ``_CaseSearch``), and a case of a target that only adds a
+        filter is not tried for a case its target was refuted for.
         """
 
-        if any(self.branch_set_contained(a, b) for b in targets):
+        search = _CaseSearch([(b, None) for b in targets])
+        key = _CaseSearch.key(frozenset(), a)
+        if self._in_some_target(a, key, search):
             return True
-        targets = list(targets) + [case for b in targets for cases in self._disjunctive_cases(b) for case in cases]
-        return self._contained_by_cases(a, targets, 2)
+        for i, b in enumerate(targets):
+            joined = None
+            for split in self._disjunctive_cases(b):
+                for _, case in split:
+                    shape = _CaseSearch.shape(case)
+                    if shape != _CaseSearch.shape(b) and joined is None:
+                        joined = self._quietly(lambda: self.inline_unique_subs(dataclasses.replace(b), require_unique=False))[0]
+                        search.joined["joined", i] = joined
+                    parent = i if shape == _CaseSearch.shape(b) else ("joined", i) if shape == _CaseSearch.shape(joined) else None
+                    search.targets.append((case, parent))
+        return self._contained_by_cases(a, key, search, 2)
 
-    def _contained_by_cases(self, a, targets, depth: int) -> bool:
-        if any(self.branch_set_contained(a, b) for b in targets):
+    def _contained_by_cases(self, a, key, search: "_CaseSearch", depth: int) -> bool:
+        if self._in_some_target(a, key, search):
             return True
         if depth <= 0:
             return False
-        return any(all(self._contained_by_cases(case, targets, depth - 1) for case in cases) for cases in self._disjunctive_cases(a))
+        for split in self._disjunctive_cases(a):
+            search.kept.append(split)
+            cases = [(_CaseSearch.key(key[0] | {part.get_id()}, case), case) for part, case in split]
+            if depth == 1 and any(search.outside(k, case) for k, case in cases):
+                continue  # a case no target holds: this split cannot cover ``a``
+            if all(self._contained_by_cases(case, k, search, depth - 1) for k, case in cases):
+                return True
+        return False
 
-    def _disjunctive_cases(self, block) -> list:
-        """For each disjunction among the conjuncts of a block's filter, the block split by its disjuncts."""
+    def _in_some_target(self, a, key, search: "_CaseSearch") -> bool:
+        def probe(joined):
+            return self._quietly(lambda: self.branch_set_contained(a, joined))
+
+        for index, (b, _) in enumerate(search.targets):
+            contained = search.answer(key, index, a, probe)
+            if contained is None:
+                outer, self.unknown = self.unknown, False
+                try:
+                    contained = self.branch_set_contained(a, b)
+                    search.known[key, index] = (contained, not self.unknown)
+                finally:
+                    self.unknown = outer or self.unknown
+            if contained:
+                return True
+        return False
+
+    def _quietly(self, check) -> tuple:
+        """``(check(), whether no check timed out)`` for work the case search adds only to skip
+        checks: it leaves no candidate model and no timeout behind."""
+
+        saved, outer = len(self.candidates), self.unknown
+        self.unknown = False
+        try:
+            return check(), not self.unknown
+        finally:
+            del self.candidates[saved:]
+            self.unknown = outer
+
+    def _disjunctive_cases(self, block):
+        """For each disjunction among the conjuncts of a block's filter, the block split by its
+        disjuncts, as ``(disjunct, case)`` pairs (one disjunction at a time, when asked for)."""
 
         if not isinstance(block, _Spj) or any(o.opaque for o in block.occs):
-            return []
+            return
         disjunctions, stack = [], [block.cond.t]
         while stack:
             term = stack.pop()
@@ -3112,13 +3915,11 @@ class _Prover:
                     disjunctions.append(parts)
                 del self.candidates[saved:]
         # Duplicates do not matter under set semantics, so a test a case now requires becomes a join.
-        return [
-            [
-                self.inline_unique_subs(dataclasses.replace(block, cond=_Pred(z3.And(block.cond.t, part), block.cond.f)), require_unique=False)
+        for parts in disjunctions:
+            yield [
+                (part, self.inline_unique_subs(dataclasses.replace(block, cond=_Pred(z3.And(block.cond.t, part), block.cond.f)), require_unique=False))
                 for part in parts
             ]
-            for parts in disjunctions
-        ]
 
     def groups_unique(self, block) -> bool:
         """No two groups of a ``GROUP BY`` give the same row: equal outputs force equal group keys,
@@ -3209,12 +4010,15 @@ def _constant_global(block):
 
 
 def _selects_a_set(select: exp.Select) -> bool:
-    """A DISTINCT select, or one grouped on exactly its (aggregate-free) outputs, never repeats a row."""
+    """A DISTINCT select, or one grouped on exactly its (aggregate-free) outputs, never repeats a row.
 
-    if select.args.get("distinct") and not select.args.get("group"):
+    Not a ``DISTINCT ON (k)`` select: it keeps one row per ``k``, and two of them can be equal.
+    """
+
+    if plain_distinct(select) and not select.args.get("group"):
         return not any(select.find_all(exp.Window))
     group = select.args.get("group")
-    if group is None or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if group is None or extended_grouping(group):
         return False
     outputs = [(i.this if isinstance(i, exp.Alias) else i) for i in select.expressions]
     if any(isinstance(n, (exp.AggFunc, exp.Window)) for o in outputs for n in o.walk()):
@@ -3461,6 +4265,18 @@ def _export(value):
     return value
 
 
+def _block_occs(block) -> list:
+    """The table occurrences of ``block`` and of the existence tests nested in it."""
+
+    found = list(block.occs)
+    stack = list(block.subs)
+    while stack:
+        sub = stack.pop()
+        found.extend(sub.occs)
+        stack.extend(sub.nested)
+    return found
+
+
 def _find_counterexample(prover: _Prover, left: _Union, right: _Union) -> Counterexample | None:
     blocks = list(left.branches) + list(right.branches)
     all_occs = [o for b in blocks for o in b.occs]
@@ -3470,7 +4286,8 @@ def _find_counterexample(prover: _Prover, left: _Union, right: _Union) -> Counte
         prover.witness(block.cond.t, block.occs, block.facts)
     empty = z3.Solver()
     empty.check()
-    for model, occs in [(empty.model(), [])] + prover.candidates:
+    for assertions, base, occs, values in [(None, empty.model(), [], [])] + prover.candidates:
+        model = prover._counterexample(assertions, base, values) if occs else base
         db: dict[str, list[dict]] = {occ.table: [] for occ in all_occs}
         for occ in occs:
             db.setdefault(occ.table, []).append({name: _cell(model, v) for name, v in occ.cols.items()})
@@ -3532,7 +4349,7 @@ def _group_shape(key: str):
         and isinstance(from_.this, exp.Table)
         and not from_.this.args.get("joins")
         and not any(tree.args.get(k) for k in ("joins", "where", "having", "distinct", "limit", "offset", "qualify", "laterals", "pivots", "with", "with_"))
-        and not any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals"))
+        and not extended_grouping(group)
         and all(isinstance(g, exp.Column) for g in group.expressions)
     ):
         group_names = {g.name.lower() for g in group.expressions}
@@ -3652,6 +4469,9 @@ def _prove_core(
     """
 
     assumptions = BASE_ASSUMPTIONS + ((EXACT_ARITHMETIC_ASSUMPTION,) if exact_arithmetic else ())
+    compared = string_number_compare.problem(left_sql, dialect, types, plain_ok=True) or string_number_compare.problem(right_sql, dialect, types, plain_ok=True)
+    if compared:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {compared}", assumptions=assumptions)
     if z3 is None:
         return SmtEquivalenceResult(
             SmtStatus.NOT_PROVEN, "z3-solver is not installed (pip install kumosql[smt])"
@@ -3664,7 +4484,9 @@ def _prove_core(
         compiler.blind_sets = blind
         try:
             left = compiler.compile(left_sql)
+            left_sites = list(compiler.sites)
             right = compiler.compile(right_sql)
+            right_sites = compiler.sites[len(left_sites):]
         except Unsupported as error:
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {error}", assumptions=assumptions)
         except sqlglot.errors.ParseError as error:
@@ -3686,10 +4508,25 @@ def _prove_core(
         if compiler.timestamp_literals and any(_CANONICAL_DATE.match(t) for t in compiler.string_literals):
             # 'YYYY-MM-DD' sorts before 'YYYY-MM-DD 00:00:00' as text but is the same instant: not modeled together
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: dates and timestamps compared in one proof", assumptions=assumed)
-        extra = compiler.order_facts()
-        if extra:
-            for union in (left, right):
-                for block in union.branches:
+        if compiler.big_literals:
+            problem = compiler.integer_context_problem()
+            if problem:
+                return SmtEquivalenceResult(
+                    SmtStatus.NOT_PROVEN, f"unsupported: integer literal {compiler.big_literals[0]} is past 2**53 and {problem}", assumptions=assumed
+                )
+        typed = compiler.typed_facts()
+        nothing_floating = dialect == "bigquery" and compiler.integer_context_problem() is None
+        if nothing_floating:
+            # Every column is declared INT64, NUMERIC, STRING, BOOL or another non-floating type and no expression can produce a
+            # FLOAT64: there is no NaN, a SUM is exact in any order, and + - * are exact (an overflow is an error, reported below).
+            assumed = tuple(a for a in assumed if a not in (BASE_ASSUMPTIONS[0], BASE_ASSUMPTIONS[2], EXACT_ARITHMETIC_ASSUMPTION))
+        elif dialect == "bigquery":
+            assumed = compiler.sums.settle(assumed, BASE_ASSUMPTIONS[2])  # an exact SUM, or the same plan on both sides
+        order = compiler.order_facts()
+        for union in (left, right):
+            for block in union.branches:
+                extra = order + compiler.typed_facts(_block_occs(block))
+                if extra:
                     block.facts = block.facts + extra
 
         if len(left.names) != len(right.names):
@@ -3714,9 +4551,17 @@ def _prove_core(
         except _SetSourceUnresolved:
             proven, reason = False, "a derived table is not joined on all of its columns"
         if proven:
-            return SmtEquivalenceResult(SmtStatus.PROVEN_EQUIVALENT, reason, assumptions=assumed)
+            report = smt_errors.compare(prover, left_sites, right_sites, typed) if dialect == "bigquery" else None
+            if report is not None and report.verdict == smt_errors.INTRODUCES:
+                # Same rows wherever both succeed, but the rewrite fails on a database where the original returns rows.
+                return SmtEquivalenceResult(
+                    SmtStatus.NOT_PROVEN, report.detail, assumptions=_error_assumptions(assumed, report), errors=report
+                )
+            return SmtEquivalenceResult(SmtStatus.PROVEN_EQUIVALENT, reason, assumptions=_error_assumptions(assumed, report), errors=report)
         if not compiler.uses_uf:
             counterexample = _find_counterexample(prover, left, right)
+            if counterexample is not None and compiler.bounded_sums and not _small_database(counterexample):
+                counterexample = None
             if counterexample is not None:
                 return SmtEquivalenceResult(
                     SmtStatus.NOT_EQUIVALENT,
@@ -3724,8 +4569,10 @@ def _prove_core(
                     counterexample=counterexample,
                     assumptions=assumed,
                 )
-        if prover.unknown:
+        if prover.wall_clock:
             reason += " (the solver timed out on some checks)"
+        elif prover.unknown:
+            reason += " (the solver ran out of its work budget on some checks)"
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, reason, assumptions=assumed)
 
     result = attempt(True)
@@ -3741,6 +4588,48 @@ def _prove_core(
     return fallback if fallback.status is not SmtStatus.NOT_PROVEN else result
 
 
+_SMALL_VALUE = 2**40
+_SMALL_ROWS = 2**20
+
+
+def _small_database(counterexample: Counterexample) -> bool:
+    """Whether no sum of column values over this database can leave INT64, NUMERIC or FLOAT64 range."""
+
+    rows = 0
+    for table in counterexample.tables.values():
+        rows += len(table)
+        for row in table:
+            for value in row.values():
+                if isinstance(value, (int, float, Fraction)) and not isinstance(value, bool) and abs(value) > _SMALL_VALUE:
+                    return False
+    return rows <= _SMALL_ROWS
+
+
+ERROR_SAME_ASSUMPTION = (
+    "both queries can raise the same runtime errors (BigQuery picks the evaluation order); the proof covers databases where neither does"
+)
+ERROR_REFINES_ASSUMPTION = (
+    "the rewrite raises no runtime error the original cannot; the original may fail where the rewrite returns rows"
+)
+ERROR_INTRODUCES_ASSUMPTION = "the rewrite can raise a runtime error on a database where the original returns rows"
+
+
+def _error_assumptions(assumed: tuple, report) -> tuple:
+    """``assumed`` with the "runtime errors are not modeled" label replaced by what the error comparison showed."""
+
+    if report is None or BASE_ASSUMPTIONS[1] not in assumed:
+        return assumed
+    index = assumed.index(BASE_ASSUMPTIONS[1])
+    if report.verdict == smt_errors.NONE:
+        return assumed[:index] + assumed[index + 1:]
+    replacement = {
+        smt_errors.SAME: (ERROR_SAME_ASSUMPTION,),
+        smt_errors.REFINES: (ERROR_REFINES_ASSUMPTION,),
+        smt_errors.INTRODUCES: (BASE_ASSUMPTIONS[1], ERROR_INTRODUCES_ASSUMPTION),
+    }.get(report.verdict, (BASE_ASSUMPTIONS[1],))
+    return assumed[:index] + replacement + assumed[index + 1:]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Prove two BigQuery queries equivalent with Z3.")
     parser.add_argument("left", help="path to the left SQL file")
@@ -3748,6 +4637,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--schema", help="JSON file mapping table names to column lists")
     parser.add_argument("--exact-arithmetic", action="store_true", help="model + - * exactly (INT64/NUMERIC)")
     parser.add_argument("--timeout-ms", type=int, default=5000)
+    parser.add_argument(
+        "--conditional",
+        action="store_true",
+        help="when the pair is not proven, look for facts (NOT NULL, unique keys, foreign keys) that would make it equivalent; exit 3",
+    )
     args = parser.parse_args(argv)
     with open(args.left, encoding="utf-8") as handle:
         left = handle.read()
@@ -3760,13 +4654,16 @@ def main(argv: list[str] | None = None) -> int:
     from .statement_proof import prove_statements_smt
 
     result = prove_statements_smt(
-        left, right, schema=schema, exact_arithmetic=args.exact_arithmetic, timeout_ms=args.timeout_ms
+        left, right, schema=schema, exact_arithmetic=args.exact_arithmetic, timeout_ms=args.timeout_ms,
+        conditional=args.conditional,
     )
     payload = {
         "status": result.status.value,
         "reason": result.reason,
         "assumptions": list(result.assumptions),
     }
+    if result.conditions:
+        payload["conditions"] = [c.to_json() for c in result.conditions]
     if result.counterexample is not None:
         payload["counterexample"] = {
             "tables": result.counterexample.tables,
@@ -3775,6 +4672,8 @@ def main(argv: list[str] | None = None) -> int:
         }
     json.dump(payload, sys.stdout, indent=2, default=str)
     sys.stdout.write("\n")
+    if result.conditionally_proven:
+        return 3
     return 0 if result.proven else 1
 
 
@@ -3797,9 +4696,9 @@ def _split_limit(sql: str, dialect: str):
         tree = check_modeled(canonical_negation(sqlglot.parse_one(sql, read=dialect)))
     except UnmodeledConstruct:
         return sql, None
-    root = tree
-    while isinstance(root, exp.Subquery):
-        root = root.this
+    root = merge_wrapper_tails(tree)
+    if root is None:
+        return None, "LIMIT or OFFSET tails stacked in parentheses"
     if not isinstance(root, (exp.Select, exp.Union, exp.Intersect, exp.Except)):
         return sql, None
     limit, offset, order = root.args.get("limit"), root.args.get("offset"), root.args.get("order")
@@ -3808,9 +4707,9 @@ def _split_limit(sql: str, dialect: str):
     if order is None:
         return None, "LIMIT or OFFSET without ORDER BY picks arbitrary rows"
     # ORDER BY .. OFFSET m without LIMIT keeps every row after the first m: an unbounded limit.
-    if limit is not None and (not isinstance(limit, exp.Limit) or not isinstance(limit.expression, exp.Literal) or limit.expression.is_string):
+    if limit is not None and (not isinstance(limit, exp.Limit) or not isinstance(limit.expression, exp.Literal) or limit.expression.is_string or not limit.expression.this.isdigit()):
         return None, "LIMIT is not a constant"
-    if offset is not None and (not isinstance(offset.expression, exp.Literal) or offset.expression.is_string):
+    if offset is not None and (not isinstance(offset.expression, exp.Literal) or offset.expression.is_string or not offset.expression.this.isdigit()):
         return None, "OFFSET is not a constant"
     first = root
     while isinstance(first, (exp.Union, exp.Intersect, exp.Except, exp.Subquery)):
@@ -3825,6 +4724,8 @@ def _split_limit(sql: str, dialect: str):
             return None, "ORDER BY item"
         key = item.this
         position = None
+        if isinstance(key, exp.Literal) and not key.is_string and not key.this.isdigit():
+            return None, "ORDER BY a number that is not a position"
         if isinstance(key, exp.Literal) and not key.is_string and 1 <= int(key.this) <= len(outputs):
             position = int(key.this) - 1
         else:
@@ -3848,7 +4749,11 @@ def _split_limit(sql: str, dialect: str):
         nulls_first = item.args.get("nulls_first")
         ordering.append((position, desc, (not desc) if nulls_first is None else bool(nulls_first)))
     covers = {p for p, _, _ in ordering} >= set(range(len(outputs)))
-    core = tree.copy()
+    # A tail that sat on the parentheses was moved onto ``root``; the core is then the merged query.
+    innermost = tree
+    while isinstance(innermost, exp.Subquery):
+        innermost = innermost.this
+    core = root.copy() if root is not innermost else tree.copy()
     stripped = core
     while isinstance(stripped, exp.Subquery):
         stripped = stripped.this
@@ -3866,7 +4771,89 @@ def _split_limit(sql: str, dialect: str):
     return faithful_sql(core, dialect), spec
 
 
+def _check_options(kwargs: dict) -> None:
+    """Raise ``TypeError``/``ValueError`` for an option a caller passed wrongly (a bug, not a property of the SQL).
+
+    ``timeout_ms=None`` means the default and a float is rounded down to whole milliseconds; schema, types and
+    constraints entries whose names differ only in case and disagree are dropped (:func:`drop_case_conflicts`), in place.
+    """
+
+    timeout = kwargs.get("timeout_ms")
+    if timeout is None:
+        kwargs.pop("timeout_ms", None)
+    elif isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout < 2**32:
+        raise ValueError(f"timeout_ms must be a positive number of milliseconds, not {timeout!r}")
+    else:
+        kwargs["timeout_ms"] = int(timeout)
+    for name in ("schema", "types", "constraints"):
+        value = kwargs.get(name)
+        if value is not None and not isinstance(value, dict):
+            raise TypeError(f"{name} must map table names to their entries, not {type(value).__name__}")
+    schema = kwargs.get("schema") or {}
+    for table, columns in schema.items():
+        # A column list, or a mapping whose keys are the column names (column -> type).
+        if not isinstance(table, str) or isinstance(columns, (str, bytes)) or not all(isinstance(c, str) for c in columns):
+            raise TypeError(f"schema entry {table!r} must list column names")
+    for table, columns in (kwargs.get("types") or {}).items():
+        if not isinstance(table, str) or not isinstance(columns, dict):
+            raise TypeError(f"types entry {table!r} must map column names to type names")
+    for name in ("schema", "types", "constraints"):
+        if kwargs.get(name):
+            kwargs[name] = drop_case_conflicts(kwargs[name])
+
+
+@refuse_misread_proofs
+@serialized
 def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
+    """Prove two BigQuery queries return the same result bag, or refute them.
+
+    On MySQL a proof that needs different strings compared with an untyped column to differ must also hold with the strings
+    read as the numbers they convert to (``kumosql.numeric_column_reading``).
+    See ``_prove_equivalent_smt`` for the rest.
+    """
+
+    return numeric_column_reading.checked(
+        _prove_equivalent_smt, left_sql, right_sql, kwargs, lambda reason: SmtEquivalenceResult(SmtStatus.NOT_PROVEN, reason)
+    )
+
+
+def _prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
+    """Prove two BigQuery queries return the same result bag, or refute them.
+
+    Input the prover cannot read (untokenizable text, nesting too deep for the compiler) is
+    ``not_proven``, never an exception; an option passed wrongly raises ``TypeError``/``ValueError``.
+    With ``conditional=True`` a pair that is not proven is retried under facts taken from the
+    queries (NOT NULL columns, unique keys, foreign keys); a proof that needs some of them comes back
+    as ``PROVEN_CONDITIONALLY`` with the minimal ``conditions`` (see ``kumosql.conditional_equivalence``).
+    See ``_prove_with_limit`` for the rest.
+    """
+
+    conditional = kwargs.pop("conditional", False)
+    wall = kwargs.pop("conditional_seconds", None)
+    _check_options(kwargs)
+    if kwargs.get("dialect", "bigquery") == "bigquery":
+        unknown_type = invalid_type_name(left_sql) or invalid_type_name(right_sql)
+        if unknown_type:
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BigQuery would reject the query: {unknown_type}")
+    left_sql, right_sql = (string_number_literals.normalize(sql, kwargs.get("dialect", "bigquery"), kwargs.get("types")) for sql in (left_sql, right_sql))
+    result = _prove_with_limit(left_sql, right_sql, **kwargs)
+    if not conditional or result.status is SmtStatus.PROVEN_EQUIVALENT:
+        return result
+    from . import conditional_equivalence
+
+    def prove(constraints, pair=None):
+        if pair is not None:
+            return _prove_with_limit(*pair, **{**kwargs, "constraints": constraints, "compare_names": False})
+        return _prove_with_limit(left_sql, right_sql, **{**kwargs, "constraints": constraints})
+
+    options = {} if wall is None else {"wall_seconds": wall}
+    return conditional_equivalence.add_conditions(
+        left_sql, right_sql, result, prove,
+        schema=kwargs.get("schema"), constraints=kwargs.get("constraints"), types=kwargs.get("types"), dialect=kwargs.get("dialect", "bigquery"), **options,
+    )
+
+
+def _prove_with_limit(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Prove two BigQuery queries return the same result bag, or refute them.
 
     A query ending in ``ORDER BY .. LIMIT n [OFFSET m]`` is handled when both sides
@@ -3878,7 +4865,19 @@ def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivale
     See ``_prove_core`` for the options.
     """
 
+    try:
+        return _prove_smt(left_sql, right_sql, **kwargs)
+    except sqlglot.errors.SqlglotError as error:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {str(error)[:200]}")
+    except RecursionError:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: the query nests too deeply")
+
+
+def _prove_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     dialect = kwargs.get("dialect", "bigquery")
+    masked = masked_template_problem(left_sql, right_sql, dialect=dialect or "bigquery")
+    if masked:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, masked)
     if dialect == "bigquery":
         left_sql, right_sql = canonical_literals(left_sql), canonical_literals(right_sql)
     left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, dialect)

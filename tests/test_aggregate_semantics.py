@@ -7,10 +7,15 @@ import pytest
 
 pytest.importorskip("z3")
 
+from sqlglot import exp
+
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+from kumosql.duckdb_load import insert_rows
 from kumosql.set_aggregates import reduce
 
 SCHEMA = {"t": ["k", "x", "y"], "u": ["num"]}
+# sqlglot 26 parses BIT_AND as an unknown function, so the provers refuse a query that calls it there
+BIT_AGGREGATES = hasattr(exp, "BitwiseAndAgg")
 
 
 def _proven(left: str, right: str, **kwargs) -> bool:
@@ -29,11 +34,9 @@ def _differ(left: str, right: str, trials: int = 300) -> bool:
         con.execute("CREATE OR REPLACE TABLE u (num INTEGER)")
         pick = lambda: rng.choice([None, 0, 1, 2, 3])  # noqa: E731
         rows = [(pick(), pick(), pick()) for _ in range(rng.randint(0, 6))]
-        if rows:
-            con.executemany("INSERT INTO t VALUES (?, ?, ?)", rows)
+        insert_rows(con, "t", rows)
         nums = [(pick(),) for _ in range(rng.randint(0, 6))]
-        if nums:
-            con.executemany("INSERT INTO u VALUES (?)", nums)
+        insert_rows(con, "u", nums)
         a = sorted(map(repr, con.execute(left).fetchall()))
         b = sorted(map(repr, con.execute(right).fetchall()))
         if a != b:
@@ -48,8 +51,9 @@ EQUIVALENT = [
     ("SELECT MAX(num) FROM (SELECT num FROM u GROUP BY num HAVING COUNT(num) = 1) AS a",
      "SELECT MAX(num) FROM (SELECT num FROM u GROUP BY num HAVING COUNT(*) < 2) AS b"),
     # DISTINCT aggregates and BIT_AND read the set of values; SUM over a GROUP BY x source is SUM(DISTINCT x).
-    ("SELECT SUM(DISTINCT x), COUNT(DISTINCT x), BIT_AND(x) FROM t",
-     "SELECT SUM(x), COUNT(x), BIT_AND(x) FROM (SELECT x FROM t GROUP BY x) AS d"),
+    pytest.param("SELECT SUM(DISTINCT x), COUNT(DISTINCT x), BIT_AND(x) FROM t",
+                 "SELECT SUM(x), COUNT(x), BIT_AND(x) FROM (SELECT x FROM t GROUP BY x) AS d",
+                 marks=pytest.mark.skipif(not BIT_AGGREGATES, reason="this sqlglot version does not know BIT_AND")),
     # COUNT only sees whether its argument is NULL.
     ("SELECT k, COUNT(CASE WHEN x = 1 THEN 'a' END) FROM t GROUP BY k",
      "SELECT k, COUNT(CASE WHEN x = 1 THEN 1 END) FROM t GROUP BY k"),
@@ -131,8 +135,10 @@ def test_empty_bit_aggregate_is_not_folded_to_null():
 
 
 def test_decimal_literals_are_not_folded_where_they_are_floats():
-    # BigQuery reads 0.25 as FLOAT64, so literal arithmetic is left alone there (integers still fold).
-    assert not _proven("SELECT x * (1 - 0.25) FROM t", "SELECT x * 0.75 FROM t", dialect="bigquery")
+    # BigQuery reads 0.1 as FLOAT64, so literal arithmetic is done on doubles there: 0.1 + 0.2 is not 0.3 (integers still fold).
+    assert not _proven("SELECT x * (0.1 + 0.2) FROM t", "SELECT x * 0.3 FROM t", dialect="bigquery")
+    # 1 - 0.25 is exactly 0.75 as a double, so that pair is equal.
+    assert _proven("SELECT x * (1 - 0.25) FROM t", "SELECT x * 0.75 FROM t", dialect="bigquery")
     assert _proven("SELECT x * (3 - 1) FROM t", "SELECT x * 2 FROM t", dialect="bigquery")
 
 
@@ -141,4 +147,4 @@ def test_bit_aggregate_of_a_null_group_key_stays_unknown():
     assert not _proven("SELECT k, BIT_AND(k) FROM t GROUP BY k", "SELECT k, k FROM t GROUP BY k", dialect="mysql")
     assert _proven(
         "SELECT k, CASE WHEN k IS NULL THEN NULL ELSE BIT_AND(k) END FROM t GROUP BY k", "SELECT k, k FROM t GROUP BY k", dialect="mysql"
-    )
+    ) == BIT_AGGREGATES

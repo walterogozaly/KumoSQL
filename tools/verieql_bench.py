@@ -419,12 +419,13 @@ def replay(case: dict, record: dict) -> bool | None:
     script = record.get("counterexample")
     if not script:
         return None
-    db = duckdb.connect(":memory:")
+    from kumosql.duckdb_load import small_database
+    db = small_database()
     statements = [s for s in sqlglot.parse(script, read="mysql") if s is not None]
     try:
         results = []
         for statement in statements:
-            sql = statement.sql(dialect="duckdb")
+            sql = cx.zoneless_timestamps(statement).sql(dialect="duckdb")
             if statement.key == "select":
                 results.append(cx._bag(db.execute(sql).fetchall()))
             else:

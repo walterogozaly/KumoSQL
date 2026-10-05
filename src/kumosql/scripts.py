@@ -14,9 +14,9 @@ Reading happens in three steps:
    not depend on sqlglot, whose tokenizer treats ``BEGIN`` as a command and
    swallows the rest.
 2. Each statement is *kept* (it reads or writes tables: queries,
-   ``CREATE TABLE/VIEW ... AS``, ``INSERT``, ``MERGE``, ``UPDATE``, ``DELETE``,
+   ``CREATE TABLE/VIEW ... AS``, ``INSERT``, ``MERGE``, ``UPDATE``, ``DELETE``, table DDL,
    ``CALL`` of a known procedure), *ignored* (``DECLARE``/``SET`` of scalars,
-   ``ASSERT``, transactions, ``LOAD DATA``, DDL, control-flow shells) or
+   ``ASSERT``, transactions, ``LOAD DATA``, definitions outside tables, control-flow shells) or
    *unknown* (it might read tables and could not be understood: dynamic
    ``EXECUTE IMMEDIATE``, an unknown procedure, text that does not parse).
    Unknown is never guessed.
@@ -42,7 +42,7 @@ from typing import Iterable, Iterator, Mapping, NamedTuple
 import sqlglot
 from sqlglot import ErrorLevel, exp
 
-from .ast_utils import quiet_parser, set_with_clause, with_clause
+from .ast_utils import binding_cte, quiet_parser, set_with_clause, with_clause
 
 MAX_PROCEDURE_DEPTH = 8
 MAX_NESTED_SQL_DEPTH = 3
@@ -685,24 +685,34 @@ def _name_at(tokens: list[Tok], i: int) -> tuple[exp.Table | None, int]:
     return (table, j) if isinstance(table, exp.Table) and table.name else (None, j)
 
 
+# Functions whose arguments are separated by ``FROM``: that ``FROM`` names no table.
+_FROM_ARGUMENT_CALLS = {"EXTRACT", "TRIM", "SUBSTRING", "SUBSTR", "OVERLAY", "POSITION"}
+
+
+def _enclosing_call(tokens: list[Tok], index: int) -> str:
+    """The word before the innermost parenthesis still open at ``tokens[index]``; empty when there is none."""
+
+    depth = 0
+    for k in range(index - 1, -1, -1):
+        if tokens[k].text == ")":
+            depth += 1
+        elif tokens[k].text == "(":
+            if depth == 0:
+                return tokens[k - 1].up if k else ""
+            depth -= 1
+    return ""
+
+
 def token_reads(text: str) -> tuple[list[exp.Table], list[exp.Table]]:
     """``(tables read, tables written)`` found in the token stream of a statement that could not be parsed.
 
     A name after ``FROM``, ``JOIN``, ``USING`` or ``TABLE`` is read (``FROM a, b`` reads both), one after ``INTO``, ``UPDATE``,
-    ``MERGE`` or ``CREATE ... TABLE|VIEW`` is written, and a ``CREATE`` also reads what it ``LIKE``s or ``CLONE``s. Names of CTEs
-    declared in the statement are not tables. Only the tables are found, never columns.
+    ``MERGE`` or ``CREATE ... TABLE|VIEW`` is written, and a ``CREATE`` also reads what it ``LIKE``s or ``CLONE``s. A name is a
+    CTE, not a table, only where its WITH is in scope: after its body up to the parenthesis that closes the WITH's query
+    (from the WITH on for ``WITH RECURSIVE``). Only the tables are found, never columns.
     """
 
     tokens = [t for t in lex(text) if t.kind != ";"]
-    ctes = {
-        tokens[k].text.casefold()
-        for k in range(len(tokens) - 2)
-        if tokens[k].kind == "w" and tokens[k + 1].up == "AS" and tokens[k + 2].text == "("
-    } | {
-        tokens[k].text.casefold()  # ``name (a, b) AS (`` and ``name AS MATERIALIZED (``
-        for k in range(len(tokens) - 1)
-        if tokens[k].kind == "w" and tokens[k + 1].text == "(" and k > 0 and tokens[k - 1].up in {"WITH", ","}
-    }
     creates = bool(tokens) and tokens[0].up == "CREATE"
     reads: list[exp.Table] = []
     writes: list[exp.Table] = []
@@ -718,12 +728,56 @@ def token_reads(text: str) -> tuple[list[exp.Table], list[exp.Table]]:
                     return k + 1
         return len(tokens)
 
+    # Parenthesis depth of each token; a ``(`` and its ``)`` have the depth of what surrounds them.
+    levels: list[int] = []
+    level = 0
+    for token in tokens:
+        if token.text == ")":
+            level -= 1
+        levels.append(level)
+        if token.text == "(":
+            level += 1
+
+    def cte_body(k: int) -> int | None:
+        """Where the body of a WITH table named at ``tokens[k]`` opens: ``name AS (``, ``name (a, b) AS (``,
+        ``name AS [NOT] MATERIALIZED (``."""
+
+        j = k + 1
+        if j < len(tokens) and tokens[j].text == "(" and tokens[k - 1].text.upper() in {"WITH", ",", "RECURSIVE"}:
+            j = call_end(j)  # a column list
+        if j >= len(tokens) or tokens[j].up != "AS":
+            return None
+        j += 1
+        if j < len(tokens) and tokens[j].up == "NOT":
+            j += 1
+        if j < len(tokens) and tokens[j].up == "MATERIALIZED":
+            j += 1
+        return j if j < len(tokens) and tokens[j].text == "(" else None
+
+    ctes: dict[str, list[tuple[int, int]]] = {}  # name -> token ranges where it names a CTE
+    for k in range(1, len(tokens)):
+        if tokens[k].kind != "w" or (body := cte_body(k)) is None:
+            continue
+        start = call_end(body)  # a WITH table does not see itself
+        w = k - 1
+        while w >= 0 and levels[w] >= levels[k] and not (levels[w] == levels[k] and tokens[w].up == "WITH"):
+            w -= 1
+        if w >= 0 and levels[w] == levels[k] and tokens[w].up == "WITH" and w + 1 < len(tokens) and tokens[w + 1].up == "RECURSIVE":
+            start = w
+        end = next((i for i in range(start, len(tokens)) if levels[i] < levels[k]), len(tokens))
+        ctes.setdefault(tokens[k].text.casefold(), []).append((start, end))
+
+    def is_cte(table: exp.Table, at: int) -> bool:
+        return not table.db and not table.catalog and any(s <= at < e for s, e in ctes.get(table.name.casefold(), ()))
+
     i = 0
     while i < len(tokens):
         word = tokens[i].up
         previous = tokens[i - 1].up if i else ""
         kind = None
-        if word == "FROM":
+        if word == "FROM" and (previous == "DISTINCT" or _enclosing_call(tokens, i) in _FROM_ARGUMENT_CALLS):
+            pass  # ``EXTRACT(DATE FROM ts)``, ``TRIM(BOTH 'x' FROM s)``, ``a IS DISTINCT FROM b``: not a table
+        elif word == "FROM":
             kind = "write" if previous == "DELETE" else "read"
         elif word in {"JOIN", "USING"}:
             kind = "read"
@@ -746,7 +800,7 @@ def token_reads(text: str) -> tuple[list[exp.Table], list[exp.Table]]:
         scan_to = first = j
         while True:
             table, after = _name_at(tokens, j)
-            if table is not None and not (not table.db and not table.catalog and table.name.casefold() in ctes):
+            if table is not None and not is_cte(table, j):
                 (reads if kind == "read" else writes).append(table)
             if j == first:
                 scan_to = max(scan_to, after)  # keep scanning inside a subquery or call argument list
@@ -1784,15 +1838,14 @@ class _Run:
         ``skip`` are table nodes of the statement that are written, not read."""
 
         skipped = {id(t) for t in skip if t is not None}
-        ctes = {cte.alias_or_name.casefold() for cte in tree.find_all(exp.CTE)}
         real: dict[str, exp.Table] = {}
         temps: list[_Temp] = []
         late: list[str] = []
         for table in tree.find_all(exp.Table):
             if id(table) in skipped or not table.name or not isinstance(table.this, exp.Identifier):
                 continue
-            if not table.db and not table.catalog and table.name.casefold() in ctes:
-                continue
+            if binding_cte(table) is not None:
+                continue  # a WITH table in scope here (a nested ``WITH t`` does not hide a read of the table t elsewhere)
             if _is_temp_name(table) and table.name.casefold() in self.temps:
                 version = self.temps[table.name.casefold()]
                 if version not in temps:
@@ -1829,10 +1882,10 @@ class _Run:
         if first == "DELETE":
             return self.dml_statement(text_, line, "delete", conditional)
         if first == "TRUNCATE":
-            return done("truncate", IGNORED, "removes rows only")
+            return self.ddl_statement(text_, line, "truncate", conditional)
         if first in _DDL:
-            if first == "DROP" and not conditional:
-                self.drop_temp(text_)  # a DROP that may not run leaves the temporary table in place
+            if first in {"ALTER", "DROP"}:
+                return self.ddl_statement(text_, line, first.lower(), conditional)
             return done(first.lower(), IGNORED, "definition change, no data flow")
         if first == "DECLARE":
             return self.declare_statement(text_, line, conditional)
@@ -1873,13 +1926,45 @@ class _Run:
                     statement.complete = True  # undone: nothing it wrote is left to trace
         self.restore_temps(snapshot)
 
-    def drop_temp(self, text_: str) -> None:
+    def ddl_statement(self, text_: str, line: int, kind: str, conditional: bool) -> Statement:
+        """Table DDL writes its targets; a rename also reads the original table."""
+
         tree = self.parse(text_)
-        if isinstance(tree, exp.Drop):
-            # sqlglot 26 keeps the table in ``this``, later releases in ``tables``
-            for table in tree.args.get("tables") or [tree.this]:
-                if isinstance(table, exp.Table) and _is_temp_name(table):
-                    self.temps.pop(table.name.casefold(), None)
+        valid = {"alter": exp.Alter, "drop": exp.Drop, "truncate": exp.TruncateTable}[kind]
+        index = len(self.a.statements)
+        if not isinstance(tree, valid):
+            return self.record(Statement(index, line, kind, UNKNOWN, "could not be parsed", conditional))
+        if kind != "truncate" and str(tree.args.get("kind") or "").upper() not in {"TABLE", "VIEW", "MATERIALIZED VIEW"}:
+            return self.record(Statement(index, line, kind, IGNORED, "definition change outside tables", conditional))
+        targets = tree.expressions if kind == "truncate" else tree.args.get("tables") or [tree.this]
+        if not targets or any(not isinstance(table, exp.Table) or not table.name for table in targets):
+            return self.record(Statement(index, line, kind, UNKNOWN, "target could not be read", conditional))
+        statement = self.record(Statement(index, line, kind, KEPT, "table definition or rows changed", conditional))
+        statement.complete = True  # no output column values are assigned
+        for target in targets:
+            temporary = _is_temp_name(target) and target.name.casefold() in self.temps
+            if temporary:
+                if kind == "drop" and not conditional:
+                    self.temps.pop(target.name.casefold(), None)
+                continue
+            rename = next((a for a in tree.args.get("actions") or [] if isinstance(a, exp.AlterRename)), None)
+            sources = {}
+            if rename is not None:
+                destination = rename.this
+                if not isinstance(destination, exp.Table) or not destination.name:
+                    statement.disposition = UNKNOWN
+                    statement.reason = "rename target could not be read"
+                    continue
+                sources = {_norm(_table_ref(target)): _clean(target)}
+                self.a.reads.update(sources)
+                statement.reads.update(sources)
+                destination = destination.copy()
+                for part in ("db", "catalog"):
+                    if not destination.args.get(part) and target.args.get(part):
+                        destination.set(part, target.args[part].copy())
+                target = destination
+            self.write(target, sources, kind, conditional)
+        return statement
 
     # -- queries and DDL
     def parse(self, text_: str) -> exp.Expression | None:
@@ -1893,7 +1978,6 @@ class _Run:
     def qualify_defaults(self, tree: exp.Expression, text_: str) -> None:
         """After ``SET @@dataset_id``, an unqualified name means a table of that dataset (not a temporary table or CTE)."""
 
-        ctes = {cte.alias_or_name.casefold() for cte in tree.find_all(exp.CTE)}
         temp_target = None
         if isinstance(tree, exp.Create) and re.match(r"\s*CREATE\s+(OR\s+REPLACE\s+)?TEMP(ORARY)?\b", text_, re.I):
             temp_target = tree.this.this if isinstance(tree.this, exp.Schema) else tree.this
@@ -1901,7 +1985,7 @@ class _Run:
             if table is temp_target or not table.name or not isinstance(table.this, exp.Identifier) or table.catalog:
                 continue
             if not table.db:
-                if table.name.casefold() in ctes or table.name.casefold() in self.temps or not self.default_dataset:
+                if binding_cte(table) is not None or table.name.casefold() in self.temps or not self.default_dataset:
                     continue
                 table.set("db", exp.to_identifier(self.default_dataset))
             elif table.db.casefold() == "_session":
@@ -1937,9 +2021,8 @@ class _Run:
             return tree
         copy = tree.copy()
         by_name = {t.name.casefold(): t for t in temps}
-        ctes = {cte.alias_or_name.casefold() for cte in copy.find_all(exp.CTE)}
         for table in list(copy.find_all(exp.Table)):
-            if not table.db and not table.catalog and table.name.casefold() in ctes:
+            if binding_cte(table) is not None:
                 continue
             version = by_name.get(table.name.casefold()) if _is_temp_name(table) else None
             if version is not None and (version.alias != table.name or table.db):
@@ -1974,6 +2057,9 @@ class _Run:
     def query_statement(self, text_: str, line: int, conditional: bool, top_level: bool, *, kind: str) -> Statement:
         index = len(self.a.statements)
         tree = self.parse(text_)
+        for cls, dml_kind in ((exp.Insert, "insert"), (exp.Update, "update"), (exp.Delete, "delete"), (exp.Merge, "merge")):
+            if isinstance(tree, cls):
+                return self.dml_statement(text_, line, dml_kind, conditional)
         query = _query_of(tree) if tree is not None else None
         if tree is None or query is None:
             return self.degrade(self.record(Statement(index, line, kind, UNKNOWN, "could not be parsed", conditional)), text_)
@@ -2071,6 +2157,8 @@ class _Run:
             statement = self.record(Statement(index, line, kind, KEPT, "no source query", conditional))
             if temp:
                 self.define_temp(target, {}, None, columns, conditional, [statement])
+            else:
+                self.write(target, {}, kind, conditional)
             return statement
         statement = self.record(Statement(index, line, kind, KEPT, "", conditional))
         output = self.after_query(statement, tree, query, target, conditional, top_level and not temp)
@@ -2195,6 +2283,11 @@ class _Run:
         if not isinstance(tree, valid):
             return self.degrade(self.record(Statement(index, line, kind, UNKNOWN, "could not be parsed", conditional)), text_)
         target = tree.this.this if isinstance(tree.this, exp.Schema) else tree.this
+        if not isinstance(target, exp.Table) and kind == "delete":
+            # BigQuery permits DELETE without FROM; sqlglot stores that target in tables.
+            targets = tree.args.get("tables") or []
+            if len(targets) == 1:
+                target = targets[0]
         if not isinstance(target, exp.Table) or not target.name:
             return self.record(Statement(index, line, kind, UNKNOWN, "target could not be read", conditional))
         statement = self.record(Statement(index, line, kind, KEPT, "", conditional))

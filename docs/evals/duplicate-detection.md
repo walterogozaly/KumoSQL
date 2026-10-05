@@ -1,5 +1,7 @@
 # Duplicate detection and shared-model extraction benchmark
 
+[Plain-language version](../../docs_simple/evals/duplicate-detection.md)
+
 `python tools/dup_bench.py` generates Dataform-style projects of a few to thousands of models around known families of SELECTs, runs KumoSQL's duplicate analyses on them and scores what they find. No language model is involved at any point: the cases come from a seeded Python generator, and the truth about every copy is known when it is written.
 
 ```

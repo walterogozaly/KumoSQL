@@ -75,6 +75,21 @@ def test_order_lists_slow_tests_with_medians_and_often_failing_tests():
     assert order["risky"][0] == "tests/test_b.py::flaky"
 
 
+def test_a_test_that_was_slow_in_a_few_runs_of_its_file_stays_in_the_quick_tier():
+    # recorded only when slow: 'spike' was 4 s on a loaded machine in 2 of 10 runs; 'usual' is slow in 6 of 10; 'rare_big' is
+    # 40 s in 2 of 10 (a long test never counts as fast); 'new' was slow in the only run that has it
+    records = [
+        record(f"r{i}", [], slow={
+            **({"tests/test_b.py::spike": 4.0} if i < 2 else {}),
+            **({"tests/test_b.py::usual": 5.0} if i < 6 else {}),
+            **({"tests/test_b.py::rare_big": 40.0} if i < 2 else {}),
+        })
+        for i in range(10)
+    ]
+    records.append(record("n", [], files={"tests/test_c.py": 1}, slow={"tests/test_c.py::new": 4.0}))
+    assert th.slow_tests(records) == {"tests/test_b.py::rare_big": 40.0, "tests/test_b.py::usual": 5.0, "tests/test_c.py::new": 4.0}
+
+
 def test_order_leaves_out_tests_whose_files_are_not_in_this_checkout(tmp_path):
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_b.py").write_text("")
@@ -150,9 +165,12 @@ def test_a_pytest_run_writes_a_record_with_targets_and_collateral(tmp_path, work
     (project / "tests").mkdir(parents=True)
     (project / "pytest.ini").write_text("[pytest]\ntestpaths = tests\n")
     (project / "tests" / "conftest.py").write_text(
-        f"import sys\nsys.path.insert(0, {str(ROOT / 'tools')!r})\nimport test_history\n\n\ndef pytest_configure(config):\n    test_history.install(config)\n"
+        f"import sys\nsys.path.insert(0, {str(ROOT / 'tools')!r})\nimport test_history\n\ntest_history.SLOW_SECONDS = 0.25\n\n\ndef pytest_configure(config):\n    test_history.install(config)\n"
     )
     (project / "tests" / "test_mine.py").write_text("def test_target():\n    assert True\n")
+    (project / "tests" / "test_fixture.py").write_text(
+        "import time\n\nimport pytest\n\n\n@pytest.fixture(scope='module')\ndef built():\n    time.sleep(0.3)\n    return 1\n\n\ndef test_uses_it(built):\n    assert built\n"
+    )
     (project / "tests" / "test_other.py").write_text("def test_query_12():\n    assert 1 == 2\n\n\ndef test_fine():\n    pass\n")
     history = tmp_path / "history"
     env = {**os.environ, "KUMOSQL_TEST_HISTORY": str(history), "KUMOSQL_TEST_TARGETS": "tests/test_mine.py", "KUMOSQL_TASK": "my task"}
@@ -165,18 +183,20 @@ def test_a_pytest_run_writes_a_record_with_targets_and_collateral(tmp_path, work
     (path,) = list((history / "runs").glob("*.jsonl"))
     saved = json.loads(path.read_text())
     assert saved["label"] == "my task" and saved["targets"] == ["tests/test_mine.py"] and saved["targets_source"] == "declared"
-    assert saved["counts"] == {"passed": 2, "failed": 1}
+    assert saved["counts"] == {"passed": 3, "failed": 1}
     assert [(f["id"], f["target"]) for f in saved["failed"]] == [("tests/test_other.py::test_query_12", False)]
-    assert saved["files"] == {"tests/test_mine.py": 1, "tests/test_other.py": 2}
+    assert saved["files"] == {"tests/test_fixture.py": 1, "tests/test_mine.py": 1, "tests/test_other.py": 2}
+    # a test is timed whole: a slow shared fixture makes the test that built it slow, and is recorded as a slow setup
+    assert list(saved["slow_setup"]) == ["tests/test_fixture.py::test_uses_it"] and "tests/test_fixture.py::test_uses_it" in saved["slow"]
     assert th.working_change_run(saved) or saved["branch"] in ("master", "main")  # on a feature branch this is collateral
     # the times: every file's wall and CPU, the run's CPU across the workers, and the machine
-    assert set(saved["file_seconds"]) == {"tests/test_mine.py", "tests/test_other.py"}
+    assert set(saved["file_seconds"]) == {"tests/test_fixture.py", "tests/test_mine.py", "tests/test_other.py"}
     assert all(wall >= 0 and cpu >= 0 for wall, cpu in saved["file_seconds"].values())
     assert saved["cpu_seconds"] >= saved["test_cpu_seconds"] >= 0 and saved["test_seconds"] >= 0
     assert saved["cpu_seconds"] > 0  # start-up and collection count too
     # every process of the run counted once: the workers are also finished children of the controller
     assert spent is None or spent * 0.5 <= saved["cpu_seconds"] <= spent * 1.1 + 0.2, (saved["cpu_seconds"], spent)
-    assert saved["machine"]["cpus"] == os.cpu_count() and saved["v"] == 2
+    assert saved["machine"]["cpus"] == os.cpu_count() and saved["v"] == 3
     assert any(line.startswith("test history: recorded to") and ", CPU " in line for line in done.stdout.splitlines())
 
 
@@ -188,8 +208,22 @@ def test_recording_is_off_without_a_history_folder(tmp_path, monkeypatch):
     assert th.load_records(tmp_path / "missing") == []
 
 
+def test_order_runs_files_with_a_slow_shared_fixture_together_and_lists_the_files_it_has_seen(tmp_path):
+    (tmp_path / "tests").mkdir()
+    for name in ("test_a.py", "test_b.py", "test_c.py"):
+        (tmp_path / "tests" / name).write_text("")
+    records = [
+        record("a", [], files={"tests/test_a.py": 4, "tests/test_b.py": 2}, slow={"tests/test_b.py::x": 25.0}, slow_setup={"tests/test_b.py::x": 23.0},
+               file_seconds={"tests/test_a.py": [1.0, 1.0], "tests/test_b.py": [30.0, 29.0]}),
+        record("b", [], files={"tests/test_a.py": 4, "tests/test_b.py": 2, "tests/test_gone.py": 1}, file_seconds={"tests/test_b.py": [50.0, 49.0]}),
+    ]
+    order = th.build_order(records, root=tmp_path)
+    assert order["together"] == {"tests/test_b.py": 40.0}  # the whole file's median
+    assert order["files"] == ["tests/test_a.py", "tests/test_b.py"]  # test_c.py has never run; test_gone.py is not here
+
+
 def test_the_order_file_is_valid_and_names_real_test_files():
     order = json.loads((ROOT / "tests" / "order.json").read_text())
-    assert set(order) >= {"slow", "risky", "runs", "slow_seconds"}
-    files = {nodeid.split("::")[0] for nodeid in [*order["slow"], *order["risky"]]}
+    assert set(order) >= {"slow", "risky", "runs", "slow_seconds", "together", "files"}
+    files = {nodeid.split("::")[0] for nodeid in [*order["slow"], *order["risky"]]} | set(order["together"]) | set(order["files"])
     assert all((ROOT / name).is_file() for name in files), sorted(f for f in files if not (ROOT / f).is_file())

@@ -2,17 +2,18 @@
   "suite": "Rewrite composition",
   "order": 320,
   "size": 60,
-  "score": "0 behaviour changes in 150 changed steps; 60/60 canonical pipelines terminate and are idempotent",
-  "metric": "Random chains of the registered rules (random subset and order, 1-3 repeats) over generated CTE/subquery queries; every step is compared with its input on random DuckDB databases. 541 steps run, 150 changed the SQL; the prover verified 146 of those and left 4 unsupported.",
+  "score": "0 behaviour changes in 143 changed steps; 60/60 canonical pipelines terminate and are idempotent",
+  "metric": "Random chains of the registered rules (random subset and order, 1-3 repeats) over generated CTE/subquery queries; every step is compared with its input on random DuckDB databases. 430 steps run, 143 changed the SQL; the prover verified 129 of those and left 14 unsupported.",
   "evidence": "executed",
   "correctness": "0 behaviour changes, 0 errors, 0 nondeterministic chains, 0 prover false proofs (60 queries, seed 21)",
   "coverage": {
-    "proven": 146,
-    "unsupported": 4
+    "proven": 129,
+    "unsupported": 14
   },
+  "coverage_of": "The 143 rewrite steps that changed the SQL (of 430 run over the 60 queries), by prover outcome; unchanged steps have no outcome.",
   "held_out": "none",
   "docs": "docs/evals/fuzzing.md#suites",
   "command": "python tools/unsafe_fuzz.py compose --count 60 --seed 21",
-  "date": "2026-10-02",
-  "caveats": "Semantic preservation is bounded (random databases), not a proof. Coverage counts the prover on changed steps only. Found and fixed: canonical_rule_order() was not idempotent (an unused CTE removed after inlining left a single-use CTE)."
+  "date": "2026-10-04",
+  "caveats": "Semantic preservation is bounded (random databases), not a proof. Coverage counts the prover on changed steps only. Re-measured on master 4d294afd (sqlglot 30.21): the same seed now draws different chains (430 steps, was 541) because the registered rule set changed, so the step counts are not comparable with the 2026-10-02 run; 14 changed steps are unsupported by the prover (was 4), and why was not investigated. Found and fixed: canonical_rule_order() was not idempotent (an unused CTE removed after inlining left a single-use CTE)."
 }

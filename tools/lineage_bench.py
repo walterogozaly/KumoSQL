@@ -676,6 +676,10 @@ def write_results(dev: dict, held: dict, scale: list[dict]) -> None:
                     f"{dev['opaque_traced_wrongly'] + held['opaque_traced_wrongly']} unreadable models traced anyway"
                 ),
                 "coverage": {"proven": exact, "unknown": unknown},
+                "coverage_of": (
+                    f"Output columns ({columns:,} across the {dev['models'] + held['models']:,} generated models), not models: "
+                    "proven is traced to exactly the right sources, unknown is reported unknown."
+                ),
                 "held_out": HELD_OUT_FIRST_RUN,
                 "docs": "docs/evals/lineage-bench.md#lineage-and-change-impact",
                 "command": "python tools/lineage_bench.py --scale --write-results",

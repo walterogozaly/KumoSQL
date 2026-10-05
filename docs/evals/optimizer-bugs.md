@@ -1,5 +1,7 @@
 # Optimizer wrong-result bugs
 
+[Plain-language version](../../docs_simple/evals/optimizer-bugs.md)
+
 24 query pairs taken from public bug reports in which a database's optimizer returned wrong rows: Apache Calcite, Apache Spark, CockroachDB, DuckDB, MySQL and ClickHouse. Each pair is the query as written and the rewrite the optimizer made of it, spelled out as SQL, with the report's tables and rows. The two return different rows, so this is a **must-not-prove** set: a proof is a soundness bug. The pairs are in `tests/fixtures/optimizer_bugs` ([sources, adaptations and overlap](../../tests/fixtures/optimizer_bugs/README.md)). Results file: `optimizer-bugs`.
 
 ```

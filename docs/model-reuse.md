@@ -1,5 +1,7 @@
 # Model reuse, containment and aggregate decomposition
 
+[Plain-language version](../docs_simple/model-reuse.md)
+
 Three deterministic Python engines (no LLM at run time) and their evals. All answer by proof first: the algebraic/SMT prover decides, and a positive answer is then re-run on random DuckDB databases that respect the schema (`src/kumosql/random_check.py`); a mismatch counts as **wrong**.
 
 | Eval | Engine | Command | Results file |
@@ -23,11 +25,11 @@ Every runner takes `--baseline` (the existing prover alone, before these engines
 | | Reusable cases rewritten | Cannot-cases not rewritten | Unsupported | Wrong |
 | --- | --- | --- | --- | --- |
 | Baseline, development (existing prover alone) | 8/108 | 32/32 | 0 | 0 |
-| Development | 82/108 | 32/32 | 14 | 0 |
-| Held out | 27/39 | 9/9 | 3 | 0 |
-| All (196 cases, 8 disabled) | 109/147 (supported subset 109/139) | 41/41 | 17 | 0 |
+| Development | 87/108 | 32/32 | 14 | 0 |
+| Held out | 28/39 | 9/9 | 3 | 0 |
+| All (196 cases, 8 disabled) | 115/147 (supported subset 115/139) | 41/41 | 17 | 0 |
 
-112 of 196 queries were changed; all 112 were verified on random databases (`FLOOR(x TO unit)` is run as `DATE_TRUNC`). Adapted cases: 20/20 reusable rewritten, 9/9 cannot-cases left alone, 0 wrong (baseline 1/12 on development).
+118 of 196 queries were changed; all 118 were verified on random databases (`FLOOR(x TO unit)` is run as `DATE_TRUNC`). Adapted cases: 20/20 reusable rewritten, 9/9 cannot-cases left alone, 0 wrong (baseline 1/12 on development).
 
 What the proposer reads beyond select-project-join and rollups:
 
@@ -45,7 +47,7 @@ Not read yet: unique/foreign-key joins, outer-join models, `INTERSECT ALL` and b
 
 `check_containment(q1, q2, schema=..., semantics="set" | "bag", database=...)` answers `contained` (a proof, with the method named), `not_contained` (a stored database where `q1` returns a row `q2` does not return as often), `unknown`, `unsupported` or `timeout`. Set and bag are different questions: `SELECT x FROM t` is set-contained in `SELECT DISTINCT x FROM t` but not bag-contained.
 
-Proof methods reduce containment to an equivalence: equal, pre-filter (restrict `q2` by `q1`'s extra conjuncts), post-filter (reuse engine over an identity model), distinct collapse (bags) and `q1 UNION q2 ≡ q2 UNION q2` (sets). Set operations are taken apart first, with steps that hold for bags: `A EXCEPT B` is within `A`, `A INTERSECT B` within either operand, `A UNION B` within `A UNION ALL B`, and a `UNION ALL` is within another when each branch is contained in its own branch of the other. Literal `IN` lists are read like any other filter.
+Proof methods reduce containment to an equivalence: equal, pre-filter (restrict `q2` by `q1`'s extra conjuncts; not when `q2` is a global aggregate, has `ROLLUP`/`CUBE`/`GROUPING SETS`/`GROUP BY ()` or `DISTINCT ON`, where a filter before it is not a filter of its rows), post-filter (reuse engine over an identity model), distinct collapse (bags) and `q1 UNION q2 ≡ q2 UNION q2` (sets). Set operations are taken apart first, with steps that hold for bags: `A EXCEPT B` is within `A`, `A INTERSECT B` within either operand, `A UNION B` within `A UNION ALL B`, and a `UNION ALL` is within another when each branch is contained in its own branch of the other. Literal `IN` lists are read like any other filter.
 
 Cases are generated (`tools/make_containment_cases.py`, 318 cases, labels checked by three-valued evaluation or a database) in families filters, nulls, duplicates, filters-expr, aggregates and joins. Aggregates and joins are held out whole.
 

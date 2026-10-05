@@ -71,20 +71,21 @@ class Oracle:
         from kumosql.bigquery_on_duckdb import configure
 
         self._duckdb = duckdb
-        self.db = duckdb.connect(":memory:")
+        from kumosql.duckdb_load import small_database
+        self.db = small_database()
         configure(self.db)  # BigQuery's reading of the queries, or a failure where BigQuery fails
         for table in TABLES:
             self.db.execute(f"CREATE TABLE {table} ({', '.join(c + ' BIGINT' for c in COLUMNS)})")
         self.trials = trials
         self.seed = seed
+        self._duck: dict[str, str] = {}  # BigQuery text -> DuckDB text; a search runs each pair up to 2 * trials times
 
     def load(self, data: dict[str, list[tuple]]) -> None:
+        from kumosql.duckdb_load import insert_rows
+
         for table in TABLES:
             self.db.execute(f"DELETE FROM {table}")
-            rows = data.get(table, [])
-            if rows:
-                marks = ", ".join("?" * len(COLUMNS))
-                self.db.executemany(f"INSERT INTO {table} VALUES ({marks})", rows)
+            insert_rows(self.db, table, data.get(table, []))
 
     def random_data(self, rng: random.Random) -> dict[str, list[tuple]]:
         data = {}
@@ -102,7 +103,9 @@ class Oracle:
     def run(self, sql: str) -> Counter:
         from kumosql.bigquery_on_duckdb import bigquery_rows, faithful
 
-        text = faithful(sqlglot.parse_one(sql, read="bigquery")).sql(dialect="duckdb")
+        text = self._duck.get(sql)
+        if text is None:
+            text = self._duck[sql] = faithful(sqlglot.parse_one(sql, read="bigquery")).sql(dialect="duckdb")
         return Counter(bigquery_rows(self.db.execute(text).fetchall()))
 
     def compare(self, left: str, right: str, data: dict[str, list[tuple]] | None = None):
@@ -113,7 +116,8 @@ class Oracle:
 
         self.load(data)
         try:
-            a, b = self.run(left), self.run(right)
+            a = self.run(left)
+            b = a if right == left else self.run(right)  # the same query gives the same rows (a validity check)
         except Exception as error:
             if is_bigquery_failure(error):
                 return None

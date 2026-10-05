@@ -29,7 +29,7 @@ from sqlglot import exp
 
 from . import scopes as scope_store
 from . import state
-from .ast_utils import captured_names
+from .ast_utils import captured_names, is_cte_reference
 from .pipeline_equivalence import prove_models
 from .prover_schema import ProverSchema, _select_names
 
@@ -143,15 +143,20 @@ def classify(pipeline, classes: Classes) -> dict[str, str]:
 
 
 def _parse(sql: str) -> exp.Expression:
-    return sqlglot.parse_one(sql, read="bigquery")
+    """One statement; text with several (a script) is refused, as older sqlglot keeps only the first of them."""
+
+    statements = [s for s in sqlglot.parse(sql, read="bigquery") if s is not None]
+    if len(statements) != 1:
+        raise sqlglot.errors.ParseError("expected one statement")
+    return statements[0]
 
 
 def _table_nodes(tree: exp.Expression):
-    ctes = {c.alias_or_name.lower() for c in tree.find_all(exp.CTE)}
+    """The physical table reads of ``tree``: every table node that does not read a WITH table in scope there."""
+
     for table in tree.find_all(exp.Table):
-        if not table.db and table.name.lower() in ctes:
-            continue
-        yield table
+        if not is_cte_reference(table):
+            yield table
 
 
 class _Reads:
@@ -708,13 +713,14 @@ def main(argv: list[str] | None = None) -> int:
     import json
     import sys
 
-    parser = argparse.ArgumentParser(prog="python -m kumosql refactor", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(prog="python -m kumosql refactor",
+        description=__doc__.split("\n")[0] + " READ-ONLY: it prints suggestions as JSON and never edits the project folder.")
     parser.add_argument("project", help="Dataform or SQL folder")
     parser.add_argument("--protect", action="append", default=[], metavar="MODEL", help="a table that must keep existing and stay equivalent")
     parser.add_argument("--editable", action="append", default=[], metavar="MODEL", help="a model that may be dropped, merged, inlined or rewritten")
     parser.add_argument("--protect-scope", action="append", default=[], metavar="SCOPE")
     parser.add_argument("--editable-scope", action="append", default=[], metavar="SCOPE")
-    parser.add_argument("--save", action="store_true", help="save the classes given here for the app")
+    parser.add_argument("--save", action="store_true", help="remember the protected/editable choices in the app's own data folder (never the project folder)")
     parser.add_argument("--max-states", type=int, default=40)
     parser.add_argument("--max-seconds", type=float, default=300)
     parser.add_argument("--timeout-ms", type=int, default=5000)

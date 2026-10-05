@@ -1,5 +1,7 @@
 # Singh & Bedathur LeetCode equivalence pairs
 
+[Plain-language version](../../docs_simple/evals/singh-bedathur.md)
+
 Rajat Singh and Srikanta Bedathur (IIT Delhi), "Can the Rookies Cut the Tough Cookie? Exploring the Use of LLMs for SQL Equivalence Checking" ([arXiv 2412.05561](https://arxiv.org/abs/2412.05561), [repository](https://github.com/rajatb115/LLMs-for-SQL-Equivalence-Checking)), studied language models as SQL equivalence judges. KumoSQL answers the same question with no model at run time: the algebraic prover, a few extra rewrites, and counterexample databases checked in DuckDB.
 
 ## Which data is public
@@ -20,7 +22,7 @@ The repository has no licence file, so the pairs are not copied into KumoSQL. `t
 Nothing reads the published label while deciding; labels are only compared afterwards.
 
 1. **Proved equivalent.** `prove_equivalent_algebraic` runs on the pair as written (MySQL dialect, output names ignored, no keys). When it finds no proof, both queries go through `kumosql.canonical_rules` and the prover runs again. Every proof is then re-run on 900 random DuckDB databases; a database that separates the queries would make the pair **wrong**.
-2. **Proved different.** A counterexample is a database on which DuckDB returns different result bags. Candidates are the prover's own counterexample, when it proposes one, and 300 random databases (half plain, half skewed towards one or two values per column so groups, duplicates and ties appear, with exact duplicate rows in some of them; table sizes reach past any `COUNT(..) >= n` threshold in the queries; values include every literal and its neighbours, the day before and after each date literal, a literal times each constant the queries divide or multiply by (`duration / 60 >= 5` gets 299, 300 and 301), and decimals with three places so `ROUND(x, 2)` differs from `x`). When those find nothing, 300 more databases come from a stream seeded by the pair itself, with tables of up to 10 rows, so pairs of one shape do not all miss on the same databases. Each candidate is checked by running both queries. MySQL's `ORDER BY NULL` (no sorting) is dropped before DuckDB runs the query.
+2. **Proved different.** A counterexample is a database on which DuckDB returns different result bags. Candidates are the prover's own counterexample, when it proposes one, and 300 random databases (half plain, half skewed towards one or two values per column so groups, duplicates and ties appear, with exact duplicate rows in some of them; table sizes reach past any `COUNT(..) >= n` threshold in the queries; values include every literal and its neighbours, the day before and after each date literal, a literal times each constant the queries divide or multiply by (`duration / 60 >= 5` gets 299, 300 and 301), and decimals with three places so `ROUND(x, 2)` differs from `x`). When those find nothing, 300 more databases come from a stream seeded by the pair itself, with tables of up to 10 rows, so pairs of one shape do not all miss on the same databases. Each candidate is checked by running both queries; a database already checked in the same search (small tables repeat) is not run again, since its answer would repeat. MySQL's `ORDER BY NULL` (no sorting) is dropped before DuckDB runs the query.
 3. **Unknown** otherwise. Unknown is always preferred to wrong.
 
 DuckDB runs with MySQL's NULL ordering and case-insensitive string comparison. A pair never gets "different" where DuckDB and MySQL could disagree: a `LIMIT` whose `ORDER BY` does not cover every output column, `LOWER()` (`LIKE` ignores case only in MySQL), or a non-deterministic function. Column types are not given, so they are inferred from use: compared with a string, a string; used as a date, a date; summed, averaged or rounded, a decimal that may hold fractions; otherwise an integer.
@@ -41,19 +43,21 @@ DuckDB runs with MySQL's NULL ordering and case-insensitive string comparison. A
 
 Measured 2026-10-03 over all 2,800 pairs (`python tools/singh_bedathur_bench.py`, about 30 minutes on 4 cores):
 
-**2736/2800, 0 wrong**: 862 proved equivalent, 1,874 proved different, 64 unknown.
+**2735/2800, 0 wrong**: 861 proved equivalent, 1,874 proved different, 65 unknown.
 
 | Outcome | Pairs |
 | --- | ---: |
-| Proven equivalent | 862 |
+| Proven equivalent | 861 |
 | Refuted (counterexample) | 1,874 |
-| Unknown | 60 |
-| Unsupported (the prover cannot read a query, and no counterexample) | 4 |
+| Unknown | 58 |
+| Unsupported (the prover cannot read a query, and no counterexample) | 7 |
 | Timeout | 0 |
 | Error | 0 |
 | Wrong | 0 |
 
-Supported subset: 2736/2796. Held-out fifth (pairs whose text hash is divisible by 5): **560/580, 0 wrong**. The split was made partway through, after the first rewrite rules, and later full-corpus runs were still read while tuning the counterexample search, so this is a weak check. From now on development runs use `--split dev`.
+Supported subset: 2735/2793 (three pairs that compare a string with a number are now declined as unsupported, #542, #613 and the SELECT * and set-operation tracking that followed; the second is a dev pair whose `COALESCE(REFEREE_ID, 'SOME BOGUS VALUE') != 2` was proved equal to `REFEREE_ID <> 2 OR REFEREE_ID IS NULL`: right on MySQL only because the string reads as 0, DuckDB rejects the mixed `COALESCE`). Held-out fifth (pairs whose text hash is divisible by 5): **560/580, 0 wrong**. The split was made partway through, after the first rewrite rules, and later full-corpus runs were still read while tuning the counterexample search, so this is a weak check. From now on development runs use `--split dev`.
+
+Column types: the pairs carry only column names, so `_text_types` in `tools/singh_bedathur_bench.py` declares every column the queries compare with a string as text, the reading the counterexample search already used. Without it the prover's check on untyped string columns (a column compared with two different strings that MySQL reads as the same number could be an integer column; see `docs/provers.md`) declined 17 proofs, 4 of them held out, all variants of one `NOT IN` query on product names. With the declaration the score and the 861 proofs are unchanged. The held-out pairs were not read; the loss was found from the proof counts.
 
 The last step was developed on dev pairs only (the held-out fifth went from 509 to 524 without being looked at). It also fixed two ways the harness could see a difference that is not one: DuckDB returns `DECIMAL` results as Python `Decimal` and `DOUBLE` ones as `float`, and `0.33` never equals `Decimal("0.33")`, so numbers are now compared as floats rounded to six places; and every fraction the generator draws is exact in binary (eighths), because DuckDB averages decimals in floating point and a value like `1.005` lands on the other side of a `ROUND(.., 2)` midpoint from MySQL's exact result. Neither had produced a published refutation. Every dev pair labelled equivalent that this step newly refutes was checked by hand: they hinge on a NULL inside `NOT IN`, duplicate rows, or an inclusive `BETWEEN` against a half-open range.
 
@@ -77,9 +81,9 @@ What moved the score:
 
 | Verdict | Label "Equivalent" | Label "Non Equivalent" |
 | --- | ---: | ---: |
-| Proved equivalent | 862 | 0 |
+| Proved equivalent | 861 | 0 |
 | Proved different | 476 | 1,398 |
-| Unknown | 62 | 2 |
+| Unknown | 63 | 2 |
 
 No proof contradicts a label. The 476 pairs labelled equivalent that get a counterexample are equivalent only under LeetCode's constraints, which the files drop: most rely on a key (`UNION` versus `UNION ALL`), a NOT NULL column (`NOT IN` versus an anti-join) or a foreign key. A few differ outright, for example a typo inside a string literal (`'15 OR MORE AS BIN'`). Each comes with its counterexample: `--show-disagreements` prints them.
 

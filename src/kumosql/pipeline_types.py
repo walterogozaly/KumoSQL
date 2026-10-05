@@ -69,7 +69,11 @@ class ColumnTrace:
 
 @dataclass
 class Model:
-    """One pipeline node: a table, view, incremental table, assertion or operation."""
+    """One pipeline node: a table, view, incremental table, assertion or operation.
+
+    ``kind`` is ``unknown`` when the config's ``type`` is computed (a project variable, a call): the node could be an
+    incremental table, so nothing that depends on its stored rows is concluded from its query alone.
+    """
 
     target: Target
     kind: str
@@ -86,10 +90,33 @@ class Model:
     unique_keys: tuple[tuple[str, ...], ...] = ()
     # Dataform ``pre_operations`` and ``post_operations`` statements, with refs resolved: scripts that run around the query.
     operations_sql: tuple[str, ...] = ()
+    # How many leading entries of ``operations_sql`` run before the query; the rest run after it.
+    pre_operations: int = 0
+    # Lower-case words of the config expressions that read this table's own columns (built-in assertions, partitioning,
+    # clustering, ``uniqueKey``, ``updatePartitionFilter``): an output column named here is used even when no model reads it.
+    config_reads: tuple[str, ...] = ()
+    # Config keys that read columns but whose value could not be read without running the project (a variable, a call).
+    config_reads_unread: tuple[str, ...] = ()
+    # database, schema and name as the config wrote them, before the project's prefix and suffix settings; empty when
+    # no setting changed the target. A ``ref()`` names an action by these.
+    logical: tuple[str, ...] = ()
+    # ``disabled: true``: Dataform compiles the action (it stays in the graph) but does not run it.
+    disabled: bool = False
+    # An operations action that ``hasOutput``: it defines a table other actions can ``ref()``.
+    has_output: bool = False
+    # Compiled incremental tables: the query that runs after the first run, and its pre and post operations. The loaded
+    # ``sql`` is the full-refresh query; these read tables and columns too.
+    incremental_sql: tuple[str, ...] = ()
 
     @property
     def key(self) -> str:
         return self.target.key
+
+    @property
+    def scripts(self) -> tuple[str, ...]:
+        """Every statement besides ``sql`` that reads tables: pre and post operations and the incremental branch."""
+
+        return (*self.operations_sql, *self.incremental_sql)
 
     @property
     def identity(self) -> NodeIdentity | None:
@@ -105,7 +132,7 @@ class Model:
 
     @property
     def is_query(self) -> bool:
-        return self.kind in {"table", "view", "incremental", "assertion", "sql"}
+        return self.kind in {"table", "view", "incremental", "assertion", "sql", "unknown"}
 
 
 @dataclass(frozen=True)

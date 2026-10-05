@@ -25,6 +25,8 @@ COMMANDS = {
     "kumosql-equivalence": "kumosql.pipeline_equivalence:equivalence_main",
     "kumosql-refactor": "kumosql.refactor:main",
     "minimize-tables": "kumosql.table_minimizer:main",
+    "reduce-project": "kumosql.project_reduction:main",
+    "kumosql-shared-model": "kumosql.shared_models:main",
     "kumosql-compare-outputs": "kumosql.cli:compare_outputs_main",
     "kumosql-ui": "kumosql.ui:main",
     "kumosql-scopes": "kumosql.cli:scopes_main",
@@ -48,7 +50,10 @@ def resolve(name: str) -> str | None:
 def usage() -> str:
     lines = ["usage: python -m kumosql COMMAND [ARGS...]", "", "commands:"]
     lines += [f"  {name}" for name in COMMANDS]
-    lines += ["", "Run `python -m kumosql COMMAND --help` for a command's options.",
+    lines += ["", "Run `python -m kumosql COMMAND --help` for a command's options. --help only prints text; it never does any work.",
+              "Most commands only read and print (consolidate-tables, refactor, minimize-tables, prove-*). A command writes",
+              "a file only for an option you give it: -o/--output/--patch/--csv write the file you name; reduce-project",
+              "--write is the only option that edits a project folder.",
               "The kumosql- prefix is optional: `python -m kumosql ui` runs kumosql-ui."]
     return "\n".join(lines)
 

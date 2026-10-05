@@ -249,7 +249,49 @@ def test_added_column_is_reported_and_shared_columns_compared(con):
 
     assert plan.table(STG_KEY).only_after == ("cents",)
     assert [d.code for d in plan.diagnostics] == ["columns_differ"]
+    # The shared columns agree, but the output gained a column, so it is not a match.
+    assert diffs[STG_KEY].status == "mismatch"
+    assert diffs[STG_KEY].note == "columns only after: cents"
+    assert diffs[TOTALS_KEY].matches
+
+    _, accepted = compare(con, graph(), graph(stg=extra), ignore_columns=["cents"])
+    assert accepted[STG_KEY].matches
+
+
+def test_dropped_column_is_not_a_match(con):
+    dropped = STG.replace(", status FROM", " FROM")
+    _, diffs = run_plan(con, graph(), graph(stg=dropped))
+    assert diffs[STG_KEY].status == "mismatch"
+    assert diffs[STG_KEY].note == "columns only before: status"
+
+
+def test_models_on_one_side_are_summarized_as_missing(con):
+    before = graph()
+    after = load_compiled_graph(
+        {
+            "tables": [
+                {"target": {"schema": "analytics", "name": "stg_orders"}, "query": STG},
+                {"target": {"schema": "analytics", "name": "totals_v2"}, "query": TOTALS},
+            ],
+            "declarations": [{"target": {"schema": "raw", "name": "orders"}}],
+        },
+        source_schema=RAW,
+    )
+    build(con, before, "b")
+    build(con, after, "a")
+    plan, diffs = compare(con, before, after)
+    assert [t.model for t in plan.unmatched] == [TOTALS_KEY, "analytics.totals_v2"]
+    assert diffs[TOTALS_KEY].status == "missing_after"
+    assert diffs["analytics.totals_v2"].status == "missing_before"
     assert diffs[STG_KEY].matches
+
+
+def test_results_without_a_whole_row_checksum_are_incomplete():
+    [diff] = summarize_comparison(
+        [{"model": "m", "column_name": "x", "before_rows": 1, "after_rows": 1,
+          "before_checksum": "4", "after_checksum": "4", "matches": True}]
+    )
+    assert diff.status == "incomplete" and not diff.matches
 
 
 def test_snapshots_compare_like_the_joined_query(con):
@@ -390,3 +432,8 @@ def test_cli_prints_sql_and_summarises_results(tmp_path, capsys):
     )
     assert compare_outputs_main(["summarize", str(results)]) == 1
     assert "m: mismatch (values differ in x)" in capsys.readouterr().out
+
+    empty = tmp_path / "empty.json"
+    empty.write_text("[]", encoding="utf-8")
+    assert compare_outputs_main(["summarize", str(empty)]) == 2
+    assert "nothing was compared" in capsys.readouterr().err

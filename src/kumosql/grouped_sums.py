@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from sqlglot import exp
 
+from .ast_utils import extended_grouping
+
 
 def _branches(node: exp.Expression) -> list[exp.Expression]:
     while isinstance(node, exp.Subquery) and not node.alias:
@@ -52,7 +54,7 @@ def _column_never_null(source: exp.Subquery, name: str, not_null) -> bool:
 
 def drop_grouped_sum_coalesce(select: exp.Select, not_null: dict[str, frozenset[str]]) -> exp.Expression | None:
     group = select.args.get("group")
-    if group is None or not group.expressions or any(group.args.get(k) for k in ("rollup", "cube", "grouping_sets", "totals")):
+    if group is None or not group.expressions or extended_grouping(group):
         return None
     select = select.copy()
     from_ = select.args.get("from_") or select.args.get("from")

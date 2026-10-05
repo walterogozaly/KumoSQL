@@ -1,10 +1,10 @@
 """Folding intermediate tables into one table, with the result proved equal."""
 
 import json
-from http.server import ThreadingHTTPServer
 from threading import Thread
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import Request
+from ui_http import urlopen
 
 import pytest
 
@@ -12,7 +12,7 @@ pytest.importorskip("z3")
 
 from kumosql import consolidate, load_sqlx_project
 from kumosql.prover_schema import from_pipeline
-from kumosql.ui import UIHandler
+from kumosql.ui import UIHandler, UIServer
 
 TABLE = 'config { type: "table" }\n'
 
@@ -193,6 +193,43 @@ def test_command_line(tmp_path, capsys):
     assert refused["status"] == "refused" and refused["readers"] == {"proj.an.a": ["proj.an.b", "proj.an.c"]}
 
 
+def _snapshot(root):
+    return {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+def test_command_line_never_changes_the_project_or_writes_anything(tmp_path, monkeypatch, capsys):
+    """A bare run, a refused run and --help leave the project byte-identical and create no file in the working folder.
+
+    The only thing written anywhere is KumoSQL's own diagnostic log in its data folder (timing lines)."""
+
+    project, cwd, home = tmp_path / "project", tmp_path / "cwd", tmp_path / "home"
+    cwd.mkdir(), home.mkdir()
+    build(project)
+    before = _snapshot(project)
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("KUMOSQL_HOME", str(home))
+    assert consolidate.main([str(project), "d", "a", "b", "c"]) == 0
+    assert consolidate.main([str(project), "d", "a"]) == 2
+    with pytest.raises(SystemExit) as stop:
+        consolidate.main(["--help"])
+    assert stop.value.code == 0
+    capsys.readouterr()
+    assert _snapshot(project) == before
+    assert list(cwd.iterdir()) == []
+    assert {p.name for p in home.iterdir()} <= {"ui.log", "redaction-map.json"}
+
+
+def test_help_says_the_command_is_a_read_only_preview_and_has_no_write_option(capsys):
+    with pytest.raises(SystemExit):
+        consolidate.main(["--help"])
+    text = capsys.readouterr().out
+    assert "READ-ONLY PREVIEW" in text and "changes none of your files" in text
+    assert "never writes, moves, renames or deletes any of your files" in text
+    assert "python -m kumosql consolidate-tables path/to/project D A B C" in text
+    for option in ("--write", "--apply", "--force", "--output", "--in-place", "--delete"):
+        assert option not in text
+
+
 def test_the_command_is_registered():
     from kumosql import __main__
 
@@ -201,8 +238,8 @@ def test_the_command_is_registered():
 
 @pytest.fixture
 def ui_server():
-    server = ThreadingHTTPServer(("127.0.0.1", 0), UIHandler)
-    thread = Thread(target=server.serve_forever, daemon=True)
+    server = UIServer(("127.0.0.1", 0), UIHandler)
+    thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     try:
         yield f"http://127.0.0.1:{server.server_port}"
@@ -233,3 +270,54 @@ def test_route_folds_the_loaded_project(ui_server, diamond, monkeypatch):
     )
     with urlopen(request) as response:
         assert json.load(response)["status"] == "equivalent"
+
+
+def _limit_build(root, source, target):
+    write(root, "workflow_settings.yaml", "defaultProject: proj\ndefaultDataset: an\n")
+    write(root, "definitions/up.sqlx", 'config { type: "declaration", schema: "raw", name: "upstream" }\n')
+    write(root, "definitions/q.sqlx", TABLE + source + "\n")
+    write(root, "definitions/d.sqlx", TABLE + target + "\n")
+    return load_sqlx_project(root)
+
+
+TIED_LIMITS = [
+    ('SELECT id, amount FROM ${ref("raw","upstream")}', 'SELECT id FROM ${ref("q")} ORDER BY amount LIMIT 1'),
+    ('SELECT id, amount FROM ${ref("raw","upstream")} ORDER BY amount LIMIT 1', 'SELECT id FROM ${ref("q")}'),
+    ('SELECT id, amount FROM ${ref("raw","upstream")}', 'SELECT id FROM (SELECT id FROM ${ref("q")} ORDER BY amount LIMIT 1) AS t'),
+]
+
+
+@pytest.mark.parametrize("source,target", TIED_LIMITS)
+def test_a_fold_that_needs_a_limit_to_cut_the_same_rows_is_not_called_equivalent(tmp_path, source, target):
+    pipeline = _limit_build(tmp_path, source, target)
+    result = consolidate.consolidate_tables(pipeline, ["q"], "d")
+    assert result.status == "unknown" and not result.proven
+    assert "LIMIT" in result.reason and "stable-selection" in result.reason
+    assert result.sql  # still shown so it can be read
+    assert result.assumptions == []
+
+
+@pytest.mark.parametrize("source,target", TIED_LIMITS)
+def test_a_stable_selection_contract_accepts_the_fold_and_says_so(tmp_path, source, target):
+    pipeline = _limit_build(tmp_path, source, target)
+    result = consolidate.consolidate_tables(pipeline, ["q"], "d", stable_selection=True)
+    assert result.proven
+    assert any("LIMIT" in a for a in result.assumptions)
+    assert any("stable-selection" in n for n in result.notes)
+
+
+def test_a_limit_over_a_total_order_still_folds_without_a_contract(tmp_path):
+    pipeline = _limit_build(
+        tmp_path, 'SELECT id, amount FROM ${ref("raw","upstream")}', 'SELECT id, amount FROM ${ref("q")} ORDER BY id, amount LIMIT 1',
+    )
+    result = consolidate.consolidate_tables(pipeline, ["q"], "d")
+    assert result.proven and not any("LIMIT" in a for a in result.assumptions)
+
+
+def test_the_cli_and_the_api_take_the_stable_selection_contract(tmp_path, capsys):
+    root = tmp_path / "p"
+    _limit_build(root, *TIED_LIMITS[0])
+    assert consolidate.main([str(root), "d", "q"]) == 1
+    assert json.loads(capsys.readouterr().out)["status"] == "unknown"
+    assert consolidate.main([str(root), "d", "q", "--stable-selection"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "equivalent"

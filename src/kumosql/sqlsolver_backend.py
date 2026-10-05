@@ -39,6 +39,10 @@ import sqlglot
 from sqlglot import exp
 
 from .algebraic_equivalence import prove_equivalent_algebraic
+from .parse_check import refuse_misread_proofs
+from .sqlx_fragments import masked_template_problem
+from .type_names import invalid_type_name
+from .ast_utils import star_modified
 from .smt_equivalence import (
     SmtEquivalenceResult,
     SmtStatus,
@@ -203,8 +207,8 @@ def translate_query(sql: str, schema: Schema) -> str:
             raise TranslationError(f"nondeterministic function {type(node).__name__}")
         if isinstance(node, exp.Anonymous) and node.name.upper() in _NONDETERMINISTIC_NAMES:
             raise TranslationError(f"nondeterministic function {node.name.upper()}")
-        if isinstance(node, exp.Star) and any(isinstance(arg, list) for arg in node.args.values()):
-            raise TranslationError("SELECT * EXCEPT/REPLACE is not supported")
+        if isinstance(node, exp.Star) and star_modified(node):
+            raise TranslationError("SELECT * EXCEPT/REPLACE/RENAME/ILIKE is not supported")
         if isinstance(node, exp.Table) and isinstance(node.this, exp.Identifier):
             if not node.args.get("db") and node.name.lower() in cte_names:
                 continue
@@ -286,6 +290,7 @@ def run_sqlsolver(
     return lines
 
 
+@refuse_misread_proofs
 def prove_equivalent_sqlsolver(
     left_sql: str,
     right_sql: str,
@@ -301,6 +306,14 @@ def prove_equivalent_sqlsolver(
     counterexample, so it is reported as ``NOT_PROVEN``.
     """
 
+    unknown_type = invalid_type_name(left_sql) or invalid_type_name(right_sql)
+    if unknown_type:
+        # SQLSolver reads the schema's column types, not the queries' casts, so it would not notice a type name
+        # BigQuery rejects, and the translation prints FLOAT, INT32 and VARCHAR as FLOAT64, INT64 and STRING.
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BigQuery would reject the query: {unknown_type}")
+    masked = masked_template_problem(left_sql, right_sql)
+    if masked:
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, masked)
     if runtime is None:
         runtime, why = locate_runtime()
         if runtime is None:
@@ -337,6 +350,7 @@ def prove_equivalent_sqlsolver(
     return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"SQLSolver result: {main}")
 
 
+@refuse_misread_proofs
 def prove_equivalent(
     left_sql: str,
     right_sql: str,

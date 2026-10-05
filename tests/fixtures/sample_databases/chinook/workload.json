@@ -1,0 +1,174 @@
+{
+  "about": "Chinook workload for tools/sample_db_bench.py. Chinook ships no views; origin 'upstream-test': the two non-trivial queries of upstream's test fixture (ChinookDatabase.Test/DatabaseTests/ChinookSqliteFixture.cs at the pinned commit), adapted as 'adaptation' says, with the result upstream asserts in 'expect'; 'authored': written for this eval.",
+  "queries": [
+    {
+      "id": "ch-test-invoices-without-lines",
+      "origin": "upstream-test",
+      "adaptation": "[name] quoting dropped (BigQuery needs none here)",
+      "expect": [[0]],
+      "sql": "SELECT count(InvoiceId) FROM Invoice WHERE InvoiceId NOT IN (SELECT InvoiceId FROM InvoiceLine GROUP BY InvoiceId)"
+    },
+    {
+      "id": "ch-test-invoice-totals",
+      "origin": "upstream-test",
+      "adaptation": "[name] quoting dropped; upstream asserts CalculatedTotal = Total on every row (checked as an assertion)",
+      "sql": "SELECT Invoice.InvoiceId, ROUND(SUM(InvoiceLine.UnitPrice * InvoiceLine.Quantity), 2) AS CalculatedTotal, Invoice.Total AS Total FROM InvoiceLine INNER JOIN Invoice ON InvoiceLine.InvoiceId = Invoice.InvoiceId GROUP BY Invoice.InvoiceId, Invoice.Total"
+    },
+    {
+      "id": "ch-a01-rock-tracks",
+      "origin": "authored",
+      "features": ["join"],
+      "sql": "SELECT t.TrackId, t.Name AS track, al.Title AS album, ar.Name AS artist\nFROM Track AS t\nJOIN Album AS al ON t.AlbumId = al.AlbumId\nJOIN Artist AS ar ON al.ArtistId = ar.ArtistId\nWHERE t.GenreId = 1"
+    },
+    {
+      "id": "ch-a02-artists-without-albums",
+      "origin": "authored",
+      "features": ["outer-join", "null"],
+      "sql": "SELECT ar.ArtistId, ar.Name\nFROM Artist AS ar\nLEFT JOIN Album AS al ON al.ArtistId = ar.ArtistId\nWHERE al.AlbumId IS NULL"
+    },
+    {
+      "id": "ch-a03-employee-managers",
+      "origin": "authored",
+      "features": ["outer-join", "self-join", "null"],
+      "sql": "SELECT e.EmployeeId, e.LastName, m.LastName AS manager\nFROM Employee AS e\nLEFT JOIN Employee AS m ON e.ReportsTo = m.EmployeeId"
+    },
+    {
+      "id": "ch-a04-revenue-by-country",
+      "origin": "authored",
+      "features": ["aggregation", "having"],
+      "sql": "SELECT BillingCountry, COUNT(*) AS invoices, SUM(Total) AS revenue\nFROM Invoice\nGROUP BY BillingCountry\nHAVING SUM(Total) > 50"
+    },
+    {
+      "id": "ch-a05-sales-by-genre",
+      "origin": "authored",
+      "features": ["join", "aggregation", "distinct"],
+      "sql": "SELECT g.Name AS genre, SUM(il.UnitPrice * il.Quantity) AS sales, COUNT(DISTINCT il.InvoiceId) AS invoices\nFROM InvoiceLine AS il\nJOIN Track AS t ON il.TrackId = t.TrackId\nJOIN Genre AS g ON t.GenreId = g.GenreId\nGROUP BY g.Name"
+    },
+    {
+      "id": "ch-a06-countries-served-from-calgary",
+      "origin": "authored",
+      "features": ["distinct", "join"],
+      "sql": "SELECT DISTINCT c.Country\nFROM Customer AS c\nJOIN Employee AS e ON c.SupportRepId = e.EmployeeId\nWHERE e.City = 'Calgary'"
+    },
+    {
+      "id": "ch-a07-distinct-on-key",
+      "origin": "authored",
+      "features": ["distinct"],
+      "sql": "SELECT DISTINCT TrackId, Name\nFROM Track\nWHERE Milliseconds > 600000"
+    },
+    {
+      "id": "ch-a08-tracks-never-sold",
+      "origin": "authored",
+      "features": ["subquery"],
+      "sql": "SELECT TrackId, Name\nFROM Track\nWHERE TrackId NOT IN (SELECT TrackId FROM InvoiceLine)"
+    },
+    {
+      "id": "ch-a09-jazz-buyers",
+      "origin": "authored",
+      "features": ["subquery", "join"],
+      "sql": "SELECT c.CustomerId, c.LastName\nFROM Customer AS c\nWHERE EXISTS (\n  SELECT 1\n  FROM Invoice AS i\n  JOIN InvoiceLine AS il ON il.InvoiceId = i.InvoiceId\n  JOIN Track AS t ON t.TrackId = il.TrackId\n  WHERE i.CustomerId = c.CustomerId AND t.GenreId = 2\n)"
+    },
+    {
+      "id": "ch-a10-longer-than-average",
+      "origin": "authored",
+      "features": ["subquery", "aggregation"],
+      "sql": "SELECT TrackId, Name, Milliseconds\nFROM Track\nWHERE Milliseconds > (SELECT AVG(Milliseconds) FROM Track) AND GenreId = 3"
+    },
+    {
+      "id": "ch-a11-album-track-counts",
+      "origin": "authored",
+      "features": ["subquery", "aggregation"],
+      "sql": "SELECT al.AlbumId, al.Title, (SELECT COUNT(*) FROM Track AS t WHERE t.AlbumId = al.AlbumId) AS tracks\nFROM Album AS al\nWHERE al.ArtistId < 20"
+    },
+    {
+      "id": "ch-a12-all-cities",
+      "origin": "authored",
+      "features": ["set-operation"],
+      "sql": "SELECT City, Country FROM Customer\nUNION DISTINCT\nSELECT City, Country FROM Employee"
+    },
+    {
+      "id": "ch-a13-billed-customer-countries",
+      "origin": "authored",
+      "features": ["set-operation"],
+      "sql": "SELECT Country FROM Customer\nINTERSECT DISTINCT\nSELECT BillingCountry FROM Invoice"
+    },
+    {
+      "id": "ch-a14-genres-in-no-playlist",
+      "origin": "authored",
+      "features": ["set-operation", "join", "null"],
+      "sql": "SELECT GenreId FROM Genre\nEXCEPT DISTINCT\nSELECT t.GenreId FROM PlaylistTrack AS pt JOIN Track AS t ON t.TrackId = pt.TrackId"
+    },
+    {
+      "id": "ch-a15-running-total",
+      "origin": "authored",
+      "features": ["window"],
+      "sql": "SELECT CustomerId, InvoiceId, InvoiceDate, Total,\n  SUM(Total) OVER (PARTITION BY CustomerId ORDER BY InvoiceDate, InvoiceId) AS running\nFROM Invoice"
+    },
+    {
+      "id": "ch-a16-longest-in-album",
+      "origin": "authored",
+      "features": ["window"],
+      "sql": "SELECT AlbumId, TrackId, Milliseconds,\n  RANK() OVER (PARTITION BY AlbumId ORDER BY Milliseconds DESC) AS rnk\nFROM Track\nWHERE AlbumId <= 10"
+    },
+    {
+      "id": "ch-a17-previous-invoice",
+      "origin": "authored",
+      "features": ["window", "null"],
+      "sql": "SELECT InvoiceId, CustomerId, Total,\n  LAG(Total) OVER (PARTITION BY CustomerId ORDER BY InvoiceDate, InvoiceId) AS previous\nFROM Invoice"
+    },
+    {
+      "id": "ch-a18-cte-best-sellers",
+      "origin": "authored",
+      "features": ["cte", "aggregation", "join"],
+      "sql": "WITH sales AS (\n  SELECT il.TrackId, SUM(il.Quantity) AS sold\n  FROM InvoiceLine AS il\n  GROUP BY il.TrackId\n),\nunused AS (\n  SELECT 1 AS x\n)\nSELECT t.Name, s.sold\nFROM Track AS t\nJOIN sales AS s ON s.TrackId = t.TrackId\nWHERE s.sold > 1"
+    },
+    {
+      "id": "ch-a19-derived-table-trivial-predicate",
+      "origin": "authored",
+      "features": ["subquery", "aggregation"],
+      "sql": "SELECT x.Country, x.n\nFROM (SELECT Country, COUNT(*) AS n FROM Customer WHERE 1 = 1 GROUP BY Country) AS x\nWHERE x.n >= 2"
+    },
+    {
+      "id": "ch-a20-genre-full-outer",
+      "origin": "authored",
+      "features": ["outer-join", "aggregation", "null"],
+      "sql": "SELECT COALESCE(a.GenreId, b.GenreId) AS GenreId, a.tracks, b.sold\nFROM (SELECT GenreId, COUNT(*) AS tracks FROM Track GROUP BY GenreId) AS a\nFULL OUTER JOIN (\n  SELECT t.GenreId, SUM(il.Quantity) AS sold\n  FROM InvoiceLine AS il\n  JOIN Track AS t ON t.TrackId = il.TrackId\n  GROUP BY t.GenreId\n) AS b ON a.GenreId = b.GenreId"
+    },
+    {
+      "id": "ch-a21-invoices-in-2025",
+      "origin": "authored",
+      "features": ["outer-join", "aggregation", "null"],
+      "sql": "SELECT c.CustomerId, COUNT(i.InvoiceId) AS invoices\nFROM Customer AS c\nLEFT JOIN Invoice AS i ON i.CustomerId = c.CustomerId AND i.InvoiceDate >= DATETIME '2025-01-01'\nGROUP BY c.CustomerId"
+    },
+    {
+      "id": "ch-a22-length-classes",
+      "origin": "authored",
+      "features": ["aggregation", "case"],
+      "sql": "SELECT CASE WHEN Milliseconds < 180000 THEN 'short' WHEN Milliseconds < 360000 THEN 'medium' ELSE 'long' END AS length_class,\n  COUNT(*) AS tracks, AVG(UnitPrice) AS price\nFROM Track\nGROUP BY length_class"
+    },
+    {
+      "id": "ch-a23-empty-playlists",
+      "origin": "authored",
+      "features": ["subquery"],
+      "sql": "SELECT p.PlaylistId, p.Name\nFROM Playlist AS p\nWHERE NOT EXISTS (SELECT 1 FROM PlaylistTrack AS pt WHERE pt.PlaylistId = p.PlaylistId)"
+    },
+    {
+      "id": "ch-a24-not-in-null-trap",
+      "origin": "authored",
+      "features": ["subquery", "null"],
+      "sql": "SELECT CustomerId\nFROM Customer\nWHERE Company NOT IN (SELECT Company FROM Customer WHERE Country = 'Brazil')"
+    },
+    {
+      "id": "ch-a25-artist-revenue",
+      "origin": "authored",
+      "features": ["join", "aggregation", "subquery"],
+      "sql": "SELECT ar.Name, totals.revenue\nFROM Artist AS ar\nJOIN (\n  SELECT al.ArtistId, SUM(il.UnitPrice * il.Quantity) AS revenue\n  FROM InvoiceLine AS il\n  JOIN Track AS t ON t.TrackId = il.TrackId\n  JOIN Album AS al ON al.AlbumId = t.AlbumId\n  GROUP BY al.ArtistId\n) AS totals ON totals.ArtistId = ar.ArtistId\nWHERE totals.revenue > 20"
+    },
+    {
+      "id": "ch-a26-redundant-parentheses",
+      "origin": "authored",
+      "features": ["aggregation", "distinct"],
+      "sql": "SELECT ((COUNT(DISTINCT (BillingCity)))) AS cities\nFROM Invoice\nWHERE (BillingCountry = 'USA')"
+    }
+  ]
+}

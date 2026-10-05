@@ -17,8 +17,17 @@ _SQLX_BLOCK_RE = re.compile(
     r"""(?im)^[ \t]*(?:(?:config|js|pre_operations|post_operations)|input\s+(?:"[^"\n]*"|'[^'\n]*'))\s*\{"""
 )
 _SQLX_WHEN_CONNECTIVE_RE = re.compile(r"\s*when\s*\([^,()]*(?:\([^()]*\))?[^,()]*,\s*[`'\"]\s*(AND|OR)\b", re.IGNORECASE)
+# ``when(cond, `a > 1 AND`)``: the expression opens a condition and ends with its connective.
+_SQLX_WHEN_TRAILING_RE = re.compile(
+    r"\s*when\s*\([^,()]*(?:\([^()]*\))?[^,()]*,\s*(?P<q>[`'\"])(?:(?!(?P=q))[^$])*?\b(AND|OR)\s*(?P=q)\s*\)\s*$",
+    re.IGNORECASE,
+)
 _SQLX_CLAUSE_RE = re.compile(r"\b(WHERE|QUALIFY|HAVING|ORDER\s+BY)\b", re.IGNORECASE)
 _TOKEN_RE = re.compile(r"__sqlx_token_\d+__")
+_QUOTED = r"""(?:"[^"\\]*"|'[^'\\]*'|`[^`\\]*`)"""
+_TABLE_REFERENCE_RE = re.compile(
+    rf"^\$\{{\s*(?:(?:ref|resolve)\s*\(\s*{_QUOTED}(?:\s*,\s*{_QUOTED})?\s*\)|self\s*\(\s*\))\s*\}}$"
+)
 
 
 class SqlxRestorationError(ValueError):
@@ -119,11 +128,68 @@ def _find_interpolation_end(text: str, opening: int) -> int:
     raise ValueError("unterminated SQLX interpolation")
 
 
+def sql_comment_spans(sql: str) -> list[tuple[int, int]]:
+    """``(start, end)`` of every ``--`` and ``/* */`` comment in ``sql``.
+
+    Dataform leaves a ``${...}`` inside these as literal text: it is neither evaluated nor a dependency. A ``#`` comment
+    is not one of them (checked against ``@dataform/cli`` 3.0.71, which evaluates ``${ref(...)}`` after ``#``), nor is a
+    ``--`` inside a string.
+    Quotes inside a comment do not open a string, and comment markers inside a string or a ``${...}``
+    expression do not open a comment. An unterminated block comment runs to the end of the text.
+    """
+
+    spans: list[tuple[int, int]] = []
+    index, size = 0, len(sql)
+    while index < size:
+        char = sql[index]
+        if sql.startswith("${", index):
+            try:
+                index = _find_interpolation_end(sql, index) + 1
+            except ValueError:
+                return spans
+        elif sql.startswith("--", index):
+            end = index
+            while end < size and sql[end] not in "\r\n":
+                end += 1
+            spans.append((index, end))
+            index = end
+        elif sql.startswith("/*", index):
+            end = sql.find("*/", index + 2)
+            end = size if end < 0 else end + 2
+            spans.append((index, end))
+            index = end
+        elif char in "'\"`":
+            quote = sql[index : index + 3] if sql[index : index + 3] in ("'''", '"""') else char
+            index += len(quote)
+            while index < size and not sql.startswith(quote, index):
+                if sql.startswith("${", index):
+                    try:
+                        index = _find_interpolation_end(sql, index) + 1
+                    except ValueError:
+                        return spans
+                    continue
+                index += 2 if sql[index] == "\\" else 1
+            index += len(quote)
+        else:
+            index += 1
+    return spans
+
+
+def outside_sql_comments(sql: str, pattern: re.Pattern[str]) -> list[re.Match[str]]:
+    """The matches of ``pattern`` in ``sql`` that do not start inside a SQL comment."""
+
+    spans = sql_comment_spans(sql)
+    return [m for m in pattern.finditer(sql) if not any(start <= m.start() < end for start, end in spans)]
+
+
 @dataclass(frozen=True)
 class SqlxRestoration:
     token: str
     original: str
     pattern: re.Pattern[str]
+    # The sentinel stands for the expression together with SQL around it (``__sqlx_token_000__ AND``): restoring it
+    # anywhere else would change the meaning, so a rewrite that separates them cannot be restored.
+    whole: bool = False
 
 
 def mask_sqlx_interpolations(sql: str) -> tuple[str, tuple[SqlxRestoration, ...]]:
@@ -133,8 +199,16 @@ def mask_sqlx_interpolations(sql: str) -> tuple[str, tuple[SqlxRestoration, ...]
     restorations: list[SqlxRestoration] = []
     cursor = 0
     ordinal = 0
+    comments = sql_comment_spans(sql)
     while True:
         opening = sql.find("${", cursor)
+        while opening >= 0 and any(start <= opening < end for start, end in comments):
+            try:
+                _find_interpolation_end(sql, opening)
+                break
+            except ValueError:
+                # Dataform leaves ${...} in a SQL comment as text, so one that never closes is only comment text.
+                opening = sql.find("${", opening + 2)
         if opening < 0:
             output.append(sql[cursor:])
             break
@@ -160,8 +234,16 @@ def mask_sqlx_interpolations(sql: str) -> tuple[str, tuple[SqlxRestoration, ...]
 
         replacement = token
         pattern = re.compile(re.escape(token))
+        whole = False
         connective = _SQLX_WHEN_CONNECTIVE_RE.match(body)
-        if connective and not clause_match and not preceding_clause and not preceding_condition:
+        trailing = _SQLX_WHEN_TRAILING_RE.match(body)
+        if trailing and (preceding_clause or preceding_condition):
+            # ``WHERE ${when(incremental(), `a > 1 AND`)} b > 2``: the expression starts the condition and ends with its connective.
+            keyword = trailing.group(2).upper()
+            replacement = f"{token} {keyword}"
+            pattern = re.compile(rf"\b{re.escape(token)}\s+{keyword}\b", re.IGNORECASE)
+            whole = True
+        elif connective and not clause_match and not preceding_clause and not preceding_condition:
             # ``... WHERE a > 0 ${when(incremental(), `AND b > 1`)}``: the expression continues the condition.
             keyword = connective.group(1).upper()
             replacement = f"{keyword} {token}"
@@ -176,10 +258,27 @@ def mask_sqlx_interpolations(sql: str) -> tuple[str, tuple[SqlxRestoration, ...]
                 pattern = re.compile(rf"\bORDER\s+BY\s+{re.escape(token)}\b", re.IGNORECASE)
 
         output.append(replacement)
-        restorations.append(SqlxRestoration(token, original, pattern))
+        restorations.append(SqlxRestoration(token, original, pattern, whole))
         cursor = closing + 1
 
     return "".join(output), tuple(restorations)
+
+
+def is_table_reference(original: str) -> bool:
+    """``${ref("t")}``, ``${ref("dataset", "t")}``, ``${resolve("t")}`` or ``${self()}``: one table name once compiled."""
+
+    return bool(_TABLE_REFERENCE_RE.match(original))
+
+
+def opaque_tokens(restorations: tuple[SqlxRestoration, ...]) -> frozenset[str]:
+    """Sentinels of the interpolations that are not table references.
+
+    Such an expression (``${"x OR y"}``, ``${when(incremental(), "AND b > 1")}``) compiles to arbitrary SQL text:
+    a clause, a predicate that binds looser than its neighbours, or a query that reads a CTE. A rule sees only an
+    opaque name in its place.
+    """
+
+    return frozenset(item.token for item in restorations if not is_table_reference(item.original))
 
 
 def restore_sqlx_interpolations(sql: str, restorations: tuple[SqlxRestoration, ...]) -> str:
@@ -196,7 +295,11 @@ def restore_sqlx_interpolations(sql: str, restorations: tuple[SqlxRestoration, .
 
     restored = sql
     for item in restorations:
-        restored = item.pattern.sub(item.original, restored)
+        if item.whole and len(item.pattern.findall(restored)) != 1:
+            raise SqlxRestorationError("a rewrite separated a SQLX interpolation from the connective it ends with")
+        # A function replacement is inserted as is; a string one would read
+        # the backslashes in ``r'\d'`` or ``\1`` as replacement syntax.
+        restored = item.pattern.sub(lambda _match, original=item.original: original, restored)
         # sqlglot can quote an identifier sentinel when it occurs inside a
         # quoted table reference. Restore that spelling too.
         restored = restored.replace(f"`{item.token}`", item.original)

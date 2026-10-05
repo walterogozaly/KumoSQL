@@ -42,7 +42,11 @@ from typing import Callable, Mapping, Sequence
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import MAX_EXPANDED_READS, UnmodeledConstruct, distinct_on, drop_case_conflicts, expand_group_by_all, expanded_reads, extended_grouping, is_call, spell_for_duckdb, star_modified
+from .duckdb_load import small_database
 from .set_operations import positional_sql_pair
+from .solver_lock import bounded_solver, serialized
+from .type_names import invalid_type_name
 
 try:  # pragma: no cover - exercised through the tests
     import z3
@@ -52,6 +56,14 @@ except ImportError:  # pragma: no cover
 
 class Unsupported(Exception):
     """The query uses something the bounded encoding does not model."""
+
+
+def _whole(literal: exp.Literal) -> int:
+    """The value of a literal used as a position, count or offset; ``1.5`` or ``1e0`` there is not modeled."""
+
+    if not literal.this.isdigit() or len(literal.this) > 18:
+        raise Unsupported(f"{literal.this} where a whole number is expected")
+    return int(literal.this)
 
 
 class BoundedStatus(str, Enum):
@@ -91,6 +103,37 @@ _REAL_DOMAINS = {
 
 def _base_type(sql_type: str) -> str:
     return re.split(r"[(\s<]", sql_type.strip().upper(), maxsplit=1)[0]
+
+
+_DECLARED_DECIMAL = re.compile(r"(NUMERIC|BIGNUMERIC|BIGDECIMAL)\s*\(\s*(\d+)\s*(?:,\s*(\d+))?\s*\)")
+
+
+def _declared_precision(sql_type: str) -> tuple[int, int] | None:
+    """``(precision, scale)`` of a BigQuery-style ``NUMERIC(p, s)`` (scale 0 when omitted), else ``None``.
+
+    ``DECIMAL(p, s)`` keeps its old, unrestricted treatment: constraining it moved bounded verdicts on the QED suite
+    (two pairs fell from 3 rows to 2 on a solver timeout), which this change does not set out to do."""
+
+    match = _DECLARED_DECIMAL.fullmatch(sql_type.strip().upper())
+    return (int(match.group(2)), int(match.group(3) or 0)) if match else None
+
+
+def _real_domain(sql_type: str) -> tuple[int | None, int] | None:
+    """The legal values of a real column: a declared ``NUMERIC(p, s)`` allows ``s`` decimal digits and
+    ``|value| < 10**(p - s)``; a bare type gets its BigQuery default."""
+
+    declared = _declared_precision(sql_type)
+    if declared is not None:
+        precision, scale = declared
+        return scale, 10 ** max(precision - scale, 0)
+    return _REAL_DOMAINS.get(_base_type(sql_type))
+
+
+# the legal encoded values of a DATE (proleptic ordinal) and a DATETIME / TIMESTAMP (seconds from ordinal 0): years 1..9999
+_TEMPORAL_DOMAINS = {
+    "date": (1, _dt.date.max.toordinal()),
+    "datetime": (86400, _dt.date.max.toordinal() * 86400 + 86399),
+}
 
 
 def kind_of(sql_type: str) -> str | None:
@@ -162,10 +205,15 @@ class BoundedSchema:
 def schema_from_prover(schema: Mapping[str, Sequence[str]], constraints=None, types=None) -> BoundedSchema:
     """A :class:`BoundedSchema` from the prover's schema, ``TableConstraints`` and column types."""
 
-    constraints = constraints or {}
-    types = types or {}
+    # Tables whose names differ only in case and disagree are dropped, as in the SMT and algebraic provers
+    # (otherwise both reach the DuckDB replay, which rejects the second as a duplicate table).
+    schema = drop_case_conflicts(dict(schema))
+    constraints = drop_case_conflicts(dict(constraints or {}))
+    types = drop_case_conflicts(dict(types or {}))
     tables: dict[str, BTable] = {}
     for name, columns in schema.items():
+        if name.lower() in {t.lower() for t in tables}:
+            continue  # an entry that agrees with an earlier one up to case: one table, not a duplicate
         constraint = constraints.get(name)
         column_types = {k.lower(): v for k, v in (types.get(name) or {}).items()}
         not_null = {c.lower() for c in (constraint.not_null if constraint else ())}
@@ -573,7 +621,11 @@ class SymbolicDatabase:
                         self.constraints.append(z3.InRe(value, z3.Star(z3.Range(" ", "~"))))
                     if "decimal" in self.restrict and kind == "real":
                         self.constraints.append(z3.IsInt(value * 4))
-                    domain = _REAL_DOMAINS.get(_base_type(column.type)) if kind == "real" else None
+                    span = _TEMPORAL_DOMAINS.get(kind)
+                    if span is not None:  # keep models inside the range a decoded value can show (no clamping)
+                        low, high = span
+                        self.constraints.append(z3.Or(z3.Not(present), null, z3.And(value >= low, value <= high)))
+                    domain = _real_domain(column.type) if kind == "real" else None
                     if domain is not None:
                         digits, bound = domain
                         legal = [value < z3.RealVal(bound), value > -z3.RealVal(bound)]
@@ -653,6 +705,12 @@ class Compiler:
 
     def compile(self, sql: str) -> Rel:
         tree = sqlglot.parse_one(sql, read=self.dialect)
+        try:
+            tree = expand_group_by_all(tree)
+        except UnmodeledConstruct as error:
+            raise Unsupported(str(error)) from None
+        if expanded_reads(tree) > MAX_EXPANDED_READS:
+            raise Unsupported(f"the query reads more than {MAX_EXPANDED_READS} tables once its CTEs are expanded")
         return self.query(tree, None)
 
     def query(self, node: exp.Expression, outer: Scope | None) -> Rel:
@@ -734,7 +792,7 @@ class Compiler:
     def select(self, node: exp.Select, outer: Scope | None) -> Rel:
         if node.args.get("qualify") or node.args.get("windows"):
             raise Unsupported("window clause")
-        if node.args.get("distinct") is not None and isinstance(node.args["distinct"], exp.Distinct) and node.args["distinct"].args.get("on"):
+        if distinct_on(node):
             raise Unsupported("DISTINCT ON")
         source = self.from_clause(node, outer)
         where = node.args.get("where")
@@ -977,6 +1035,8 @@ class Compiler:
     def _output_names(self, items, source: Rel) -> list[tuple[str | None, str]]:
         names = []
         for position, item in enumerate(items):
+            if star_modified(item):
+                raise Unsupported("SELECT * with EXCEPT, REPLACE, RENAME or ILIKE")  # not expanded below
             if isinstance(item, exp.Star):
                 names.extend(source.cols[i] for i in self._star_order(source))
             elif isinstance(item, exp.Column) and isinstance(item.this, exp.Star):
@@ -1043,7 +1103,7 @@ class Compiler:
             target = item.this
             descending = bool(item.args.get("desc"))
             if isinstance(target, exp.Literal) and not target.is_string:
-                position = int(target.this) - 1
+                position = _whole(target) - 1
                 if not 0 <= position < len(cells):
                     raise Unsupported("ORDER BY position")
                 value = cells[position]
@@ -1071,11 +1131,11 @@ class Compiler:
         alias_nodes = {i.alias.lower(): i.this for i in items if isinstance(i, exp.Alias)}
         key_nodes = []
         if group is not None:
-            if group.args.get("grouping_sets") or group.args.get("rollup") or group.args.get("cube") or group.args.get("totals"):
+            if extended_grouping(group):
                 raise Unsupported("grouping sets")
             for key in group.expressions:
                 if isinstance(key, exp.Literal) and not key.is_string and not self.group_constants:
-                    position = int(key.this) - 1
+                    position = _whole(key) - 1
                     if not 0 <= position < len(items):
                         raise Unsupported("GROUP BY position")
                     chosen = items[position]
@@ -1170,13 +1230,13 @@ class Compiler:
             target = limit.expression
             if not (isinstance(target, exp.Literal) and not target.is_string):
                 raise Unsupported("LIMIT must be a literal")
-            count = int(target.this)
+            count = _whole(target)
         skip = 0
         if offset is not None:
             target = offset.expression if hasattr(offset, "expression") else offset
             if not (isinstance(target, exp.Literal) and not target.is_string):
                 raise Unsupported("OFFSET must be a literal")
-            skip = int(target.this)
+            skip = _whole(target)
         if node.args.get("order") is None:
             raise Unsupported("LIMIT without ORDER BY")
         rows = rel.rows
@@ -1272,8 +1332,14 @@ class Compiler:
             return const(node.this, "str")
         text = node.this
         if re.fullmatch(r"\d+", text):
+            if len(text) > 400:
+                raise Unsupported("integer literal out of range")
             return const(int(text), "int")
-        return const(Fraction(Decimal(text)), "real")
+        value = Decimal(text)
+        if value.is_finite() and value and not -400 <= value.adjusted() <= 400:
+            # Out of FLOAT64's range; Fraction(Decimal('1e100000000')) would build a hundred-million-digit integer.
+            raise Unsupported("numeric literal out of range")
+        return const(Fraction(value), "real")
 
     def _e_Boolean(self, node, scope):
         return const(bool(node.this), "bool")
@@ -1555,7 +1621,7 @@ class Compiler:
         if digits is not None:
             if not (isinstance(digits, exp.Literal) and not digits.is_string):
                 raise Unsupported("ROUND with a computed precision")
-            places = int(digits.this)
+            places = _whole(digits)
         if v.kind == "int" and places >= 0:
             return v
         if v.kind not in ("int", "real") or places < 0:
@@ -1570,13 +1636,13 @@ class Compiler:
     def _e_Substring(self, node, scope):
         value = self.expr(node.this, scope)
         start, length = node.args.get("start"), node.args.get("length")
-        if value.kind != "str" or not (isinstance(start, exp.Literal) and not start.is_string and int(start.this) >= 1):
+        if value.kind != "str" or not (isinstance(start, exp.Literal) and not start.is_string and _whole(start) >= 1):
             raise Unsupported("SUBSTRING with this form")
-        offset = int(start.this) - 1
+        offset = _whole(start) - 1
         if length is None:
             size = z3.If(z3.Length(value.val) - offset > 0, z3.Length(value.val) - offset, z3.IntVal(0))
-        elif isinstance(length, exp.Literal) and not length.is_string and int(length.this) >= 0:
-            size = z3.IntVal(int(length.this))
+        elif isinstance(length, exp.Literal) and not length.is_string and _whole(length) >= 0:
+            size = z3.IntVal(_whole(length))
         else:
             raise Unsupported("SUBSTRING with a computed length")
         return V("str", z3.SubString(value.val, offset, size), value.null)
@@ -1641,10 +1707,10 @@ class Compiler:
             for j, row in enumerate(context.rows)
         ]
         before = [self._precedes(Row(None, [], keyed[j][1]), Row(None, [], keyed[index][1])) if order is not None else _false() for j in range(len(context.rows))]
-        if isinstance(function, (exp.RowNumber, exp.Rank, exp.DenseRank)):
+        if isinstance(function, exp.RowNumber) or is_call(function, "Rank") or is_call(function, "DenseRank"):
             if order is None:
                 raise Unsupported("ranking function without ORDER BY")
-            if isinstance(function, exp.DenseRank):
+            if is_call(function, "DenseRank"):
                 total = []
                 for j in range(len(context.rows)):
                     first = z3.Not(z3.Or(*[
@@ -1687,7 +1753,7 @@ class Compiler:
                 if offset_node is not None:
                     if not (isinstance(offset_node, exp.Literal) and not offset_node.is_string):
                         raise Unsupported("LAG or LEAD with a computed offset")
-                    amount = int(offset_node.this)
+                    amount = _whole(offset_node)
                 target = rank[index] + (amount if isinstance(function, exp.Lead) else -amount)
                 default = function.args.get("default")
                 fallback = self.expr(default, scope) if default is not None else null_value()
@@ -1889,14 +1955,13 @@ def _model_value(model, v: V, kind: str):
     if kind in ("int",):
         return value.as_long()
     if kind == "date":
-        return _dt.date.fromordinal(max(1, min(value.as_long(), _dt.date.max.toordinal())))
+        return _dt.date.fromordinal(value.as_long())  # the domain constraints keep it in range
     if kind == "time":
         seconds = value.as_long() % 86400
         return _dt.time(seconds // 3600, seconds % 3600 // 60, seconds % 60)
     if kind == "datetime":
-        total = max(86400, value.as_long())
-        day, seconds = divmod(total, 86400)
-        return _dt.datetime.combine(_dt.date.fromordinal(min(day, _dt.date.max.toordinal())), _dt.time(seconds // 3600, seconds % 3600 // 60, seconds % 60))
+        day, seconds = divmod(value.as_long(), 86400)
+        return _dt.datetime.combine(_dt.date.fromordinal(day), _dt.time(seconds // 3600, seconds % 3600 // 60, seconds % 60))
     if kind == "bool":
         return z3.is_true(value)
     if kind == "real":
@@ -1949,7 +2014,7 @@ class DuckDBReplay:
         self.schema = schema
         self.shuffles = shuffles
         self.duckdb = duckdb
-        self.db = duckdb.connect(":memory:")
+        self.db = small_database()
         self.cx = cx
         self.bigquery = dialect == "bigquery"
         if self.bigquery:
@@ -1979,7 +2044,7 @@ class DuckDBReplay:
             from .bigquery_on_duckdb import faithful
 
             tree = faithful(tree)
-        return tree.sql(dialect="duckdb")
+        return spell_for_duckdb(tree).sql(dialect="duckdb")
 
     def _run(self, data: dict[str, list[tuple]]):
         for name, table in self.schema.tables.items():
@@ -2078,7 +2143,9 @@ def _sqlite_type(column: BColumn) -> str:
 def _duck_type(column: BColumn, bigquery: bool = False) -> str:
     kind = kind_of(column.type)
     if bigquery and _base_type(column.type) == "NUMERIC":
-        return "DECIMAL(38, 9)"  # BigQuery's NUMERIC; a value it cannot hold fails to load
+        declared = _declared_precision(column.type)
+        # BigQuery's NUMERIC, or the declared NUMERIC(p, s); a value it cannot hold fails to load
+        return f"DECIMAL({declared[0]}, {declared[1]})" if declared else "DECIMAL(38, 9)"
     return {"int": "BIGINT", "real": "DOUBLE", "str": "VARCHAR", "bool": "BOOLEAN", "date": "DATE", "time": "TIME", "datetime": "TIMESTAMP", None: "BIGINT"}[kind]
 
 
@@ -2160,9 +2227,8 @@ def _check_bounded(
                 compiler = Compiler(database, dialect, nulls_first=nulls_first, group_constants=group_constants)
                 left = compiler.compile(left_sql)
                 right = compiler.compile(right_sql)
-                solver = z3.Solver()
                 remaining = timeout_ms if budget_s is None else int(max(1, min(timeout_ms, (budget_s - (time.time() - began)) * 1000)))
-                solver.set("timeout", remaining)
+                solver = bounded_solver(remaining)
                 solver.add(*database.constraints, *compiler.side_conditions)
                 solver.add(bag_difference(left, right))
                 verdict = solver.check()
@@ -2201,14 +2267,14 @@ def _check_bounded(
         return BoundedResult(BoundedStatus.UNKNOWN, "query too deeply nested", 0, None, time.time() - began)
 
 
+@serialized
 def evaluate(sql: str, schema: BoundedSchema, data: dict[str, list[tuple]], dialect: str = "bigquery", nulls_first: bool | None = None):
     """The rows the *encoding* gives ``sql`` on a concrete database (for testing it against DuckDB)."""
 
     database = SymbolicDatabase(schema, max([len(r) for r in data.values()] + [1]))
     compiler = Compiler(database, dialect, nulls_first=nulls_first)
     rel = compiler.compile(sql)
-    solver = z3.Solver()
-    solver.set("timeout", 20_000)
+    solver = bounded_solver(20_000)
     for name, slots in database.tables.items():
         table = schema.tables[name]
         rows = data.get(name) or []
@@ -2258,10 +2324,17 @@ def _cell(value, kind: str):
     return z3.IntVal(value)
 
 
+@serialized
 def check_bounded(left_sql: str, right_sql: str, schema: BoundedSchema, **kwargs) -> BoundedResult:
     """See :func:`_check_bounded`. For SQLite only a counterexample is offered: the encoding's LIKE (case-sensitive)
     and ``/`` (exact) differ from SQLite's, so "no counterexample" would not carry over."""
 
+    if kwargs.get("dialect", "bigquery") == "bigquery":
+        unknown_type = invalid_type_name(left_sql) or invalid_type_name(right_sql)
+        if unknown_type:
+            # The compiler reads FLOAT, INT32 and VARCHAR as FLOAT64, INT64 and STRING, so a bound "checked" for
+            # such a query would be a claim about a query BigQuery rejects.
+            return BoundedResult(BoundedStatus.UNKNOWN, f"unsupported: BigQuery would reject the query: {unknown_type}")
     result = _check_bounded(left_sql, right_sql, schema, **kwargs)
     if kwargs.get("dialect") == "sqlite" and result.bounded_equivalent:
         return BoundedResult(BoundedStatus.UNKNOWN, "SQLite: no equivalence claim (its LIKE and integer division differ from the encoding)", result.bound, None, result.seconds)

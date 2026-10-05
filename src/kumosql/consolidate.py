@@ -11,6 +11,10 @@ The result carries the new SQL of ``D`` and a verdict. ``equivalent`` means :fun
 returns the same rows as the original ``D`` read through the folded tables. Anything else is ``unknown``: the
 SQL is still returned so it can be read, but nothing is claimed about it.
 
+A proof that rests on a LIMIT cutting the same rows each time (``LIMIT_SOURCE_ASSUMPTION``, ``TIE_ASSUMPTION``) is not
+returned as ``equivalent``: folding turns a stored table into a recomputed query, and when its physical order or tie
+order differs, the LIMIT can pick other rows. Pass ``stable_selection=True`` to state that contract yourself.
+
 A folded table that something outside the set still reads is never folded: the call raises
 :class:`ConsolidationError` naming that reader, because dropping the table would break it.
 """
@@ -27,8 +31,28 @@ from .ast_utils import set_with_clause, with_clause
 from .pipeline_equivalence import _opaque, _resolve
 from .prover_schema import ProverSchema
 from .refactor import _Reads, _alias_of, _parse, _replace_tables, check_observable
+from .smt_equivalence import LIMIT_SOURCE_ASSUMPTION, TIE_ASSUMPTION
+
+SELECTION_ASSUMPTIONS = (LIMIT_SOURCE_ASSUMPTION, TIE_ASSUMPTION)
 
 FOLDABLE = ("table", "view", "sql")
+
+
+HELP_SUMMARY = (
+    "READ-ONLY PREVIEW. Shows what one table would look like with a chain of intermediate tables folded into it,\n"
+    "and whether that was proved to return the same rows. It prints JSON to the screen and changes none of your files."
+)
+HELP_EPILOG = (
+    "This command never writes, moves, renames or deletes any of your files, never touches the project folder, and\n"
+    "has no option that does. Copy the printed \"sql\" into the target model yourself if you want it.\n"
+    "(Like every KumoSQL command that analyzes a project, it appends timing lines to KumoSQL's own diagnostic log,\n"
+    "ui.log, in KumoSQL's data folder; that is not part of your project.)\n"
+    "\n"
+    "Exit code: 0 proved equal, 1 not proved (unknown), 2 refused or bad input.\n"
+    "Folds whose proof needs a LIMIT to cut the same rows each time are reported as unknown unless you pass\n"
+    "--stable-selection (your statement that the LIMIT picks the same rows from a stored or a recomputed table).\n"
+    "Example: python -m kumosql consolidate-tables path/to/project D A B C"
+)
 
 
 class ConsolidationError(ValueError):
@@ -165,12 +189,14 @@ def consolidate_tables(
     *,
     schema: ProverSchema | None = None,
     timeout_ms: int = 5000,
+    stable_selection: bool = False,
 ) -> ConsolidationResult:
     """Fold ``tables`` into ``target`` and prove the new ``target`` returns the rows the old one did.
 
     Raises :class:`ConsolidationError` when the fold is not allowed (a folded table is read from outside the
     set, a model is not a plain table or view, a name is unknown). Otherwise returns the new SQL with status
-    ``equivalent`` (proved) or ``unknown`` (not proved; no claim is made).
+    ``equivalent`` (proved) or ``unknown`` (not proved; no claim is made). A proof that assumes a LIMIT picks the
+    same rows whether its input is stored or recomputed is ``unknown`` unless ``stable_selection`` is true.
     """
 
     members, target_key = _names(pipeline, tables, target)
@@ -194,6 +220,16 @@ def consolidate_tables(
         pipeline, candidate, [target_key], _Reads(pipeline), schema=schema, timeout_ms=timeout_ms,
     )
     if ok:
+        unstable = [a for a in assumptions if a in SELECTION_ASSUMPTIONS]
+        if unstable and not stable_selection:
+            reason = (
+                f"the proof assumes that {unstable[0]}; folding replaces a stored table with a recomputed query, "
+                "so a LIMIT can pick other rows when the physical or tie order differs "
+                "(state a stable-selection contract to accept this)"
+            )
+            return ConsolidationResult("unknown", reason, target_key, members, sql, original, [], notes)
+        if unstable:
+            notes.append("accepted on your stable-selection contract: a LIMIT picks the same rows from a stored or a recomputed table")
         return ConsolidationResult("equivalent", "proved equal to the original by the pipeline prover", target_key,
                                    members, sql, original, assumptions, notes)
     hidden = _star_without_columns(pipeline, [*members, target_key], schema)
@@ -222,7 +258,7 @@ def _star_without_columns(pipeline, keys: list[str], schema: ProverSchema | None
     return found
 
 
-def consolidate_loaded(tables: object, target: object) -> dict:
+def consolidate_loaded(tables: object, target: object, stable_selection: object = False) -> dict:
     """``POST /api/consolidate-tables``: fold tables of the project loaded in the app into a target."""
 
     from . import live_graph, prover_context
@@ -240,6 +276,7 @@ def consolidate_loaded(tables: object, target: object) -> dict:
         raise ValueError("the solver is turned off in Settings")
     return consolidate_tables(
         loaded["pipeline"], tables, target, schema=prover_context.current_schema(), timeout_ms=config["timeout_ms"],
+        stable_selection=stable_selection is True,
     ).to_json()
 
 
@@ -250,11 +287,16 @@ def main(argv: list[str] | None = None) -> int:
     import json
     import sys
 
-    parser = argparse.ArgumentParser(prog="python -m kumosql consolidate-tables", description=__doc__.split("\n")[0])
-    parser.add_argument("project", help="Dataform or SQL folder")
+    parser = argparse.ArgumentParser(
+        prog="python -m kumosql consolidate-tables", description=HELP_SUMMARY, epilog=HELP_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("project", help="Dataform or SQL folder (read, never modified)")
     parser.add_argument("target", help="the table that keeps existing and absorbs the others")
     parser.add_argument("tables", nargs="+", metavar="TABLE", help="intermediate tables to fold into the target")
     parser.add_argument("--timeout-ms", type=int, default=5000)
+    parser.add_argument("--stable-selection", action="store_true",
+                        help="accept proofs that assume a LIMIT picks the same rows from a stored or a recomputed table")
     args = parser.parse_args(argv)
     from .pipeline_loading import load_sqlx_project
     from .prover_schema import from_pipeline
@@ -263,6 +305,7 @@ def main(argv: list[str] | None = None) -> int:
         pipeline = load_sqlx_project(args.project)
         result = consolidate_tables(
             pipeline, args.tables, args.target, schema=from_pipeline(pipeline), timeout_ms=args.timeout_ms,
+            stable_selection=args.stable_selection,
         )
     except ConsolidationError as error:
         json.dump({"status": "refused", "reason": str(error), "readers": error.readers}, sys.stdout, indent=2)

@@ -15,12 +15,18 @@ bench = importlib.util.module_from_spec(_spec)
 sys.modules["cosette_bench"] = bench
 _spec.loader.exec_module(bench)
 
-FLOORS = {"cosette": 54, "spes": 29}
+FLOORS = {"cosette": 59, "spes": 30, "cosette-adapted": 9}
 
 
-@pytest.mark.parametrize("suite", ["cosette", "spes"])
+@pytest.mark.parametrize("suite", ["cosette", "spes", "cosette-adapted"])
 def test_suite(suite):
     result = bench.run(suite)
     assert result["wrong"] == [], f"wrong verdicts in {suite}: {result['wrong']}"
     assert result["correct"] >= FLOORS[suite], f"{suite}: {result['correct']} correct, floor {FLOORS[suite]}"
     assert result["scored"] == result["total"] - len(result["disputed"])
+
+
+def test_adapted_pairs_are_answered_and_held_out_ones_named():
+    result = bench.run("cosette-adapted")
+    assert result["unknown"] == [] and result["disputed"] == []
+    assert result["held_out_correct"] == len(result["held_out"]) == 2

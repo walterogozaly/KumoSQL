@@ -4,6 +4,8 @@
 Python modules (pandas, numpy, pyarrow, ...), which dominated the random-database searches. One
 multi-row ``INSERT`` of literals loads the same rows several times faster. Values that cannot be
 written as a plain literal (bytes, nested values, NaN or infinite floats) take the bound path.
+``TableLoader`` and ``rows_key`` let a search that reloads its tables before every try skip the
+statements (and whole tries) that would repeat one it already made.
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ from __future__ import annotations
 import math
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 
 class _Unsupported(Exception):
@@ -42,19 +44,77 @@ def _literal(value: Any) -> str:
     raise _Unsupported
 
 
-def insert_rows(db, table_sql: str, rows: Sequence[Sequence[Any]] | Iterable[Sequence[Any]]) -> None:
-    """Insert ``rows`` into ``table_sql`` (already quoted if it needs to be)."""
+def small_database(**config):
+    """An in-memory DuckDB connection for tables of a few rows, on one thread.
 
-    rows = list(rows)
+    With a few rows per table, extra threads only add scheduling work (about half the CPU per query, more
+    when several processes share the cores). A ``threads`` in ``config`` wins.
+    """
+
+    import duckdb
+
+    return duckdb.connect(":memory:", config={"threads": 1, **config})
+
+
+def values_sql(rows: Sequence[Sequence[Any]]) -> str | None:
+    """The rows as a ``VALUES`` list of literals (``""`` for no rows), or ``None`` if a value has no plain literal."""
+
+    try:
+        return ", ".join("(" + ", ".join(_literal(v) for v in row) + ")" for row in rows)
+    except _Unsupported:
+        return None
+
+
+def _insert(db, table_sql: str, rows: list, values: str | None) -> None:
     if not rows:
         return
-    try:
-        values = ", ".join("(" + ", ".join(_literal(v) for v in row) + ")" for row in rows)
-    except _Unsupported:
+    if values is None:
         marks = ", ".join("?" * len(rows[0]))
         db.executemany(f"INSERT INTO {table_sql} VALUES ({marks})", rows)
         return
     db.execute(f"INSERT INTO {table_sql} VALUES {values}")
+
+
+def insert_rows(db, table_sql: str, rows: Sequence[Sequence[Any]] | Iterable[Sequence[Any]]) -> None:
+    """Insert ``rows`` into ``table_sql`` (already quoted if it needs to be)."""
+
+    rows = list(rows)
+    _insert(db, table_sql, rows, values_sql(rows))
+
+
+def rows_key(tables: Mapping[str, Sequence[Sequence[Any]]]) -> tuple[str | None, ...]:
+    """Each table's rows as literal text, in order. Two databases with the same key hold the same values; a key
+    holding ``None`` (a value with no plain literal) must not be compared."""
+
+    return tuple(values_sql(rows) for rows in tables.values())
+
+
+class TableLoader:
+    """Replace the rows of tables on one connection, skipping the statements a search repeats.
+
+    Random-database searches reload every table before each try, though a table often holds the same rows as
+    on the try before (no rows, or one row from a small domain). A table whose rows are unchanged (the same
+    literal text) is left as it is, and a table known to be empty gets no ``DELETE``. ``empty`` names tables
+    the caller has just created; any other table's contents are unknown until it is loaded.
+    """
+
+    def __init__(self, db, empty: Iterable[str] = ()):
+        self.db = db
+        self._loaded: dict[str, str] = {name: "" for name in empty}
+
+    def load(self, tables: Mapping[str, Sequence[Sequence[Any]]], key: tuple[str | None, ...] | None = None) -> None:
+        """Give each table (quoted name -> rows) exactly these rows; ``key`` is ``rows_key(tables)`` if known."""
+
+        for (table_sql, rows), values in zip(tables.items(), key if key is not None else rows_key(tables)):
+            current = self._loaded.pop(table_sql, None)  # unknown until this load succeeds
+            if values is not None and values == current:
+                self._loaded[table_sql] = values
+                continue
+            if current != "":
+                self.db.execute(f"DELETE FROM {table_sql}")
+            _insert(self.db, table_sql, list(rows), values)
+            if values is not None:
+                self._loaded[table_sql] = values
 
 
 def run_unoptimized(db, *queries: str) -> list[list[tuple]]:

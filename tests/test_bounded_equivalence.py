@@ -8,8 +8,10 @@ import sqlglot
 pytest.importorskip("z3")
 duckdb = pytest.importorskip("duckdb")
 
+from kumosql.ast_utils import spell_for_duckdb  # noqa: E402
 from kumosql import bounded_equivalence as be  # noqa: E402
 from kumosql.bounded_equivalence import BColumn, BoundedSchema, BoundedStatus, BTable, check_bounded  # noqa: E402
+from kumosql.duckdb_load import insert_rows  # noqa: E402
 
 
 def schema(**overrides):
@@ -168,8 +170,7 @@ def concrete(rng):
 def duck_rows(db, data, sql):
     for name in ("t", "u", "e"):
         db.execute(f"delete from {name}")
-        for row in data[name]:
-            db.execute(f"insert into {name} values (?, ?)", row)
+        insert_rows(db, name, data[name])
     return db.execute(sql).fetchall()
 
 
@@ -201,7 +202,7 @@ def test_encoding_matches_duckdb(sql):
             if "side condition" in str(error) or "ungrouped" in str(error):  # an answer the engines leave arbitrary
                 continue
             raise
-        theirs = duck_rows(db, data, sqlglot.transpile(sql, read="mysql", write="duckdb")[0])
+        theirs = duck_rows(db, data, spell_for_duckdb(sqlglot.parse_one(sql, read="mysql")).sql(dialect="duckdb"))
         assert norm(mine) == norm(theirs), (sql, data)
         compared += 1
     assert compared >= 3
@@ -233,3 +234,17 @@ def test_sqlite_offers_counterexamples_but_no_equivalence_claim():
     left, right = "select a from t where a > 1", "select a from t where a > 2"
     result = check_bounded(left, right, s, rows=2, dialect="sqlite", replay=be.SQLiteReplay(s, left, right))
     assert result.status is BoundedStatus.DIFFERENT
+
+
+@pytest.mark.parametrize("call, expected", [
+    ("TIMESTAMP_SUB(ts, INTERVAL 2 HOUR)", "2019-12-31 22:00:00"),
+    ("TIMESTAMP_ADD(ts, INTERVAL 1 DAY)", "2020-01-02 00:00:00"),
+    ("TIMESTAMP_SUB(ts, INTERVAL -1 HOUR)", "2020-01-01 01:00:00"),
+])
+def test_a_timestamp_shift_runs_in_duckdb_whichever_sqlglot_prints_it(call, expected):
+    # sqlglot 26 prints TIMESTAMP_SUB(ts, '2', HOUR), a function DuckDB does not have
+    db = duckdb.connect()
+    db.execute("CREATE TABLE t (ts TIMESTAMP)")
+    db.execute("INSERT INTO t VALUES (TIMESTAMP '2020-01-01 00:00:00')")
+    sql = spell_for_duckdb(sqlglot.parse_one(f"SELECT {call} AS v FROM t", read="bigquery")).sql(dialect="duckdb")
+    assert str(db.execute(sql).fetchall()[0][0]) == expected

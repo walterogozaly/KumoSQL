@@ -1,0 +1,172 @@
+{
+ "about": "Oracle HR workload for tools/sample_db_bench.py. origin 'upstream-view': the one view upstream ships (emp_details_view in hr_create.sql, at the pinned commit), adapted to BigQuery as 'adaptation' says; hr_code.sql holds a procedure, a trigger and no query, so there is no upstream-procedure or upstream-test query. 'authored': written for this eval.",
+ "queries": [
+  {
+   "id": "hr-view-emp-details-view",
+   "origin": "upstream-view",
+   "name": "emp_details_view",
+   "adaptation": "CREATE OR REPLACE VIEW ... (column list) AS SELECT becomes the bare SELECT (the view's column list names the select list's own columns); WITH READ ONLY dropped; the comma joins and their WHERE conditions are upstream's, written with table aliases as BigQuery needs",
+   "sql": "SELECT e.employee_id, e.job_id, e.manager_id, e.department_id, d.location_id, l.country_id, e.first_name, e.last_name, e.salary, e.commission_pct, d.department_name, j.job_title, l.city, l.state_province, c.country_name, r.region_name FROM employees AS e, departments AS d, jobs AS j, locations AS l, countries AS c, regions AS r WHERE e.department_id = d.department_id AND d.location_id = l.location_id AND l.country_id = c.country_id AND c.region_id = r.region_id AND j.job_id = e.job_id"
+  },
+  {
+   "id": "hr-a01-employee-department-join",
+   "origin": "authored",
+   "sql": "SELECT e.employee_id, e.last_name, d.department_name FROM employees AS e JOIN departments AS d ON e.department_id = d.department_id"
+  },
+  {
+   "id": "hr-a02-left-join-department",
+   "origin": "authored",
+   "sql": "SELECT e.employee_id, e.last_name, d.department_name FROM employees AS e LEFT JOIN departments AS d ON e.department_id = d.department_id"
+  },
+  {
+   "id": "hr-a03-manager-self-join",
+   "origin": "authored",
+   "sql": "SELECT e.last_name AS employee, m.last_name AS manager FROM employees AS e LEFT JOIN employees AS m ON e.manager_id = m.employee_id"
+  },
+  {
+   "id": "hr-a04-department-average-salary",
+   "origin": "authored",
+   "sql": "SELECT d.department_name, COUNT(*) AS headcount, AVG(e.salary) AS average_salary FROM employees AS e JOIN departments AS d ON e.department_id = d.department_id GROUP BY d.department_name HAVING COUNT(*) > 3"
+  },
+  {
+   "id": "hr-a05-distinct-on-key",
+   "origin": "authored",
+   "sql": "SELECT DISTINCT employee_id, last_name FROM employees"
+  },
+  {
+   "id": "hr-a06-distinct-not-on-key",
+   "origin": "authored",
+   "sql": "SELECT DISTINCT job_id FROM employees WHERE department_id IS NOT NULL"
+  },
+  {
+   "id": "hr-a07-in-subquery",
+   "origin": "authored",
+   "sql": "SELECT employee_id, last_name FROM employees WHERE department_id IN (SELECT department_id FROM departments WHERE location_id = 1700)"
+  },
+  {
+   "id": "hr-a08-exists-job-history",
+   "origin": "authored",
+   "sql": "SELECT e.employee_id, e.last_name FROM employees AS e WHERE EXISTS (SELECT 1 FROM job_history AS jh WHERE jh.employee_id = e.employee_id)"
+  },
+  {
+   "id": "hr-a09-not-exists-empty-departments",
+   "origin": "authored",
+   "sql": "SELECT d.department_id, d.department_name FROM departments AS d WHERE NOT EXISTS (SELECT 1 FROM employees AS e WHERE e.department_id = d.department_id)"
+  },
+  {
+   "id": "hr-a10-not-in-with-nulls",
+   "origin": "authored",
+   "sql": "SELECT employee_id, last_name FROM employees WHERE employee_id NOT IN (SELECT manager_id FROM departments)"
+  },
+  {
+   "id": "hr-a11-not-in-over-employee-managers",
+   "origin": "authored",
+   "sql": "SELECT employee_id, last_name FROM employees WHERE employee_id NOT IN (SELECT manager_id FROM employees WHERE manager_id IS NOT NULL)"
+  },
+  {
+   "id": "hr-a12-scalar-subquery-max-salary",
+   "origin": "authored",
+   "sql": "SELECT employee_id, last_name, salary FROM employees WHERE salary = (SELECT MAX(salary) FROM employees)"
+  },
+  {
+   "id": "hr-a13-correlated-above-department-average",
+   "origin": "authored",
+   "sql": "SELECT e.employee_id, e.last_name, e.salary FROM employees AS e WHERE e.salary > (SELECT AVG(e2.salary) FROM employees AS e2 WHERE e2.department_id = e.department_id)"
+  },
+  {
+   "id": "hr-a14-union-all-job-ids",
+   "origin": "authored",
+   "sql": "SELECT job_id FROM employees UNION ALL SELECT job_id FROM job_history"
+  },
+  {
+   "id": "hr-a15-union-distinct-job-ids",
+   "origin": "authored",
+   "sql": "SELECT job_id FROM employees UNION DISTINCT SELECT job_id FROM job_history"
+  },
+  {
+   "id": "hr-a16-intersect-job-ids",
+   "origin": "authored",
+   "sql": "SELECT job_id FROM employees INTERSECT DISTINCT SELECT job_id FROM job_history"
+  },
+  {
+   "id": "hr-a17-except-departments-without-history",
+   "origin": "authored",
+   "sql": "SELECT department_id FROM departments EXCEPT DISTINCT SELECT department_id FROM job_history"
+  },
+  {
+   "id": "hr-a18-rank-salary-in-department",
+   "origin": "authored",
+   "sql": "SELECT employee_id, department_id, salary, RANK() OVER (PARTITION BY department_id ORDER BY salary DESC) AS salary_rank FROM employees"
+  },
+  {
+   "id": "hr-a19-running-payroll",
+   "origin": "authored",
+   "sql": "SELECT employee_id, hire_date, SUM(salary) OVER (ORDER BY hire_date, employee_id) AS payroll_so_far FROM employees"
+  },
+  {
+   "id": "hr-a20-previous-hire-in-department",
+   "origin": "authored",
+   "sql": "SELECT employee_id, department_id, hire_date, LAG(hire_date) OVER (PARTITION BY department_id ORDER BY hire_date, employee_id) AS previous_hire FROM employees"
+  },
+  {
+   "id": "hr-a21-cte-chain-unused-cte",
+   "origin": "authored",
+   "sql": "WITH well_paid AS (SELECT employee_id, department_id, salary FROM employees WHERE salary > 8000), unused AS (SELECT job_id FROM jobs), by_department AS (SELECT department_id, COUNT(*) AS n FROM well_paid GROUP BY department_id) SELECT d.department_name, b.n FROM by_department AS b JOIN departments AS d ON d.department_id = b.department_id"
+  },
+  {
+   "id": "hr-a22-derived-table-trivial-predicate",
+   "origin": "authored",
+   "sql": "SELECT t.employee_id, t.last_name FROM (SELECT employee_id, last_name, salary FROM employees WHERE 1 = 1 AND TRUE) AS t WHERE t.salary > 10000"
+  },
+  {
+   "id": "hr-a23-redundant-parentheses",
+   "origin": "authored",
+   "sql": "SELECT ((e.employee_id)), (e.salary + (0)) AS pay FROM employees AS e WHERE ((e.department_id = 50)) AND (e.salary > (2500))"
+  },
+  {
+   "id": "hr-a24-geography-chain",
+   "origin": "authored",
+   "sql": "SELECT l.city, c.country_name, r.region_name FROM locations AS l JOIN countries AS c ON l.country_id = c.country_id JOIN regions AS r ON c.region_id = r.region_id WHERE r.region_name = 'Europe'"
+  },
+  {
+   "id": "hr-a25-management-chain",
+   "origin": "authored",
+   "sql": "WITH RECURSIVE chain AS (SELECT employee_id, manager_id, last_name, 0 AS depth FROM employees WHERE manager_id IS NULL UNION ALL SELECT e.employee_id, e.manager_id, e.last_name, c.depth + 1 FROM employees AS e JOIN chain AS c ON e.manager_id = c.employee_id) SELECT employee_id, last_name, depth FROM chain"
+  },
+  {
+   "id": "hr-a26-job-history-composite-key",
+   "origin": "authored",
+   "sql": "SELECT DISTINCT employee_id, start_date, job_id FROM job_history"
+  },
+  {
+   "id": "hr-a27-commission-coalesce",
+   "origin": "authored",
+   "sql": "SELECT employee_id, salary * (1 + COALESCE(commission_pct, 0)) AS total_pay FROM employees"
+  },
+  {
+   "id": "hr-a28-count-nullable-column",
+   "origin": "authored",
+   "sql": "SELECT COUNT(*) AS employees, COUNT(commission_pct) AS with_commission, COUNT(manager_id) AS with_manager FROM employees"
+  },
+  {
+   "id": "hr-a29-salary-band-case",
+   "origin": "authored",
+   "sql": "SELECT employee_id, CASE WHEN salary < 5000 THEN 'low' WHEN salary < 10000 THEN 'mid' ELSE 'high' END AS band FROM employees"
+  },
+  {
+   "id": "hr-a30-salary-near-job-maximum",
+   "origin": "authored",
+   "sql": "SELECT e.employee_id, e.salary, j.min_salary, j.max_salary FROM employees AS e JOIN jobs AS j ON e.job_id = j.job_id WHERE e.salary >= 0.9 * j.max_salary"
+  },
+  {
+   "id": "hr-a31-top-earners",
+   "origin": "authored",
+   "sql": "SELECT employee_id, last_name, salary FROM employees ORDER BY salary DESC, employee_id LIMIT 10"
+  },
+  {
+   "id": "hr-a32-job-changes-per-employee",
+   "origin": "authored",
+   "sql": "SELECT e.employee_id, e.last_name, COUNT(jh.start_date) AS past_jobs FROM employees AS e LEFT JOIN job_history AS jh ON jh.employee_id = e.employee_id GROUP BY e.employee_id, e.last_name"
+  }
+ ]
+}

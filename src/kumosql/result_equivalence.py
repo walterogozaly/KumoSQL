@@ -8,9 +8,11 @@ disagreement is a concrete counterexample.
 
 Each run is isolated: every side of every seed gets its own in-memory DuckDB
 connection, physical source tables are loaded fresh from the synthetic
-dataset, and tables written by a script (``CREATE TABLE``/``INSERT``) are
-renamed to run-unique local names so two runs can never observe each other's
-output.
+dataset, and tables written by a script (``CREATE TABLE``, ``INSERT``,
+``UPDATE``, ``DELETE``, ``TRUNCATE``) are renamed to run-unique local names so
+two runs can never observe each other's output. A script that ends by
+modifying a table is compared by that table's rows, never by its
+affected-row count.
 """
 
 from __future__ import annotations
@@ -29,6 +31,8 @@ from typing import Any, Iterable, Mapping
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import spell_for_duckdb
+from .duckdb_load import small_database
 from .sqlx import looks_like_sqlx, split_sqlx_sections
 
 Schema = Mapping[str, Mapping[str, str]]
@@ -68,15 +72,21 @@ class ResultEquivalence:
     only_right: tuple[Row, ...] = ()
     left_duckdb_sql: tuple[str, ...] = ()
     right_duckdb_sql: tuple[str, ...] = ()
+    float_digits: int | None = 12
+    """The float policy the rows were compared under: significant digits, or ``None`` for exact."""
 
     @property
     def equivalent(self) -> bool:
         return self.status is ResultEquivalenceStatus.EQUIVALENT
 
+    @property
+    def float_comparison(self) -> str:
+        return float_policy(self.float_digits)
+
     def describe(self, max_rows: int = 10) -> str:
         """Render a human-readable report, including any counterexample."""
 
-        lines = [f"{self.status.value}: {self.reason}"]
+        lines = [f"{self.status.value}: {self.reason}", f"floats compared: {self.float_comparison}"]
         if self.failing_seed is not None:
             lines.append(f"failing seed: {self.failing_seed}")
         if self.left_output is not None and self.right_output is not None:
@@ -370,8 +380,9 @@ def generate_synthetic_dataset(
 
     Seed 0 is always an empty dataset, which catches rewrites that differ only
     when an input is empty (for example aggregates without ``GROUP BY``).
-    Every other seed includes NULLs and at least one exact duplicate row per
-    non-empty table, so bag semantics are exercised. With ``rules`` (declared
+    On every other seed each value is NULL with probability ``null_rate`` (so a
+    small table can have none) and each non-empty table gets one exact duplicate
+    row, so bag semantics are exercised. With ``rules`` (declared
     NOT NULL columns and keys, by lower-case table name) rows that break a rule
     are dropped, and a table with a key gets no exact duplicate row.
     """
@@ -451,16 +462,56 @@ def _cte_names(statement: exp.Expression) -> set[str]:
     return names
 
 
+_MODIFYING = (exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.TruncateTable)
+_MODIFYING_COMMANDS = {"INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE"}
+
+
+def _modifies_table(statement: exp.Expression) -> bool:
+    """Whether ``statement`` changes the rows of a table that may already exist.
+
+    DuckDB answers such a statement with its affected-row count, which says
+    nothing about the rows written, so the written table is compared instead.
+    """
+
+    if isinstance(statement, exp.Command):
+        return str(statement.this).upper() in _MODIFYING_COMMANDS
+    return isinstance(statement, _MODIFYING)
+
+
 def _write_target(statement: exp.Expression) -> exp.Table | None:
-    if isinstance(statement, exp.Create):
-        target = statement.this
-    elif isinstance(statement, exp.Insert):
+    if isinstance(statement, exp.Delete) and not isinstance(statement.this, exp.Table):
+        # BigQuery's ``DELETE t WHERE ...`` (FROM is optional) parses with the
+        # table under ``tables``; move it to ``this`` so DuckDB gets DELETE FROM.
+        tables = statement.args.get("tables") or []
+        if len(tables) == 1 and isinstance(tables[0], exp.Table):
+            statement.set("tables", None)
+            statement.set("this", tables[0])
+    if isinstance(statement, exp.TruncateTable):
+        target = statement.expressions[0] if len(statement.expressions) == 1 else None
+    elif isinstance(statement, (exp.Create, *_MODIFYING)):
         target = statement.this
     else:
         return None
     if isinstance(target, exp.Schema):
         target = target.this
     return target if isinstance(target, exp.Table) else None
+
+
+def _unsupported_write(statement: exp.Expression, target: exp.Table | None, dialect: str) -> str | None:
+    """Why a table-modifying statement cannot be compared by its written table, or ``None``."""
+
+    if target is None:
+        return "cannot tell which table it modifies"
+    if isinstance(statement, exp.Merge) or (
+        isinstance(statement, exp.Update) and (statement.args.get("from_") or statement.args.get("from"))
+    ):
+        return (
+            "MERGE and UPDATE ... FROM: BigQuery fails when a target row matches several "
+            "source rows, DuckDB silently uses one of them"
+        )
+    if dialect == "bigquery" and isinstance(statement, (exp.Update, exp.Delete)) and not statement.args.get("where"):
+        return "BigQuery requires a WHERE clause on UPDATE and DELETE"
+    return None
 
 
 def _schema_lookup(schema: Schema) -> dict[str, str]:
@@ -507,18 +558,24 @@ def prepare_statements(
     for index, statement in enumerate(statements):
         ctes = _cte_names(statement)
         target = _write_target(statement)
+        modifies = _modifies_table(statement)
+        if modifies:
+            unsupported = _unsupported_write(statement, target, dialect)
+            if unsupported:
+                raise ExecutionError(f"statement {index + 1} is not supported: {unsupported}")
         target_local: str | None = None
         if target is not None:
             target_key = _table_key(target).lower()
             target_local = targets.get(target_key)
             if target_local is None:
                 target_local = f"__eqv_{run_tag}_target_{len(targets) + 1:03d}"
-                if isinstance(statement, exp.Insert):
-                    # INSERT appends to existing rows, so the renamed target
-                    # starts as a copy of the source table it stands in for.
+                if modifies:
+                    # INSERT, UPDATE, DELETE and TRUNCATE change existing rows,
+                    # so the renamed target starts as a copy of the source table
+                    # it stands in for, and is what the script returns.
                     if target_key not in lookup:
                         raise ExecutionError(
-                            f"statement {index + 1} inserts into {_table_key(target)!r}, "
+                            f"statement {index + 1} writes to {_table_key(target)!r}, "
                             "which is neither created by the script nor in the synthetic schema"
                         )
                     duckdb_sql.append(
@@ -555,6 +612,9 @@ def prepare_statements(
             # ``CREATE TABLE t AS SELECT ... FROM t`` reads the source table.
             targets[target_key] = target_local
             last_target = target_local
+            if isinstance(statement, (exp.Update, exp.Delete)) and not target.alias:
+                # Columns may be qualified by the written table's name (``t.a``).
+                target.set("alias", exp.TableAlias(this=exp.to_identifier(target.name)))
             target.set("catalog", None)
             target.set("db", None)
             target.set("this", exp.to_identifier(target_local))
@@ -563,7 +623,7 @@ def prepare_statements(
                 from .bigquery_on_duckdb import faithful
 
                 statement = faithful(statement, _column_types(schema))
-            duckdb_sql.append(statement.sql(dialect="duckdb"))
+            duckdb_sql.append(spell_for_duckdb(statement).sql(dialect="duckdb"))
         except sqlglot.errors.SqlglotError as exc:
             raise ExecutionError(f"cannot translate statement {index + 1} to DuckDB: {exc}") from exc
     return duckdb_sql, last_target
@@ -581,7 +641,7 @@ def _connect(dialect: str = "bigquery"):
         raise ExecutionError(
             "duckdb is required for result equivalence; install kumosql[execution]"
         ) from exc
-    connection = duckdb.connect(database=":memory:")
+    connection = small_database()
     if dialect == "bigquery":
         from .bigquery_on_duckdb import configure
 
@@ -680,6 +740,7 @@ class DatasetRunner:
         for key, columns in columns_by_table.items():
             column_sql = ", ".join(f'"{name}" {_duckdb_type(t)}' for name, t in columns)
             self._connection.execute(f'CREATE TABLE "{_local_name(key)}" ({column_sql})')
+        self._contents = {_local_name(key): "" for key in columns_by_table}  # each table's rows as literal text
         self._prepared: dict[str, str] = {}
 
     def close(self) -> None:
@@ -707,12 +768,17 @@ class DatasetRunner:
             return
         for key, table in dataset.tables.items():
             local = _local_name(key)
-            self._connection.execute(f'DELETE FROM "{local}"')
+            values_sql = ", ".join("(" + ", ".join(_sql_literal(value) for value in row) + ")" for row in table.rows)
+            # Datasets of one suite often share a table's rows; a table already holding them is left as it is
+            current = self._contents.pop(local, None)
+            if values_sql == current:
+                self._contents[local] = values_sql
+                continue
+            if current != "":
+                self._connection.execute(f'DELETE FROM "{local}"')
             if table.rows:
-                values_sql = ", ".join(
-                    "(" + ", ".join(_sql_literal(value) for value in row) + ")" for row in table.rows
-                )
                 self._connection.execute(f'INSERT INTO "{local}" VALUES {values_sql}')
+            self._contents[local] = values_sql
         self._loaded = dataset
 
     def run(self, sql: str, dataset: SyntheticDataset, *, timeout: float | None = None) -> QueryOutput:
@@ -736,24 +802,46 @@ class DatasetRunner:
         return QueryOutput(columns=columns, rows=_bigquery_rows(rows, self.dialect))
 
 
-def _normalize_value(value: Any, float_digits: int) -> Any:
+def _normalize_value(value: Any, float_digits: int | None, booleans_are_integers: bool = False) -> Any:
+    """Encode one result value as a hashable key that keeps its kind.
+
+    Booleans, NaN, arrays and structs get tagged tuples, so ``TRUE`` never equals
+    ``1``, NaN never equals the string or array ``"NaN"``, and a struct never
+    equals an array of pairs; every non-scalar encoding is such a tuple. Numbers
+    stay untagged so ``int``, ``float`` and ``Decimal`` still compare by value:
+    DuckDB's result types legitimately differ from BigQuery's (and between two
+    equivalent queries), e.g. a ``NUMERIC`` column comes back as ``Decimal`` but
+    dividing it gives a ``float``. ``float_digits`` rounds floats to that many significant digits;
+    ``None`` compares them exactly. ``booleans_are_integers`` reads ``TRUE`` as ``1`` for corpora written in
+    a dialect with no boolean type (MySQL, Calcite), where the same predicate is a boolean in one query and a
+    0/1 integer in the other.
+    """
+
+    if isinstance(value, bool):
+        return int(value) if booleans_are_integers else ("bool", value)
     if isinstance(value, float):
         if math.isnan(value):
-            return ("NaN",)
+            return ("nan",)
         if value == 0:
             return 0.0
-        return float(f"{value:.{float_digits}g}")
+        return value if float_digits is None else float(f"{value:.{float_digits}g}")
     if isinstance(value, Decimal):
-        return value.normalize() if value == value else ("NaN",)
+        return value.normalize() if value == value else ("nan",)
     if isinstance(value, (list, tuple)):  # arrays and structs (bigquery_rows reads both as tuples)
-        return tuple(_normalize_value(v, float_digits) for v in value)
+        return ("array", *(_normalize_value(v, float_digits, booleans_are_integers) for v in value))
     if isinstance(value, dict):
-        return tuple(sorted((k, _normalize_value(v, float_digits)) for k, v in value.items()))
+        return ("struct", *sorted((k, _normalize_value(v, float_digits, booleans_are_integers)) for k, v in value.items()))
     return value
 
 
 def _sort_key(row: Row) -> tuple:
     return tuple((value is None, type(value).__name__, repr(value)) for value in row)
+
+
+def float_policy(float_digits: int | None) -> str:
+    """Name the float comparison policy, as recorded on results."""
+
+    return "exact" if float_digits is None else f"{float_digits} significant digits"
 
 
 def compare_outputs(
@@ -762,22 +850,45 @@ def compare_outputs(
     *,
     ignore_row_order: bool = True,
     check_column_names: bool = True,
-    float_digits: int = 12,
+    float_digits: int | None = 12,
+    booleans_are_integers: bool = False,
 ) -> tuple[bool, str, tuple[Row, ...], tuple[Row, ...]]:
-    """Compare two outputs; returns (equal, reason, only_left, only_right)."""
+    """Compare two outputs; returns (equal, reason, only_left, only_right).
+
+    Rows are compared as multisets of type-tagged values (see :func:`_normalize_value`): numbers
+    compare by value (``1`` and ``1.0`` are equal, and floats are rounded to ``float_digits``
+    significant digits first, or compared exactly with ``None``), but a boolean, NaN, array or
+    struct keeps its kind. ``only_left``/``only_right`` hold the rows as the engine returned them.
+    """
 
     if len(left.columns) != len(right.columns):
         return False, f"column counts differ ({len(left.columns)} vs {len(right.columns)})", (), ()
     if check_column_names and [c.lower() for c in left.columns] != [c.lower() for c in right.columns]:
         return False, "column names differ", (), ()
 
-    left_rows = [tuple(_normalize_value(v, float_digits) for v in row) for row in left.rows]
-    right_rows = [tuple(_normalize_value(v, float_digits) for v in row) for row in right.rows]
+    def keyed(rows: tuple[Row, ...]) -> tuple[list[Row], dict[Row, list[Row]]]:
+        keys: list[Row] = []
+        originals: dict[Row, list[Row]] = {}
+        for row in rows:
+            key = tuple(_normalize_value(v, float_digits, booleans_are_integers) for v in row)
+            keys.append(key)
+            originals.setdefault(key, []).append(row)
+        return keys, originals
+
+    def surplus(counts: Counter, originals: dict[Row, list[Row]]) -> tuple[Row, ...]:
+        return tuple(
+            row
+            for key in sorted(counts, key=_sort_key)
+            for row in originals[key][: counts[key]]
+        )
+
+    left_rows, left_originals = keyed(left.rows)
+    right_rows, right_originals = keyed(right.rows)
 
     left_counts = Counter(left_rows)
     right_counts = Counter(right_rows)
-    only_left = tuple(sorted((left_counts - right_counts).elements(), key=_sort_key))
-    only_right = tuple(sorted((right_counts - left_counts).elements(), key=_sort_key))
+    only_left = surplus(left_counts - right_counts, left_originals)
+    only_right = surplus(right_counts - left_counts, right_originals)
     if only_left or only_right:
         return False, "result multisets differ", only_left, only_right
     if not ignore_row_order and left_rows != right_rows:
@@ -795,7 +906,7 @@ def check_result_equivalence(
     null_rate: float = 0.15,
     ignore_row_order: bool = True,
     check_column_names: bool = True,
-    float_digits: int = 12,
+    float_digits: int | None = 12,
     use_query_constants: bool = True,
     targeted: bool = False,
 ) -> ResultEquivalence:
@@ -845,7 +956,8 @@ def check_result_equivalence(
             continue
         except ExecutionError as exc:
             return ResultEquivalence(
-                ResultEquivalenceStatus.ERROR, f"left side failed: {exc}", tuple(checked), seed
+                ResultEquivalenceStatus.ERROR, f"left side failed: {exc}", tuple(checked), seed,
+                float_digits=float_digits,
             )
         try:
             right_output, right_sql_out = execute_on_dataset(
@@ -862,6 +974,7 @@ def check_result_equivalence(
                 seed,
                 left_output=left_output,
                 left_duckdb_sql=tuple(left_sql_out),
+                float_digits=float_digits,
             )
         # A side that disagrees with itself on identical input cannot support
         # either an equivalence or a counterexample claim.
@@ -879,6 +992,7 @@ def check_result_equivalence(
                     f"{side} side failed on repeat run: {exc}",
                     tuple(checked),
                     seed,
+                    float_digits=float_digits,
                 )
             stable, _, _, _ = compare_outputs(
                 first_output,
@@ -897,6 +1011,7 @@ def check_result_equivalence(
                     seed,
                     left_duckdb_sql=tuple(left_sql_out),
                     right_duckdb_sql=tuple(right_sql_out),
+                    float_digits=float_digits,
                 )
         checked.append(seed)
         equal, reason, only_left, only_right = compare_outputs(
@@ -938,6 +1053,7 @@ def check_result_equivalence(
                 only_right,
                 tuple(left_sql_out),
                 tuple(right_sql_out),
+                float_digits=float_digits,
             )
     if not checked and skipped:
         return ResultEquivalence(
@@ -951,6 +1067,7 @@ def check_result_equivalence(
         tuple(checked),
         left_duckdb_sql=tuple(left_sql_out),
         right_duckdb_sql=tuple(right_sql_out),
+        float_digits=float_digits,
     )
 
 

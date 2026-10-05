@@ -27,6 +27,7 @@ result wins. Proofs are cached per protected table and the SQL it depends on.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 import re
 import time
 from typing import Callable, Iterable, Mapping, Sequence
@@ -34,14 +35,13 @@ from typing import Callable, Iterable, Mapping, Sequence
 import sqlglot
 from sqlglot import exp
 
+from .ast_utils import is_cte_reference, set_with_clause, with_clause
+from .minimizer_identity import ambiguous, fresh_catalogs, internal_name, single_query
 from .pipeline import Pipeline
 from .pipeline_types import Model, Target
 from .prover_schema import ProverSchema, _Builder, _select_names
-from .refactor import SUFFIX, _inline_into, _Reads, _redirect, _table_nodes, check_observable
+from .refactor import SUFFIX, _inline_into, _Reads, _redirect, _table_for, _table_nodes, check_observable
 
-#: Internal namespace for bare and two-part names, so every key has three parts.
-_CATALOG = "kumo_min"
-_DATASET = "tables"
 MAX_SQL_CHARS = 200_000
 
 
@@ -72,23 +72,19 @@ def pipeline_score(tables: Mapping[str, str]) -> float:
 # ------------------------------------------------------------------ names
 
 
-def _parts(name: str) -> tuple[str, ...]:
-    parts = tuple(p.strip("`").strip().lower() for p in name.strip().strip("`").split("."))
+def _parts(name: str, fold: bool = False) -> tuple[str, ...]:
+    """The parts of a table name as written. Case is kept (BigQuery names are case-sensitive); ``fold`` lower-cases
+    them for dialects whose unquoted names are not."""
+
+    parts = tuple(p.strip("`").strip() for p in name.strip().strip("`").split("."))
     if not all(parts) or len(parts) > 3:
         raise MinimizationError(f"{name!r} is not a table name")
-    return parts
+    return tuple(p.lower() for p in parts) if fold else parts
 
 
-def _internal(parts: tuple[str, ...]) -> tuple[str, str, str]:
-    if len(parts) == 1:
-        return (_CATALOG, _DATASET, parts[0])
-    if len(parts) == 2:
-        return (_CATALOG, *parts)
-    return parts  # type: ignore[return-value]
-
-
-def _table_parts(table: exp.Table) -> tuple[str, ...]:
-    return tuple(p.lower() for p in (table.catalog, table.db, table.name) if p)
+def _table_parts(table: exp.Table, fold: bool = False) -> tuple[str, ...]:
+    parts = tuple(p for p in (table.catalog, table.db, table.name) if p)
+    return tuple(p.lower() for p in parts) if fold else parts
 
 
 def _set_parts(table: exp.Table, parts: Sequence[str]) -> None:
@@ -97,11 +93,10 @@ def _set_parts(table: exp.Table, parts: Sequence[str]) -> None:
     table.set("catalog", exp.to_identifier(parts[-3]) if len(parts) > 2 else None)
 
 
-def _rename_tables(tree: exp.Expression, mapping: Mapping[tuple[str, ...], Sequence[str]]) -> exp.Expression:
-    ctes = {c.alias_or_name.lower() for c in tree.find_all(exp.CTE)}
+def _rename_tables(tree: exp.Expression, mapping: Mapping[tuple[str, ...], Sequence[str]], fold: bool = False) -> exp.Expression:
     for table in list(tree.find_all(exp.Table)):
-        parts = _table_parts(table)
-        if not parts or (len(parts) == 1 and parts[0] in ctes):
+        parts = _table_parts(table, fold)
+        if not parts or is_cte_reference(table):
             continue
         new = mapping.get(parts)
         if new is not None:
@@ -136,6 +131,7 @@ class TableMinimization:
     moves: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
     changed: list[str] = field(default_factory=list)
+    added: list[str] = field(default_factory=list)  # shared tables factored out of repeated queries
     tried: int = 0
     rejected: int = 0
     rejected_moves: list[dict] = field(default_factory=list)
@@ -157,6 +153,7 @@ class TableMinimization:
             "moves": self.moves,
             "removed": self.removed,
             "changed": self.changed,
+            "added": self.added,
             "tried": self.tried,
             "rejected": self.rejected,
             "rejected_moves": self.rejected_moves,
@@ -206,10 +203,21 @@ class _Setup:
     scores: dict[str, float] = field(default_factory=dict)
     names_cache: dict[tuple, tuple[str, ...]] = field(default_factory=dict)
     back: dict = field(default_factory=dict)  # internal parts -> the name as the input spelled it
+    catalogs: tuple[str, str] = ("kumo_min", "kumo_min1")  # internal catalogs of bare and two-part names
+    fold: bool = False  # the dialect's unquoted names are case-insensitive
+    ambiguous: frozenset[str] = frozenset()  # names that differ from another only by case
+    touching: frozenset[str] = frozenset()  # tables that are one of those, or read one
+    protected_opaque: tuple[str, ...] = ()  # protected tables that are not one query: returned as given
     proof_cache: dict = field(default_factory=dict)
     schema_cache: dict = field(default_factory=dict)
     forms_cache: dict = field(default_factory=dict)
     all_reads: dict = field(default_factory=dict)
+    # surviving tables that must stay proved equal to the original on the columns they keep
+    checked: frozenset[str] = frozenset()
+    keep_columns: dict[str, frozenset[str]] = field(default_factory=dict)  # never pruned
+    factor: bool = False
+    new_tables: dict = field(default_factory=dict)  # body fingerprint -> internal key of a factored table
+    new_names: dict = field(default_factory=dict)  # internal key of a factored table -> the name it is given
 
     def score(self, sql: str) -> float:
         if sql not in self.scores:
@@ -220,54 +228,74 @@ class _Setup:
         return round(sum(self.score(s) for s in state.values()) + len(state), 2), sum(len(s) for s in state.values())
 
 
-def _prepare(tables, protected, sources, dialect, timeout_ms):
+def _with_incremental(fixed, incremental):
+    """``fixed`` plus the incremental tables: a table that builds on its own earlier rows cannot be read as its SELECT."""
+
+    names = [str(n) for n in (incremental or ())]
+    if not names:
+        return fixed
+    if isinstance(fixed, Mapping):
+        return {**{name: None for name in names}, **fixed}
+    return [*(fixed or ()), *names]
+
+
+def _prepare(tables, protected, sources, dialect, timeout_ms, fixed=None, checked=(), keep_columns=None, extra_texts=()):
     if not isinstance(tables, Mapping) or not tables:
         raise MinimizationError("give at least one table")
+    fold = dialect != "bigquery"
     names: dict[tuple[str, ...], str] = {}  # user parts -> user spelling
     for name in tables:
-        parts = _parts(str(name))
+        parts = _parts(str(name), fold)
         if parts in names:
             raise MinimizationError(f"{name!r} is given twice")
         names[parts] = str(name)
     source_specs: dict[tuple[str, ...], object] = {}
     for name, spec in (sources or {}).items():
-        parts = _parts(str(name))
+        parts = _parts(str(name), fold)
         if parts in names:
             raise MinimizationError(f"{name!r} is both a source and a table")
         source_specs[parts] = spec
 
+    # internal names live under catalogs that occur nowhere in the input, so no real table can take their place
+    catalogs = fresh_catalogs([*map(str, tables), *map(str, tables.values()), *map(str, sources or ()), *extra_texts])
     mapping: dict[tuple[str, ...], tuple[str, str, str]] = {}
     back: dict[tuple[str, ...], tuple[str, ...]] = {}
     for parts in [*names, *source_specs]:
-        internal = _internal(parts)
+        internal = internal_name(parts, catalogs)
         mapping[parts] = internal
         back[internal] = parts
+    fixed_specs: dict[tuple[str, ...], object] = {}
+    for name in (fixed or ()):
+        parts = _parts(str(name), fold)
+        if parts not in names:
+            raise MinimizationError(f"fixed table {name!r} is not one of the tables")
+        fixed_specs[parts] = fixed.get(name) if isinstance(fixed, Mapping) else None
     # a source named only in the SQL (no columns given) still gets an internal name
     parsed: dict[tuple[str, ...], exp.Expression | None] = {}
     for parts, user in names.items():
-        try:
-            tree = sqlglot.parse_one(tables[user], read=dialect)
-            if dialect != "bigquery":
-                tree = sqlglot.parse_one(tree.sql(dialect="bigquery"), read="bigquery")
-        except sqlglot.errors.SqlglotError:
-            tree = None
-        if tree is not None and not isinstance(tree, exp.Query):
-            tree = None
+        if parts in fixed_specs:  # read as it is, never rewritten, like a table that is not a query
+            parsed[parts] = None
+            continue
+        # a script (more than one statement) is not read as its first SELECT: it stays opaque
+        tree = single_query(tables[user], dialect)
+        if tree is not None and dialect != "bigquery":
+            tree = single_query(tree.sql(dialect="bigquery"), "bigquery")
         parsed[parts] = tree
         if tree is None:
             continue
-        ctes = {c.alias_or_name.lower() for c in tree.find_all(exp.CTE)}
         for table in tree.find_all(exp.Table):
-            ref = _table_parts(table)
-            if not ref or (len(ref) == 1 and ref[0] in ctes) or ref in mapping:
+            ref = _table_parts(table, fold)
+            if not ref or is_cte_reference(table) or ref in mapping:
                 continue
-            internal = _internal(ref)
+            internal = internal_name(ref, catalogs)
             mapping[ref] = internal
             back[internal] = ref
+    if len(set(mapping.values())) != len(mapping):  # cannot happen with fresh catalogs; never prove on merged tables
+        raise MinimizationError("two names map to the same table")
 
     protected_keys = []
     for name in protected:
-        parts = _parts(str(name))
+        parts = _parts(str(name), fold)
         if parts not in names:
             raise MinimizationError(f"protected table {name!r} is not one of the tables")
         key = ".".join(mapping[parts])
@@ -286,7 +314,7 @@ def _prepare(tables, protected, sources, dialect, timeout_ms):
             opaque.add(key)
             kind = "operation"  # not a query: read as it is, never rewritten
         else:
-            sql = _rename_tables(tree, mapping).sql(dialect="bigquery")
+            sql = _rename_tables(tree, mapping, fold).sql(dialect="bigquery")
             kind = "table"
         models[key] = Model(Target(*internal), kind, sql)
         if tree is not None:
@@ -309,6 +337,11 @@ def _prepare(tables, protected, sources, dialect, timeout_ms):
         key = ".".join(internal)
         if key not in models and key not in source_targets:
             source_targets[key] = Target(*internal)
+    for parts, spec in fixed_specs.items():  # columns of a fixed table let the prover expand a star over it
+        if spec:
+            typed, _key_cols, _not_null = _source_facts(spec)
+            key = ".".join(mapping[parts])
+            source_columns[key] = [c.lower() for c in typed]
     pipeline = Pipeline(models=models, sources=source_targets, source_schema=source_schema)
     upstream = pipeline.upstream
     done: set[str] = set()
@@ -327,17 +360,54 @@ def _prepare(tables, protected, sources, dialect, timeout_ms):
             elif child in models and child not in done:
                 path.add(child)
                 stack.append((child, iter(sorted(upstream.get(child, ())))))
+    protected_opaque = tuple(k for k in protected_keys if k in opaque)
     protected_keys = [k for k in protected_keys if k not in opaque]  # an unreadable table is returned as given
     # an unreadable table's text is not renamed, so any table whose name it mentions counts as read
     words = {w.lower() for key in opaque for w in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", models[key].sql)}
-    mentioned = {key for key in original if key.split(".")[-1] in words}
-    pinned = frozenset(r for r in mentioned | {r for key in opaque for r in upstream.get(key, ())}
+    mentioned = {key for key in original if key.split(".")[-1].lower() in words}
+    # names that differ from another only by case are different tables here (BigQuery's default), but would be one in
+    # a dataset set to case-insensitive names: such a table, and every table that reads one, is kept as written
+    clash = {".".join(parts) for parts in ambiguous(back)}
+    touching = {key for key, sql in original.items() if key in clash or _physical_keys(pipeline, sql) & clash}
+    pinned = frozenset(r for r in mentioned | touching | {r for key in opaque for r in upstream.get(key, ())}
                        if r in original and r not in protected_keys)
-    fixed = frozenset(opaque) | {key for key, sql in original.items() if _volatile(sql)}
+    fixed = frozenset(opaque) | touching | {key for key, sql in original.items() if _volatile(sql)}
     setup = _Setup(pipeline, original, protected_keys, frozenset(opaque), pinned, fixed, _Reads(pipeline), source_columns,
                    facts, timeout_ms)
     setup.back = back
+    setup.catalogs = catalogs
+    setup.fold = fold
+    setup.ambiguous = frozenset(clash)
+    setup.touching = frozenset(touching)
+    setup.protected_opaque = protected_opaque
+    for name in checked or ():
+        parts = _parts(str(name), fold)
+        if parts not in names:
+            raise MinimizationError(f"checked table {name!r} is not one of the tables")
+        key = ".".join(mapping[parts])
+        if key in original and key not in protected_keys and key not in pinned:
+            setup.checked = setup.checked | {key}
+    for name, cols in (keep_columns or {}).items():
+        parts = _parts(str(name), fold)
+        if parts in names:
+            setup.keep_columns[".".join(mapping[parts])] = frozenset(str(c).lower() for c in cols)
     return setup, names, mapping, back
+
+
+def _physical_keys(pipeline: Pipeline, sql: str) -> set[str]:
+    """Keys of every table and source a query reads (WITH tables aside)."""
+
+    from .refactor import _table_nodes
+
+    found = set()
+    try:
+        for table in _table_nodes(sqlglot.parse_one(sql, read="bigquery")):
+            key = pipeline.resolve(table)
+            if key:
+                found.add(key)
+    except sqlglot.errors.SqlglotError:
+        pass
+    return found
 
 
 _VOLATILE_NODES = tuple(
@@ -441,18 +511,25 @@ def _schema(setup: _Setup, columns: Mapping[str, Sequence[str]]) -> ProverSchema
 def _check(setup: _Setup, state: Mapping[str, str], keys: Iterable[str] | None = None) -> tuple[bool, list[str], str]:
     """Every protected table (or ``keys``) of ``state`` keeps its output names and is proved equal."""
 
-    keys = list(keys) if keys is not None else [*setup.protected, *sorted(setup.pinned)]
+    if keys is None:
+        keys = [*setup.protected, *sorted(setup.pinned), *sorted(k for k in setup.checked if k in state)]
+    keys = list(keys)
     if any(len(sql) > MAX_SQL_CHARS for sql in state.values()):
         return False, [], "the SQL grew too large"
     for key in keys:
         if key not in state:
             return False, [], f"{key} no longer exists"
+    missing = _dangling(setup, state, keys)
+    if missing:
+        return False, [], f"{keys[0] if len(keys) == 1 else 'a protected table'} reads {missing}, which no longer exists"
     before = _state_columns(setup, setup.original)
     after = _state_columns(setup, state)
     for key in keys:
         if state[key] == setup.original[key] and _closure(setup, state, key) == _closure(setup, setup.original, key):
             continue
         if not after.get(key) or after.get(key) != before.get(key):
+            if key in setup.checked and _kept_in_order(after.get(key), before.get(key)):
+                continue  # a checked table may lose columns; it is compared on the ones it keeps
             return False, [], f"{key}: output columns are not known to be the same"
     for key, sql in state.items():
         if sql != setup.original.get(key):
@@ -472,8 +549,9 @@ def _check(setup: _Setup, state: Mapping[str, str], keys: Iterable[str] | None =
             # inlined tables would put two WITH tables of one name in one query, where one can capture the
             # other's readers; such a proof is not trusted
             return False, [], f"{key}: two WITH tables share a name once the tables are inlined"
-        ok, used, why = _prove_frontier(setup, state, key, before)
-        if not ok:
+        narrowed = tuple(after[key]) if after.get(key) != before.get(key) else None
+        ok, used, why = _prove_frontier(setup, state, key, before, narrowed)
+        if not ok and narrowed is None:
             # the whole pipeline prover: layer lemmas, then everything inlined; it sees the original
             # tables and the new ones (``__after`` copies) side by side
             if known is None:
@@ -486,6 +564,15 @@ def _check(setup: _Setup, state: Mapping[str, str], keys: Iterable[str] | None =
             return False, [], why
         assumptions.extend(a for a in used if a not in assumptions)
     return True, assumptions, ""
+
+
+def _kept_in_order(kept, original) -> bool:
+    """Whether ``kept`` is ``original`` with some columns left out, in the same order."""
+
+    if not kept or not original:
+        return False
+    remaining = iter(original)
+    return all(any(name == other for other in remaining) for name in kept)
 
 
 def _repeated_ctes(tree: exp.Expression) -> bool:
@@ -506,7 +593,7 @@ def _captured(setup: _Setup, sql: str) -> str:
     for table in tree.find_all(exp.Table):
         parts = _table_parts(table)
         given = setup.back.get(parts)
-        if given is not None and len(given) == 1 and given[0] in ctes:
+        if given is not None and len(given) == 1 and given[0].lower() in ctes:
             return given[0]
     return ""
 
@@ -527,7 +614,11 @@ def _shared(setup: _Setup, state: Mapping[str, str]) -> set[str]:
 
 
 def _expanded(setup: _Setup, sqls: Mapping[str, str], key: str, stop: set[str], trail: tuple = ()) -> exp.Expression:
-    """``key``'s query with every table it reads inlined as a derived table, down to sources and ``stop``."""
+    """``key``'s query with every table it reads inlined as a derived table, down to sources and ``stop``.
+
+    When two WITH tables then share a name, each gets a name of its own (``_unique_ctes``), so that tables
+    that use the same WITH names (``source``, ``renamed``) can sit in one query.
+    """
 
     tree = sqlglot.parse_one(sqls[key], read="bigquery")
     for table in list(_table_nodes(tree)):
@@ -536,31 +627,92 @@ def _expanded(setup: _Setup, sqls: Mapping[str, str], key: str, stop: set[str], 
             continue
         body = _expanded(setup, sqls, found, stop, (*trail, key))
         table.replace(exp.Subquery(this=body, alias=exp.TableAlias(this=exp.to_identifier(table.alias or table.name))))
+    if not trail and _repeated_ctes(tree):
+        counter = [0]
+        for clause in reversed(list(tree.find_all(exp.With))):  # the innermost first
+            if clause.parent is not None:
+                _unique_ctes(clause.parent, counter)
     return tree
 
 
-def _prove_frontier(setup: _Setup, state: Mapping[str, str], key: str, before) -> tuple[bool, list[str], str]:
-    """Prove ``key`` equal by inlining both versions only down to the tables both sides still share."""
+def _unique_ctes(query: exp.Expression, counter: list[int]) -> None:
+    """Rename ``query``'s WITH tables ``<name>__kumo<n>``, references included, in place.
 
+    Only the plain case is renamed: not recursive, each name once, and no WITH inside that defines one of
+    the names again. A WITH table is seen by the WITH tables after it and by the main query (with their
+    subqueries); in its own body and the ones before it, the name is a table of the pipeline. Anything else
+    is left as it is, and the repeated-name check still refuses it.
+    """
+
+    clause = with_clause(query)
+    if clause is None or clause.args.get("recursive"):
+        return
+    ctes = list(clause.expressions)
+    names = [c.alias_or_name.lower() for c in ctes]
+    if len(names) != len(set(names)):
+        return
+    for inner in query.find_all(exp.With):
+        if inner is not clause and {c.alias_or_name.lower() for c in inner.expressions} & set(names):
+            return
+    renamed: dict[str, str] = {}
+    for name in names:
+        counter[0] += 1
+        renamed[name] = f"{name}__kumo{counter[0]}"
+
+    def visible(node: exp.Expression, seen: Mapping[str, str]) -> None:
+        for table in list(node.find_all(exp.Table)):
+            name = table.name.lower()
+            if table.db or table.catalog or name not in seen:
+                continue
+            if not table.alias:  # columns qualified by the WITH name keep naming it
+                table.set("alias", exp.TableAlias(this=exp.to_identifier(table.name)))
+            table.set("this", exp.to_identifier(seen[name]))
+
+    for index, cte in enumerate(ctes):
+        visible(cte.this, {n: renamed[n] for n in names[:index]})
+    set_with_clause(query, None)
+    visible(query, renamed)
+    for index, cte in enumerate(ctes):
+        cte.set("alias", exp.TableAlias(this=exp.to_identifier(renamed[names[index]])))
+    set_with_clause(query, clause)
+
+
+def _prove_frontier(setup: _Setup, state: Mapping[str, str], key: str, before,
+                    narrowed: tuple[str, ...] | None = None) -> tuple[bool, list[str], str]:
+    """Prove ``key`` equal by inlining both versions only down to the tables both sides still share.
+
+    ``narrowed`` names the columns a checked table kept: the original is compared on those columns only.
+    """
 
     shared = _shared(setup, state)
     outcome = (False, [], f"{key}: not proved")
     # first stop at the tables both sides still share; then inline everything down to the sources,
     # which finds a table that was merged into an equal one
     for stop in (shared, set()) if shared else (set(),):
-        outcome = _prove_expanded(setup, state, key, before, stop)
+        outcome = _prove_expanded(setup, state, key, before, stop, narrowed)
         if outcome[0]:
             break
     return outcome
 
 
-def _prove_expanded(setup: _Setup, state: Mapping[str, str], key: str, before, stop: set[str]) -> tuple[bool, list[str], str]:
+def _projected(tree: exp.Expression, columns: Sequence[str]) -> exp.Expression:
+    """``SELECT columns FROM (tree)``: the bag of rows of ``tree`` on those columns, in that order."""
+
+    return exp.select(*(exp.column(exp.to_identifier(c)) for c in columns)).from_(
+        exp.Subquery(this=tree, alias=exp.TableAlias(this=exp.to_identifier("kumo_kept"))))
+
+
+def _prove_expanded(setup: _Setup, state: Mapping[str, str], key: str, before, stop: set[str],
+                    narrowed: tuple[str, ...] | None = None) -> tuple[bool, list[str], str]:
     from .algebraic_equivalence import prove_equivalent_algebraic
     from .smt_equivalence import SmtStatus
 
     shared = stop
     try:
-        left = _expanded(setup, setup.original, key, shared).sql(dialect="bigquery")
+        original = _expanded(setup, setup.original, key, shared)
+        if narrowed is not None:
+            original = _projected(original, narrowed)
+        left = original.sql(dialect="bigquery")
         right = _expanded(setup, state, key, shared).sql(dialect="bigquery")
     except (sqlglot.errors.SqlglotError, RecursionError) as error:
         return False, [], f"{key}: {error}"
@@ -721,7 +873,7 @@ def _moves(setup: _Setup, state: Mapping[str, str], columns: Mapping[str, Sequen
         for key in members:
             if key in protected:
                 continue
-            others = sorted(members, key=lambda k: (k not in protected, k))
+            others = sorted(members, key=lambda k: (k not in protected, state[k] != state[key], k))  # exact copies first
             for other in others:
                 if other == key or _depends_on(setup, state, other, key):
                     continue
@@ -749,6 +901,7 @@ def _moves(setup: _Setup, state: Mapping[str, str], columns: Mapping[str, Sequen
             used |= found
         if not used:
             continue
+        used |= setup.keep_columns.get(key, frozenset())
         pruned = _prune(state[key], used)
         if pruned is not None:
             forms = _best(setup, pruned, columns)
@@ -760,6 +913,243 @@ def _moves(setup: _Setup, state: Mapping[str, str], columns: Mapping[str, Sequen
             continue
         for form in _simplified(setup, state[key], columns)[:2]:
             yield f"simplify {key}", {**state, key: form}
+
+    if setup.factor:
+        yield from _factor_moves(setup, state, columns)
+
+
+# ------------------------------------------------------------------ shared tables
+
+
+_GENERIC_ALIAS = re.compile(r"^(?:[a-z]{1,3}\d*|t\w{0,2}|sub\w*|sq\w*|dt\w*|tmp\w*|temp\w*|base\d*|inner\w*|q\d*|x\d*)$")
+
+
+@dataclass
+class _Occurrence:
+    key: str  # the table it is in
+    kind: str  # "derived", "cte" or "table"
+    name: str  # derived-table alias or CTE name ("" for a whole table)
+    sql: str  # the repeated query
+
+
+def _fingerprint(body: exp.Expression) -> str:
+    from .canonical import canonical_copy
+
+    try:
+        text = canonical_copy(body).sql(dialect="bigquery", normalize=True, comments=False)
+    except Exception:  # noqa: BLE001 - a shape the canonicalizer cannot follow keeps its own text
+        text = body.sql(dialect="bigquery", normalize=True, comments=False)
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _nested_columns(columns: Mapping[str, Sequence[str]], keys: Iterable[str]) -> dict | None:
+    nested: dict = {}
+    for key in keys:
+        cols = columns.get(key)
+        parts = key.split(".")
+        if not cols or len(parts) != 3:
+            return None
+        nested.setdefault(parts[0], {}).setdefault(parts[1], {})[parts[2]] = {c: "STRING" for c in cols}
+    return nested
+
+
+def _standalone(setup: _Setup, body: exp.Expression, outer_ctes: set[str], columns) -> tuple[str, tuple[str, ...], str] | None:
+    """``(sql, output names, fingerprint)`` when ``body`` can be its own table: it reads only tables (no WITH
+    table of the query around it, no column of an outer query), has named outputs and gives the same rows
+    wherever it runs. The fingerprint is taken with every column qualified, so ``p.amount`` over
+    ``payments AS p`` and ``amount`` over ``payments`` match."""
+
+    if not isinstance(body, exp.Query):
+        return None
+    sql = body.sql(dialect="bigquery")
+    if _volatile(sql):
+        return None
+    own = {c.alias_or_name.lower() for c in body.find_all(exp.CTE)}
+    if any(isinstance(w, exp.With) and w.args.get("recursive") for w in body.find_all(exp.With)):
+        return None
+    reads = set()
+    for table in body.find_all(exp.Table):
+        parts = _table_parts(table)
+        if not parts:
+            return None
+        if len(parts) == 1 and parts[0] in own:
+            continue
+        if len(parts) == 1 and parts[0] in outer_ctes:
+            return None  # reads a WITH table of the query around it
+        found = setup.pipeline.resolve(table)
+        if found is None:
+            return None
+        reads.add(found)
+    names = tuple(n.lower() for n in (_select_names(sql) or ()))
+    if not names or len(set(names)) != len(names):
+        return None
+    schema = _nested_columns(columns, reads)
+    if schema is None and reads:
+        return None
+    try:
+        from sqlglot.optimizer.qualify import qualify
+
+        qualified = qualify(sqlglot.parse_one(sql, read="bigquery"), schema=schema or {}, dialect="bigquery",
+                            validate_qualify_columns=True, quote_identifiers=False)
+    except Exception:  # noqa: BLE001 - a column the body cannot resolve on its own belongs to an outer query
+        return None
+    return sql, names, _fingerprint(qualified) + "|" + ",".join(names)
+
+
+def _occurrences(setup: _Setup, key: str, sql: str, columns) -> list[tuple[str, _Occurrence]]:
+    """``(fingerprint, occurrence)`` for every derived table, WITH table and the whole query of one table."""
+
+    try:
+        tree = sqlglot.parse_one(sql, read="bigquery")
+    except sqlglot.errors.SqlglotError:
+        return []
+    found = []
+    ctes = {c.alias_or_name.lower() for c in tree.find_all(exp.CTE)}
+    whole = _standalone(setup, tree, set(), columns)
+    if whole is not None:
+        found.append((whole[2], _Occurrence(key, "table", "", whole[0])))
+    for node in tree.find_all(exp.Subquery):
+        if not isinstance(node.parent, (exp.From, exp.Join)) or not node.alias:
+            continue
+        alias = node.args.get("alias")
+        if alias is not None and alias.args.get("columns"):
+            continue
+        done = _standalone(setup, node.this, ctes, columns)
+        if done is not None:
+            found.append((done[2], _Occurrence(key, "derived", node.alias.lower(), done[0])))
+    clause = with_clause(tree)
+    if clause is not None and not clause.args.get("recursive"):
+        for cte in clause.expressions:
+            done = _standalone(setup, cte.this, ctes, columns)
+            if done is not None:
+                found.append((done[2], _Occurrence(key, "cte", cte.alias_or_name.lower(), done[0])))
+    return found
+
+
+def _replace_occurrences(sql: str, fingerprint: str, target: str, setup: _Setup, columns) -> str | None:
+    """``sql`` with every derived table and WITH table of that fingerprint read from table ``target``."""
+
+    tree = sqlglot.parse_one(sql, read="bigquery")
+    ctes = {c.alias_or_name.lower() for c in tree.find_all(exp.CTE)}
+    changed = False
+    for node in list(tree.find_all(exp.Subquery)):
+        if not isinstance(node.parent, (exp.From, exp.Join)) or not node.alias:
+            continue
+        done = _standalone(setup, node.this, ctes, columns)
+        if done is None or done[2] != fingerprint:
+            continue
+        node.replace(_table_for(target, node.alias))
+        changed = True
+    clause = with_clause(tree)
+    if clause is not None and not clause.args.get("recursive"):
+        for cte in list(clause.expressions):
+            done = _standalone(setup, cte.this, ctes, columns)
+            if done is None or done[2] != fingerprint:
+                continue
+            name = cte.alias_or_name.lower()
+            if sum(1 for c in tree.find_all(exp.CTE) if c.alias_or_name.lower() == name) != 1:
+                return None  # another WITH table of that name: references cannot be told apart
+            cte.pop()
+            for table in list(tree.find_all(exp.Table)):
+                if not table.db and table.name.lower() == name:
+                    table.replace(_table_for(target, table.alias or table.name))
+            changed = True
+        if not clause.expressions:
+            set_with_clause(tree, None)
+    return tree.sql(dialect="bigquery") if changed else None
+
+
+def _fresh_name(setup: _Setup, hints: Sequence[str], reader: str, state: Mapping[str, str]) -> str:
+    """A table name for a factored query: the first descriptive WITH-table name or alias of its occurrences,
+    else ``<reader>_shared``; never the name of a table, a source or any other word of the SQL (a WITH name
+    of an occurrence aside, since the move removes that WITH table)."""
+
+    tables = {parts[-1] for parts in setup.back.values()} | {k.split(".")[-1] for k in setup.pipeline.models}
+    words = set()
+    for sql in state.values():
+        words |= {name.lower() for name in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", sql)}
+    base = ""
+    for hint in hints:
+        hint = re.sub(r"[^a-z0-9_]", "_", hint.lower()).strip("_")
+        if hint and not _GENERIC_ALIAS.match(hint) and hint not in tables:
+            base = hint
+            break
+    if not base:
+        base = f"{reader}_shared"
+    taken = tables | (words - {base})
+    name, n = base, 1
+    while name in taken:
+        n += 1
+        name = f"{base}_shared" if n == 2 else f"{base}_{n - 1}"
+    return name
+
+
+def _new_table(setup: _Setup, fingerprint: str, occurrences: Sequence[_Occurrence], state: Mapping[str, str]) -> str:
+    """The internal key of the table a repeated query is factored into (one per fingerprint)."""
+
+    if fingerprint in setup.new_tables:
+        return setup.new_tables[fingerprint]
+    occurrence = occurrences[0]
+    reader_parts = setup.back.get(tuple(occurrence.key.split(".")), tuple(occurrence.key.split(".")))
+    hints = [o.name for o in occurrences if o.kind == "cte"] + [o.name for o in occurrences if o.kind == "derived"]
+    name = _fresh_name(setup, hints, reader_parts[-1], state)
+    parts = (*reader_parts[:-1], name)
+    internal = internal_name(parts, setup.catalogs)
+    key = ".".join(internal)
+    setup.back[internal] = parts
+    models = dict(setup.pipeline.models)
+    models[key] = Model(Target(*internal), "table", occurrence.sql)
+    setup.pipeline = Pipeline(models=models, sources=setup.pipeline.sources, source_schema=setup.pipeline.source_schema)
+    setup.reads.pipeline = setup.pipeline  # cached reads of earlier SQL stay right: none of it names the new table
+    setup.new_tables[fingerprint] = key
+    setup.new_names[key] = parts
+    return key
+
+
+def _factor_moves(setup: _Setup, state: Mapping[str, str], columns):
+    """Repeated queries read from one table: an existing table with that query, or a new shared one."""
+
+    groups: dict[str, list[_Occurrence]] = {}
+    for key in sorted(state):
+        if key in setup.fixed:
+            continue
+        for fingerprint, occurrence in _occurrences(setup, key, state[key], columns):
+            groups.setdefault(fingerprint, []).append(occurrence)
+    protected = set(setup.protected) | setup.pinned
+    for fingerprint, members in sorted(groups.items()):
+        inner = [m for m in members if m.kind != "table"]
+        tables = sorted((m.key for m in members if m.kind == "table"), key=lambda k: (k not in protected, k))
+        if not inner or (not tables and len(inner) < 2):
+            continue
+        if tables:
+            target = tables[0]
+            label = f"reuse {target} in"
+        else:
+            target = _new_table(setup, fingerprint, inner, state)
+            label = f"factor {target} out of"
+        readers = sorted({m.key for m in inner if m.key != target})
+        if not readers or any(_depends_on(setup, state, target, reader) for reader in readers):
+            continue
+        changed = {}
+        try:
+            for reader in readers:
+                new = _replace_occurrences(state[reader], fingerprint, target, setup, columns)
+                if new is None:
+                    break
+                changed[reader] = new
+        except sqlglot.errors.SqlglotError:
+            continue
+        if len(changed) != len(readers):
+            continue
+        base = dict(state)
+        if not tables:
+            base[target] = inner[0].sql
+        raw = {**base, **changed}
+        yield f"{label} {', '.join(readers)}", raw
+        after = _state_columns(setup, raw)
+        simple = {**raw, **{reader: _best(setup, sql, after)[0] for reader, sql in changed.items()}}
+        if simple != raw:
+            yield f"{label} {', '.join(readers)} (simplified)", simple
 
 
 def _depends_on(setup: _Setup, state: Mapping[str, str], model: str, target: str) -> bool:
@@ -813,6 +1203,12 @@ def minimize_tables(
     max_seconds: float = 120.0,
     max_steps: int = 200,
     progress: Callable[[str], None] | None = None,
+    fixed: Iterable[str] | Mapping[str, object] = (),
+    incremental: Iterable[str] = (),
+    checked: Iterable[str] = (),
+    keep_columns: Mapping[str, Iterable[str]] | None = None,
+    factor: bool = False,
+    lower_score_only: bool = False,
 ) -> TableMinimization:
     """The lowest-complexity set of tables found that keeps every protected table, with its proofs.
 
@@ -820,11 +1216,24 @@ def minimize_tables(
     are sources. ``sources`` optionally describes them: ``{name: {"columns": {col: type}, "key": [...],
     "not_null": [...]}}`` (or ``{col: type}``, or a list of columns); keys and NOT NULL columns are facts
     the prover may assume. Raises :class:`MinimizationError` on input it cannot use.
+
+    ``fixed`` tables are kept exactly as given, like a table that is not a query, and every table they
+    read is kept and proved unchanged (a mapping gives their columns). ``incremental`` names tables whose
+    rows depend on earlier runs (a SELECT alone cannot say so, nor give a ``uniqueKey``, an
+    ``updatePartitionFilter`` or a schedule): they are fixed, so they are never folded, merged, pruned or
+    rewritten. A ``checked`` table may be dropped
+    or folded away, but while it exists it must stay proved equal to the original on the columns it
+    keeps. ``keep_columns`` are columns of a table that are never pruned. With ``factor``, a query
+    repeated as a derived table or WITH table in several tables may be moved into a table of its own
+    (an existing one with that query, or a new one, listed in ``added``). With ``lower_score_only`` a
+    step must lower the complexity score; shorter text at the same score does not count.
     """
 
     started = time.time()
     protected = list(protected)
-    setup, names, mapping, back = _prepare(tables, protected, sources, dialect, timeout_ms)
+    fixed = _with_incremental(fixed, incremental)
+    setup, names, mapping, back = _prepare(tables, protected, sources, dialect, timeout_ms, fixed, checked, keep_columns)
+    setup.factor = factor
     start = dict(setup.original)
     result_state = start
     tried = rejected = steps = 0
@@ -866,7 +1275,7 @@ def minimize_tables(
                     continue
                 seen.add(signature)
                 cost = setup.cost(candidate)
-                if cost < current:
+                if cost[0] < current[0] if lower_score_only else cost < current:
                     options.append((cost, label, candidate))
             options.sort(key=lambda item: (item[0], item[1]))
             for cost, label, candidate in options:
@@ -887,39 +1296,98 @@ def minimize_tables(
         folded = _fold_all(setup, start)
         if folded is not None and attempt(folded[0], folded[1]):
             other_state, other_path = descend(folded[1], [folded[0]])
-            if setup.cost(other_state) < setup.cost(best_state):
+            better = setup.cost(other_state)[0] < setup.cost(best_state)[0] if lower_score_only else \
+                setup.cost(other_state) < setup.cost(best_state)
+            if better:
                 best_state, best_path = other_state, other_path
     result_state, moves_taken = best_state, best_path
 
     # the proofs for the answer, one per protected table (cached from the search)
-    proofs: dict[str, ProtectedProof] = {}
-    for key in setup.protected:
-        user = _user_name(key, back, names)
-        if result_state[key] == setup.original[key] and _closure(setup, result_state, key) == _closure(setup, start, key):
-            proofs[user] = ProtectedProof(user, "unchanged", "its SQL and every table it reads are as given")
-            continue
-        ok, assumptions, why = _check(setup, result_state, [key])
-        if not ok:  # cannot happen for a state the search accepted; never return an unproved answer
-            result_state, moves_taken = start, []
-            proofs = {
-                _user_name(k, back, names): ProtectedProof(_user_name(k, back, names), "unchanged", "returned as given")
-                for k in setup.protected
-            }
-            break
-        proofs[user] = ProtectedProof(user, "proved", "proved equal to the original by the pipeline prover", assumptions)
-
+    proofs = _answer_proofs(setup, result_state, start, back, names)
+    if proofs is None:  # cannot happen for a state the search accepted; never return an unproved answer
+        result_state, moves_taken = start, []
+        proofs = _answer_proofs(setup, start, start, back, names) or {}
     out = _render(setup, result_state, start, tables, names, back, dialect)
+    if result_state is not start and not _holds_together(setup, result_state, out, names, back, dialect):
+        # the rendered answer must stand on the input's own names: every table it reads is one the input named
+        # and one it still has; if not, the input is the answer
+        result_state, moves_taken = start, []
+        proofs = _answer_proofs(setup, start, start, back, names) or {}
+        out = _render(setup, start, start, tables, names, back, dialect)
     original_score = pipeline_score(_render(setup, start, start, tables, names, back, dialect))
     removed = sorted(names[back[tuple(k.split("."))]] for k in setup.original if k not in result_state)
     changed = sorted(names[back[tuple(k.split("."))]] for k in result_state
                      if k in setup.original and result_state[k] != setup.original[k])
+    added = sorted(_user_name(k, back, names) for k in result_state if k not in setup.original)
     return TableMinimization(
-        tables=out, original=dict(tables), protected=[names[_parts(p)] for p in dict.fromkeys(protected)],
+        tables=out, original=dict(tables), protected=[names[_parts(p, setup.fold)] for p in dict.fromkeys(protected)],
         proofs=proofs, score=pipeline_score(out), original_score=original_score, moves=[_label(m, back, names) for m in moves_taken],
-        removed=removed, changed=changed, tried=tried, rejected=rejected,
+        removed=removed, changed=changed, added=added, tried=tried, rejected=rejected,
         rejected_moves=[{**m, "move": _label(m["move"], back, names), "why": _label(m["why"], back, names)} for m in rejected_moves],
         stopped=stop, seconds=time.time() - started, unscored=setup.unscored[0],
     )
+
+
+def _answer_proofs(setup: _Setup, state, start, back, names) -> dict[str, ProtectedProof] | None:
+    """One proof per protected table of ``state``, or ``None`` when one of them does not hold."""
+
+    proofs: dict[str, ProtectedProof] = {}
+    for key in setup.protected_opaque:
+        user = _user_name(key, back, names)
+        proofs[user] = ProtectedProof(user, "unchanged", "not a single query: returned exactly as given")
+    for key in setup.protected:
+        user = _user_name(key, back, names)
+        if state[key] == setup.original[key] and _closure(setup, state, key) == _closure(setup, start, key):
+            proofs[user] = ProtectedProof(user, "unchanged", "its SQL and every table it reads are as given")
+            continue
+        ok, assumptions, why = _check(setup, state, [key])
+        if not ok:
+            return None
+        proofs[user] = ProtectedProof(user, "proved", "proved equal to the original by the pipeline prover",
+                                      [*assumptions, *_case_assumptions(setup)])
+    return proofs
+
+
+def _case_assumptions(setup: _Setup) -> list[str]:
+    if not setup.ambiguous:
+        return []
+    shown = ", ".join(sorted(".".join(setup.back[tuple(k.split("."))]) for k in setup.ambiguous))
+    return [f"table names are case-sensitive; names that differ only by case ({shown}) are kept as written"]
+
+
+def _dangling(setup: _Setup, state: Mapping[str, str], keys: Iterable[str]) -> str:
+    """A table that ``keys`` (and what they read) read but ``state`` no longer has, or ``""``."""
+
+    todo, seen = list(keys), set()
+    while todo:
+        key = todo.pop()
+        if key in seen or key not in state:
+            continue
+        seen.add(key)
+        for read in setup.reads(state[key]):
+            if read not in state and read not in setup.opaque:
+                return read
+            todo.append(read)
+    return ""
+
+
+def _holds_together(setup: _Setup, state: Mapping[str, str], out: Mapping[str, str], names, back, dialect: str) -> bool:
+    """Whether the rendered tables read only tables the input named, none of which the answer removed."""
+
+    known = set(back.values())
+    gone = {back[tuple(k.split("."))] for k in setup.original if k not in state}
+    kept_as_given = {names[back[tuple(k.split("."))]] for k in setup.opaque}
+    for user, sql in out.items():
+        tree = None if user in kept_as_given else single_query(sql, dialect)
+        if tree is None:
+            continue  # a table that is not one query, or is kept as written, is returned as given
+        from .refactor import _table_nodes
+
+        for table in _table_nodes(tree):
+            parts = _table_parts(table, setup.fold)
+            if parts and (parts not in known or parts in gone):
+                return False
+    return True
 
 
 def _user_name(key: str, back, names) -> str:
@@ -937,7 +1405,7 @@ def _render(setup: _Setup, state, start, tables, names, back, dialect) -> dict[s
     out = {}
     for key, sql in state.items():
         parts = back[tuple(key.split("."))]
-        user = names[parts]
+        user = names.get(parts, ".".join(parts))
         if key in setup.original and sql == setup.original[key]:
             out[user] = tables[user]
             continue
@@ -955,7 +1423,9 @@ def _render(setup: _Setup, state, start, tables, names, back, dialect) -> dict[s
     for key in setup.opaque:  # tables that could not be read stay exactly as given
         user = names[back[tuple(key.split("."))]]
         out.setdefault(user, tables[user])
-    return {name: out[name] for name in tables if name in out}
+    ordered = {name: out[name] for name in tables if name in out}
+    ordered.update({name: out[name] for name in sorted(out) if name not in ordered})  # factored tables last
+    return ordered
 
 
 def verify_tables(
@@ -966,51 +1436,101 @@ def verify_tables(
     sources: Mapping[str, object] | None = None,
     dialect: str = "bigquery",
     timeout_ms: int = 5000,
+    fixed: Iterable[str] | Mapping[str, object] = (),
+    incremental: Iterable[str] = (),
+    checked: Iterable[str] = (),
 ) -> dict[str, ProtectedProof]:
     """Check a proposed set of tables against the original: one result per protected table.
 
     Status ``unchanged`` (its SQL and everything it reads are as given), ``proved`` (the prover proved it
     returns the same rows, with the same output columns), ``missing`` or ``unknown`` (not proved; the reason
     says why). ``candidate`` may add tables of its own. Raises :class:`MinimizationError` on unusable input.
+
+    ``fixed`` and ``incremental`` tables (as in :func:`minimize_tables`) must be in the candidate exactly as given, and every
+    table one of them (or an unreadable table) reads gets a result too, since it is read as given. Each
+    ``checked`` table the candidate still has gets a result: proved equal on the columns it keeps.
     """
 
     protected = list(protected)
-    added = {name: sql for name, sql in candidate.items() if _parts(str(name)) not in {_parts(str(n)) for n in original}}
-    setup, names, mapping, back = _prepare({**original, **added}, protected, sources, dialect, timeout_ms)
-    by_parts = {_parts(str(name)): sql for name, sql in candidate.items()}
+    fixed = _with_incremental(fixed, incremental)
+    fold = dialect != "bigquery"
+    added = {name: sql for name, sql in candidate.items()
+             if _parts(str(name), fold) not in {_parts(str(n), fold) for n in original}}
+    checked = [c for c in checked if c in candidate and c not in protected]
+    setup, names, mapping, back = _prepare({**original, **added}, protected, sources, dialect, timeout_ms, fixed, checked,
+                                           extra_texts=candidate.values())
+    by_parts = {_parts(str(name), fold): sql for name, sql in candidate.items()}
+    for key in setup.opaque:  # read as given on both sides: it must not have changed
+        parts = back[tuple(key.split("."))]
+        user = names[parts]
+        if user in original and by_parts.get(parts) != original[user]:
+            why = f"{user} is kept as written but the candidate changed or removed it"
+            return {_user_name(k, back, names): ProtectedProof(_user_name(k, back, names), "unknown", why)
+                    for k in [*setup.protected_opaque, *setup.protected, *sorted(setup.checked)]}
     state: dict[str, str] = {}
+    unreadable: set[str] = set()  # candidate tables that are not one query (a script, another statement, bad SQL)
     for parts, user in names.items():
         if parts not in by_parts:
             continue
         key = ".".join(mapping[parts])
+        if key in setup.opaque:
+            continue
         sql = by_parts[parts]
         if user in original and sql == original[user] and key in setup.original:
             state[key] = setup.original[key]
             continue
-        try:
-            tree = sqlglot.parse_one(sql, read=dialect)
-            if dialect != "bigquery":
-                tree = sqlglot.parse_one(tree.sql(dialect="bigquery"), read="bigquery")
-            for table in tree.find_all(exp.Table):
-                ref = _table_parts(table)
-                if ref and ref not in mapping:
-                    mapping[ref] = _internal(ref)
-            state[key] = _rename_tables(tree, mapping).sql(dialect="bigquery")
-        except sqlglot.errors.SqlglotError:
+        tree = single_query(sql, dialect)
+        if tree is not None and dialect != "bigquery":
+            tree = single_query(tree.sql(dialect="bigquery"), "bigquery")
+        if tree is None:
             state[key] = sql  # unreadable: nothing that depends on it can be proved
+            unreadable.add(key)
+            continue
+        for table in tree.find_all(exp.Table):
+            ref = _table_parts(table, fold)
+            if ref and ref not in mapping and not is_cte_reference(table):
+                mapping[ref] = internal_name(ref, setup.catalogs)
+        state[key] = _rename_tables(tree, mapping, fold).sql(dialect="bigquery")
     results: dict[str, ProtectedProof] = {}
-    for key in setup.protected:
+    for key in setup.protected_opaque:  # not a query: only the text as given can stand for it (checked above)
+        user = _user_name(key, back, names)
+        results[user] = ProtectedProof(user, "unchanged", "not a single query: the candidate has it exactly as given")
+    keys = [*setup.protected, *sorted(setup.pinned - set(setup.protected)), *sorted(k for k in setup.checked if k in state)]
+    for key in keys:
         user = _user_name(key, back, names)
         if key not in state:
             results[user] = ProtectedProof(user, "missing", "the table is not in the candidate")
+            continue
+        blocked = _reaches(setup, state, key, unreadable)
+        if blocked:
+            results[user] = ProtectedProof(user, "unknown", f"{_label(blocked, back, names)} is not a single query")
+            continue
+        if key in setup.touching and any(state.get(m) != setup.original[m] for m in setup.ambiguous if m in setup.original):
+            why = "table names that differ only by case may be one table, and one of them was changed"
+            results[user] = ProtectedProof(user, "unknown", why)
             continue
         if state[key] == setup.original[key] and _closure(setup, state, key) == _closure(setup, setup.original, key):
             results[user] = ProtectedProof(user, "unchanged", "its SQL and every table it reads are as given")
             continue
         ok, assumptions, why = _check(setup, state, [key])
-        results[user] = (ProtectedProof(user, "proved", "proved equal to the original", assumptions) if ok
-                         else ProtectedProof(user, "unknown", _label(why, back, names)))
+        results[user] = (ProtectedProof(user, "proved", "proved equal to the original", [*assumptions, *_case_assumptions(setup)])
+                         if ok else ProtectedProof(user, "unknown", _label(why, back, names)))
     return results
+
+
+def _reaches(setup: _Setup, state: Mapping[str, str], key: str, targets: set[str]) -> str:
+    """The first of ``targets`` that ``key`` is, or reads through other tables of ``state``, else ``""``."""
+
+    todo, seen = [key], set()
+    while todo:
+        node = todo.pop()
+        if node in seen or node not in state:
+            continue
+        seen.add(node)
+        if node in targets:
+            return node
+        todo.extend(sorted(setup.reads(state[node])))
+    return ""
 
 
 def minimize_case(case: Mapping) -> dict[str, str]:
@@ -1018,7 +1538,7 @@ def minimize_case(case: Mapping) -> dict[str, str]:
 
     return minimize_tables(
         case["tables"], case["protected"], sources=case.get("sources"), dialect=case.get("dialect") or "bigquery",
-        max_seconds=float(case.get("max_seconds") or 60.0),
+        max_seconds=float(case.get("max_seconds") or 60.0), incremental=case.get("incremental") or (),
     ).tables
 
 
@@ -1032,8 +1552,9 @@ def main(argv: list[str] | None = None) -> int:
     import json
     import sys
 
-    parser = argparse.ArgumentParser(prog="python -m kumosql minimize-tables", description=__doc__.split("\n")[0])
-    parser.add_argument("case", help="JSON file with tables, protected and (optionally) sources and dialect; - reads stdin")
+    parser = argparse.ArgumentParser(prog="python -m kumosql minimize-tables",
+        description=__doc__.split("\n")[0] + " READ-ONLY: it prints the result and writes no file.")
+    parser.add_argument("case", help="JSON file with tables, protected and (optionally) sources, dialect and incremental (tables kept as written); - reads stdin")
     parser.add_argument("--max-seconds", type=float, default=120.0)
     parser.add_argument("--timeout-ms", type=int, default=5000)
     args = parser.parse_args(argv)
@@ -1042,7 +1563,7 @@ def main(argv: list[str] | None = None) -> int:
         case = json.loads(text)
         result = minimize_tables(
             case["tables"], case["protected"], sources=case.get("sources"), dialect=case.get("dialect") or "bigquery",
-            timeout_ms=args.timeout_ms, max_seconds=args.max_seconds,
+            timeout_ms=args.timeout_ms, max_seconds=args.max_seconds, incremental=case.get("incremental") or (),
             progress=lambda line: print(line, file=sys.stderr),
         )
     except (OSError, ValueError, KeyError) as error:

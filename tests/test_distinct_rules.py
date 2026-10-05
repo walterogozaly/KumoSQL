@@ -10,10 +10,23 @@ import sqlglot
 pytest.importorskip("z3")
 
 from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+from kumosql.ast_utils import LossySql, faithful_sql
 from kumosql.distinct_rules import drop_dedup_read_as_set, drop_membership_dedup, merge_grouped_source, regroup_distinct
 from kumosql.smt_equivalence import TableConstraints
 
 SCHEMA = {"t": ["a", "b", "c"], "s": ["a", "b", "d"]}
+
+
+def _prints_div() -> bool:
+    try:
+        faithful_sql(sqlglot.parse_one("SELECT a DIV 2 FROM t", read="mysql"), "mysql")
+    except LossySql:
+        return False
+    return True
+
+
+# sqlglot 26 has no generator that writes MySQL's DIV back as DIV, so a query using it is refused there
+MYSQL_DIV = _prints_div()
 
 
 def prove(left, right, **kwargs):
@@ -60,6 +73,7 @@ PROVEN = [
         "SELECT b, SUM(a) DIV COUNT(a), COUNT(DISTINCT a) FROM t GROUP BY b",
         "SELECT b, SUM(p) DIV SUM(n), COUNT(a) FROM (SELECT b, a, SUM(a) AS p, COUNT(a) AS n FROM t GROUP BY b, a) AS g GROUP BY b",
         id="grouped-regroup-inside-expression",
+        marks=pytest.mark.skipif(not MYSQL_DIV, reason="this sqlglot version cannot print DIV"),
     ),
     pytest.param(
         "SELECT s.d FROM t LEFT JOIN s ON t.b = s.b GROUP BY s.d",

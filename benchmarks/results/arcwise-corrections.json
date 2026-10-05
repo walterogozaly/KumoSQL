@@ -1,0 +1,26 @@
+{
+  "suite": "Arcwise-Plat BIRD corrections",
+  "order": 38,
+  "size": 144,
+  "score": "111/144 refuted, 0 proved (0 cosmetic), 0 wrong",
+  "metric": "BIRD gold SQL against its human repair (Arcwise-Plat), a pair whose two queries differ in meaning: refuted means SQLite returns different results on a database KumoSQL builds that respects the keys and foreign keys; a proof is inspected and is either a cosmetic repair or wrong.",
+  "evidence": "executed",
+  "correctness": "Every refutation is a SQLite run (random, targeted or z3 bounded database replayed in SQLite), with ties under a LIMIT never counted. A proof counts as wrong unless it was inspected by hand and listed as cosmetic with the reason (tools/arcwise_bench.py COSMETIC).",
+  "coverage": {
+    "refuted": 111,
+    "unknown": 33
+  },
+  "held_out": "20/29 refuted, 0 proved, 0 wrong",
+  "docs": "docs/evals/arcwise-corrections.md",
+  "command": "python tools/arcwise_bench.py --write-results",
+  "date": "2026-10-04",
+  "caveats": "CC BY-SA data, downloaded at a pinned commit and never committed. BIRD's databases are not downloadable here: refutations come from KumoSQL's own databases with BIRD's declared types, keys and foreign keys (from the repository's M-Schema files), so a pair that needs realistic values (dates, a particular string layout) stays unknown. Results are compared as bags (lists under ORDER BY), not as BIRD's sets. 1 pair(s) identical once parsed and 72 full-file pairs already in the SQL-only file are left out. A pair that runs past 75 s or crashes z3 is unknown (2 here). The decision is LLM-SQL-Solver's, unchanged; the harness was built on the dev pairs and the held-out pairs were first run in the final scoring run.",
+  "environment": {
+    "python": "3.11.15",
+    "sqlglot": "30.21.0",
+    "duckdb": "1.5.6",
+    "z3-solver": "5.1.0.0",
+    "sqlfluff": "4.4.0",
+    "commit": "8afdccdf+changes"
+  }
+}

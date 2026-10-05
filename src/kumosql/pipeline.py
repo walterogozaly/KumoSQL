@@ -46,11 +46,12 @@ from .lineage_soundness import (
     mark_using_joins,
     masked_sql_words,
     pin_single_source_columns,
+    star_branch_view,
 )
 from .scripts import KEPT, ScriptAnalysis, analyse_script, collect_procedures, collect_table_functions, column_words
 from .set_operations import is_by_name, positionalize
 from .timing import Progress, stage
-from .ast_utils import is_function_table, quiet_parser as _quiet_parser, set_with_clause, top_level_query, with_clause
+from .ast_utils import binding_cte, is_function_table, quiet_parser as _quiet_parser, set_with_clause, star_modifier, top_level_query, with_clause
 from .resilience import (
     PipelineLoadError,  # noqa: F401
     build_completeness,
@@ -92,6 +93,7 @@ class Pipeline:
     diagnostics: list[PipelineDiagnostic] = field(default_factory=list)
     default_project: str = ""
     default_dataset: str = ""
+    default_location: str = ""
 
     # ------------------------------------------------------------------ graph
 
@@ -134,6 +136,9 @@ class Pipeline:
 
     def __setstate__(self, state: dict) -> None:
         self.__dict__.update(state)
+        analysis = self.__dict__.get("_analysis")
+        if analysis is not None and not all(hasattr(analysis, key) for key in ("statement_reads", "statement_writes")):
+            self._analysis = None  # older saved projects need the statement tables recomputed
         self._memo = {}
         self._memo_locks = {}
         self._memo_guard = threading.Lock()
@@ -259,16 +264,35 @@ class Pipeline:
         return result
 
     def table_reads(self) -> dict[str, frozenset[str]]:
-        """Every table each query model reads: pipeline models and declared sources by key, others as spelled."""
+        """Every table each model's statements read, including explicit reads of its own target."""
 
         analysis = self._analyse()
         reads = {key: set(parents) for key, parents in analysis.upstream.items() if key in analysis.parsed or parents}
         for key, tables in analysis.external_reads.items():
             reads.setdefault(key, set()).update(tables)
+        for key, tables in analysis.statement_reads.items():
+            reads.setdefault(key, set()).update(tables)
         return {key: frozenset(tables) for key, tables in reads.items()}
 
+    def table_writes(self) -> dict[str, frozenset[str]]:
+        """Explicit table targets of SQL statements, including operations and pre/post operations."""
+
+        return dict(self._analyse().statement_writes)
+
     def topological_order(self) -> list[str]:
+        """Models in dependency order, each after the models it reads.
+
+        Models on a dependency cycle cannot be ordered: they come last, by name, each with a
+        ``cycle`` diagnostic, and :meth:`cyclic_models` lists them. Only when that list is empty
+        is the whole result a topological order.
+        """
+
         return self._analyse().order
+
+    def cyclic_models(self) -> list[str]:
+        """Models on a dependency cycle, which :meth:`topological_order` could not place."""
+
+        return sorted({d.model for d in self._analyse().diagnostics if d.code == "cycle"})
 
     # ---------------------------------------------------------------- columns
 
@@ -351,7 +375,11 @@ class Pipeline:
         return _closure(column, self._analyse().lineage)
 
     def downstream_columns(self, column: ColumnRef) -> frozenset[ColumnRef]:
-        """Every model column, across the pipeline, computed from ``column``."""
+        """Every model column, across the pipeline, whose value is computed from ``column``.
+
+        This is value lineage: a model that only filters, joins or groups on ``column`` has no
+        column here although its rows depend on it. :meth:`assess_change` follows those too.
+        """
 
         return _closure(column, self._analyse().reverse_lineage)
 
@@ -365,7 +393,10 @@ class Pipeline:
 
         Terminal models (nothing downstream) are treated as pipeline outputs
         and never reported. A model is skipped when any consumer could not be
-        analysed, because an unseen reader might use any column.
+        analysed, because an unseen reader might use any column. A column its
+        own config names (a built-in assertion, ``partitionBy``, ``clusterBy``,
+        ``uniqueKey``, ``updatePartitionFilter``) counts as used, and a model
+        whose config reads columns it cannot read is skipped.
         """
 
         analysis = self._analyse()
@@ -379,14 +410,17 @@ class Pipeline:
             if any(reader not in analysis.consumed or reader in cyclic for reader in readers):
                 continue  # a reader that was not analysed, or sits in a dependency cycle (so its input columns were unknown), might use any column
             outputs = analysis.outputs.get(key)
-            if not outputs:
-                continue
+            model = self.models.get(key)
+            if not outputs or (model is not None and model.config_reads_unread):
+                continue  # a config value that reads columns could not be read: any column might be used
             used = {
                 ref.column.lower()
                 for reader in readers
                 for ref in analysis.consumed.get(reader, ())
                 if ref.table == key
             }
+            if model is not None:
+                used.update(model.config_reads)  # built-in assertions, partitioning and clustering read columns too
             dead = tuple(column for column in outputs if column.lower() not in used)
             if dead:
                 result[key] = dead
@@ -512,6 +546,7 @@ class Pipeline:
         result = report if scope is None else self._scoped(report, scope)
         keep = None if scope is None else self.scope_keys(scope)
         result["coverage"] = guarded(None, lambda: self._coverage_of(result, verdicts, window, thresholds, keep))[0]
+        result["schema_lookup"] = dict(self._analyse().schema_lookup)
         return result
 
     def _coverage_of(self, report: dict, verdicts, window, thresholds=None, keep: set[str] | None = None) -> dict:
@@ -710,11 +745,15 @@ class Pipeline:
             "scope": scope.name,
             "models": len(keep),
             "order": [key for key in report["order"] if key in keep],
+            "cyclic_models": [key for key in report["cyclic_models"] if key in keep],
+            "order_complete": not any(key in keep for key in report["cyclic_models"]),
             "node_identities": {
                 key: value for key, value in report["node_identities"].items() if key in keep
             },
             "graph": graph,
             "upstream": {k: v for k, v in report["upstream"].items() if k in keep},
+            "table_reads": {k: v for k, v in report["table_reads"].items() if k in keep},
+            "table_writes": {k: v for k, v in report["table_writes"].items() if k in keep},
             "dead_columns": {k: v for k, v in report["dead_columns"].items() if k in keep},
             "duplicates": [
                 group for group in report["duplicates"] if any(in_scope(o) for o in group["occurrences"])
@@ -782,8 +821,11 @@ class Pipeline:
             return value
 
         order = section("order", [], self.topological_order)
+        cyclic = section("cyclic_models", [], self.cyclic_models)
         dead = section("dead_columns", {}, lambda: {k: list(v) for k, v in self.dead_columns().items()})
         lineage_rows = section("column_lineage", [], self.lineage_report)
+        table_reads = section("table_reads", {}, lambda: {k: sorted(v) for k, v in self.table_reads().items()})
+        table_writes = section("table_writes", {}, lambda: {k: sorted(v) for k, v in self.table_writes().items()})
         duplicates = section(
             "duplicates",
             [],
@@ -821,7 +863,12 @@ class Pipeline:
                 for key, model in sorted(self.models.items())
             },
             "order": order,
+            # False when models on a cycle were appended unordered at the end of ``order``.
+            "order_complete": not cyclic,
+            "cyclic_models": cyclic,
             "upstream": {key: sorted(value) for key, value in sorted(self.upstream.items())},
+            "table_reads": table_reads,
+            "table_writes": table_writes,
             "dead_columns": dead,
             "column_lineage": lineage_rows,
             "duplicates": duplicates,
@@ -903,6 +950,9 @@ def _skip_message(analysis: ScriptAnalysis) -> str:
 _TEMPLATE_TOKEN = re.compile(r"__sqlx_token_\d+__")
 _PROCEDURE_WORD = re.compile(r"\bprocedure\b", re.IGNORECASE)
 _TABLE_FUNCTION_WORD = re.compile(r"\btable\s+function\b", re.IGNORECASE)
+# A project with fewer models is not collected and frozen after reading (``_Analysis.run``): its syntax trees are small,
+# and a full collection walks the whole process, which in a long-lived one (the UI, a test run) holds far more.
+_FREEZE_MIN_MODELS = 100
 
 
 def _last_part(name: str) -> str:
@@ -926,13 +976,12 @@ def _script_tables(query: exp.Expression | None, analysis: ScriptAnalysis) -> tu
     tables: list[exp.Table] = []
     seen: set[str] = set()
     if query is not None:
-        cte_names = {cte.alias_or_name.lower() for cte in query.find_all(exp.CTE)}
         opaque = analysis.opaque_temps
         for table in query.find_all(exp.Table):
             if is_function_table(table):
                 continue  # a table function call: the function is not a table (what it is given is read as a table)
-            if not table.db and table.name.lower() in cte_names:
-                continue
+            if binding_cte(table) is not None:
+                continue  # a WITH table in scope here (a nested ``WITH t`` does not hide a read of the model t elsewhere)
             if not table.db and not table.catalog and table.name.lower() in opaque:
                 continue  # a temporary table the script defines; its sources are in ``analysis``
             tables.append(table)
@@ -1071,7 +1120,7 @@ def _excepted_columns(pipeline: "Pipeline", query: exp.Expression) -> set[Column
     stars = [
         star
         for star in query.find_all(exp.Star)
-        if star.args.get("except_") and isinstance(star.parent, (exp.Select, exp.Column))
+        if star_modifier(star, "except") and isinstance(star.parent, (exp.Select, exp.Column))
     ]
     if not stars:
         return set()
@@ -1093,7 +1142,7 @@ def _excepted_columns(pipeline: "Pipeline", query: exp.Expression) -> set[Column
             ]
             for table in tables:
                 resolved = pipeline.resolve(table) or _table_name_for_schema(table)
-                for column in star.args["except_"]:
+                for column in star_modifier(star, "except"):
                     found.add(ColumnRef(resolved, column.name))
     return found
 
@@ -1148,6 +1197,9 @@ class _Analysis:
     schema_lookup: dict[str, int] = field(default_factory=dict)
     # Per model: tables it reads that no model or declared source matches, as spelled.
     external_reads: dict[str, frozenset[str]] = field(default_factory=dict)
+    # SQL statement reads/writes retain self-reads and every target of a script.
+    statement_reads: dict[str, frozenset[str]] = field(default_factory=dict)
+    statement_writes: dict[str, frozenset[str]] = field(default_factory=dict)
     # Per model: tables only its other statements read (a script's earlier queries, operations, pre/post operations).
     script_tables: dict[str, tuple[exp.Table, ...]] = field(default_factory=dict)
     # Tables other models' scripts write, with the models and sources those scripts read.
@@ -1159,6 +1211,9 @@ class _Analysis:
     # Per model: tables its other statements, conditions, variables or operations read, with the names those may
     # use as columns (``None``: any column). Column lineage does not see these reads.
     script_reads: dict[str, dict[str, frozenset[str] | None]] = field(default_factory=dict)
+    # Per model: tables a ``SELECT *`` branch of a set operation reads. Its unknown columns may fill columns
+    # the lineage lists with other sources, so a change to one of these tables reaches the model as unknown.
+    star_branch_tables: dict[str, frozenset[str]] = field(default_factory=dict)
 
     def untraced_reason(self, column: ColumnRef, models: dict[str, Model]) -> str | None:
         """Why a column with no lineage record is unknown, or None for a source column."""
@@ -1173,8 +1228,8 @@ class _Analysis:
     def run(cls, pipeline: Pipeline) -> "_Analysis":
         # Every parsed query stays alive for the whole run, so with the default thresholds the
         # collector keeps re-walking millions of long-lived syntax-tree nodes (seconds per pass
-        # late in a large project). Collect less often, and park what exists in the permanent
-        # generation once reading is done.
+        # late in a large project). Collect less often, and in a large project park what exists in the
+        # permanent generation once reading is done.
         thresholds = gc.get_threshold()
         gc.set_threshold(max(thresholds[0], 200_000), 50, 100)
         try:
@@ -1193,6 +1248,12 @@ class _Analysis:
         blind_models: list[str] = []
         statements_total = statements_matched = 0
         statements_by_model: dict[str, tuple[int, int]] = {}
+        statement_reads: dict[str, set[str]] = defaultdict(set)
+        statement_writes: dict[str, set[str]] = defaultdict(set)
+
+        def note_statement_tables(key: str, analysis: ScriptAnalysis) -> None:
+            statement_reads[key].update(pipeline.resolve(t) or _table_name_for_schema(t) for t in analysis.all_reads())
+            statement_writes[key].update(pipeline.resolve(w.table) or _table_name_for_schema(w.table) for w in analysis.writes)
 
         # Other spellings under which a model is read (a project-qualified name
         # for a model keyed by its bare name): its columns must be known there
@@ -1201,13 +1262,13 @@ class _Analysis:
         procedures = collect_procedures(
             text
             for model in pipeline.models.values()
-            for text in (model.sql, *model.operations_sql)
+            for text in (model.sql, *model.scripts)
             if _PROCEDURE_WORD.search(text)
         )
         functions = collect_table_functions(
             text
             for model in pipeline.models.values()
-            for text in (model.sql, *model.operations_sql)
+            for text in (model.sql, *model.scripts)
             if _TABLE_FUNCTION_WORD.search(text)
         )
         # Tables other models' scripts write, with the models they read (``INSERT INTO t SELECT ...`` feeds t).
@@ -1265,6 +1326,7 @@ class _Analysis:
                         if _is_positional_insert(analysis.final):
                             positional.add((key, written_key))
             if analysis is not None:
+                note_statement_tables(key, analysis)
                 considered = max(analysis.considered, 1) if model.is_query else analysis.considered
                 matched = min(analysis.traced, considered) if query is not None else 0
                 if model.is_query:
@@ -1334,8 +1396,9 @@ class _Analysis:
                         parents.update(members)
                         operation_readers.update(members)
                 _note_writes(pipeline, key, analysis, written)
-            for operation in model.operations_sql:
+            for operation in model.scripts:
                 extra = analyse_script(operation, procedures=procedures, functions=functions)
+                note_statement_tables(key, extra)
                 if extra.all_reads():
                     script_extras[key] = (*script_extras.get(key, ()), *extra.all_reads())
                     _note_side_reads(pipeline, key, extra.all_reads(), column_words(operation), script_reads)
@@ -1382,8 +1445,9 @@ class _Analysis:
         reading.finish()
         for target, sources in written.items():
             upstream.setdefault(target, set()).update(sources - {target})
-        gc.collect()
-        gc.freeze()
+        if len(pipeline.models) >= _FREEZE_MIN_MODELS:
+            gc.collect()
+            gc.freeze()
 
         with stage("order models", models=len(upstream)):
             order = _topological_order(upstream, diagnostics)
@@ -1394,10 +1458,20 @@ class _Analysis:
         consumed: dict[str, frozenset[ColumnRef]] = {}
         # Per model: the read columns that decide which rows it returns (see lineage_soundness.condition_columns).
         conditions: dict[str, frozenset[ColumnRef]] = {}
+        star_branch_tables: dict[str, set[str]] = defaultdict(set)
         # Per model: tables whose columns a masked template expression may name, but whose columns are unknown.
         template_reads: dict[str, set[str]] = {}
         opaque_readers_of: set[str] = set(operation_readers)
         schema: dict[str, dict[str, str]] = dict(pipeline.source_schema)
+        # A source read through a partition or snapshot decorator (``p.d.t$20261003``) shares the base table's
+        # columns. Other spellings (``t`` for ``p.d.t``) stay out of the flat schema: mixing name depths in one
+        # nested mapping makes qualify() report an ambiguous table.
+        for base, aliases in spellings.items():
+            if base in schema:
+                for alias in aliases:
+                    identity = normalize_table_reference(alias)
+                    if identity is not None and identity.decorator:
+                        schema[alias] = schema[base]
         # One MappingSchema grown model by model: qualify() would otherwise
         # rebuild and re-normalise the whole nested schema for every model.
         sqlglot_schema = MappingSchema(_nested_schema(schema), dialect="bigquery")
@@ -1406,12 +1480,31 @@ class _Analysis:
         from . import schema_fetch
 
         outside = {name for names in unresolved_tables.values() for name in names if name not in schema}
+        decorated: dict[str, str] = {}
+        for name in outside:
+            identity = normalize_table_reference(name)
+            if identity is not None and identity.decorator:
+                decorated[name] = ".".join(identity.parts)
+        outside = {decorated.get(name, name) for name in outside if decorated.get(name, name) not in schema}
+        # A declared source with no declared columns is read from outside the project just the same: look it up
+        # (only the ones some model reads), or ``SELECT *`` over it can never be expanded.
+        outside |= {
+            parent
+            for parents in upstream.values()
+            for parent in parents
+            if parent in pipeline.sources and parent not in pipeline.models and parent not in schema
+        }
         # An INSERT with no column list names its outputs by the target table's own columns: look those up too.
         outside |= {key for _, key in positional if key not in schema}
         found, schema_lookup = schema_fetch.resolve(outside, pipeline.default_project)
         for name, columns in found.items():
             schema[name] = columns
             _add_table(sqlglot_schema, name, columns)
+        # Qualification sees the spelling used in SQL; decorated partitions/snapshots share the base schema.
+        for name, base in decorated.items():
+            if base in schema:
+                schema[name] = schema[base]
+                _add_table(sqlglot_schema, name, schema[base])
 
         tracing = Progress("trace columns", len(order))
         # Column tracing copies a model's whole query once per output column, so wide models with
@@ -1479,16 +1572,33 @@ class _Analysis:
                             "columns are unknown, so columns taken from them are not traced (the tables they are given are read)",
                         )
                     )
-                if _has_unexpanded_star(qualified):
-                    diagnostics.append(
-                        PipelineDiagnostic(
-                            writer,
-                            "unexpanded_star",
-                            "SELECT * over a table function whose output columns are unknown; readers of this model treat it as opaque"
-                            if function_calls
-                            else "SELECT * over a table with unknown columns; readers of this model treat it as opaque",
+                # A set operation with a ``SELECT *`` branch: trace each column by position, and only the
+                # positions a star may fill stay unknown (with the sources the other branches give).
+                star_view = None
+                if union_star and not by_name_problems:
+                    try:
+                        star_view = star_branch_view(qualified, list(qualified.named_selects))
+                    except Exception:
+                        star_view = None
+                    if star_view is not None:
+                        star_tables = {t for t in star_view.tables if binding_cte(t) is None}
+                        if len(star_tables) != len(star_view.tables):  # a branch reads a CTE that may hold the star
+                            star_tables = {t for t in qualified.find_all(exp.Table) if binding_cte(t) is None}
+                        star_branch_tables[key].update(
+                            pipeline.resolve(t) or _table_name_for_schema(t) for t in star_tables if t.name
                         )
+                if _has_unexpanded_star(qualified):
+                    star_gap = (
+                        "SELECT * over a table function whose output columns are unknown; readers of this model treat it as opaque"
+                        if function_calls
+                        else "SELECT * over a table with unknown columns; readers of this model treat it as opaque"
                     )
+                    if star_view is not None:
+                        star_gap = (
+                            "a set operation has a SELECT * branch over a table with unknown columns; the output columns "
+                            "that branch may fill are unknown (with the sources the other branches give), the rest are traced"
+                        )
+                    diagnostics.append(PipelineDiagnostic(writer, "unexpanded_star", star_gap))
                     opaque_readers_of.update(upstream.get(key, ()))
 
                 # Drop CTE and subquery columns nothing reads (``SELECT *`` in a
@@ -1588,10 +1698,11 @@ class _Analysis:
                         _add_table(sqlglot_schema, spelled, schema[key])
                 # ``qualified`` is already qualified: hand lineage() its scope so it
                 # neither copies nor re-qualifies the query once per output column.
+                base = star_view.query if star_view is not None else qualified
                 try:
-                    traced = lineage_view(qualified) or qualified
+                    traced = lineage_view(base) or base
                 except Exception:
-                    traced = qualified
+                    traced = base
                 try:
                     lineage_scope = build_scope(traced)
                 except Exception:
@@ -1619,7 +1730,7 @@ class _Analysis:
                     if name == "*":
                         records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "unexpanded_star")
                         continue
-                    if by_name_problems or union_star:
+                    if by_name_problems or (union_star and star_view is None):
                         # Positional tracing would attribute columns to the wrong branch column (a ``*`` over
                         # an unknown table counts as one column, so every position after it is off).
                         reason = "by_name_set_operation" if by_name_problems else "unexpanded_star"
@@ -1652,7 +1763,12 @@ class _Analysis:
                         )
                         records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "lineage_error")
                         continue
-                    if reason:
+                    if star_view is not None and name in star_view.tainted:
+                        # A star branch may supply this column from a table whose columns are unknown.
+                        records[ref] = ColumnLineage(
+                            ref, frozenset(leaves), "unknown", "unknown", reason or "unexpanded_star"
+                        )
+                    elif reason:
                         records[ref] = ColumnLineage(ref, frozenset(leaves), "unknown", "unknown", reason)
                     elif not leaves:
                         records[ref] = ColumnLineage(ref, frozenset(), "constant", "constant")
@@ -1760,12 +1876,15 @@ class _Analysis:
             statements_matched=statements_matched,
             statements_by_model=statements_by_model,
             external_reads={key: frozenset(tables) for key, tables in unresolved_tables.items()},
+            statement_reads={key: frozenset(tables) for key, tables in statement_reads.items()},
+            statement_writes={key: frozenset(tables) for key, tables in statement_writes.items()},
             script_tables=script_extras,
             written_into={target: frozenset(sources - {target}) for target, sources in written.items() if sources - {target}},
             schema_lookup=schema_lookup,
             conditions=conditions,
             template_reads={key: frozenset(tables) for key, tables in template_reads.items()},
             script_reads=script_reads,
+            star_branch_tables={key: frozenset(tables) for key, tables in star_branch_tables.items()},
         )
 
 
