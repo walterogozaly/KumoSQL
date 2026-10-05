@@ -264,6 +264,31 @@ def mask_sqlx_interpolations(sql: str) -> tuple[str, tuple[SqlxRestoration, ...]
     return "".join(output), tuple(restorations)
 
 
+def expand_sqlx_interpolations(sql: str, expansions: dict[str, str]) -> str:
+    """Insert caller-supplied generated SQL for exact interpolation text, once.
+
+    Comments remain literal and inserted SQL is not recursively expanded.
+    This does not evaluate JavaScript or infer dependencies from arguments.
+    """
+    comments = iter(sql_comment_spans(sql))
+    comment = next(comments, None)
+    pieces: list[str] = []
+    cursor = 0
+    while (opening := sql.find("${", cursor)) >= 0:
+        while comment is not None and comment[1] <= opening:
+            comment = next(comments, None)
+        if comment is not None and comment[0] <= opening < comment[1]:
+            pieces.append(sql[cursor:comment[1]])
+            cursor = comment[1]
+            continue
+        closing = _find_interpolation_end(sql, opening) + 1
+        original = sql[opening:closing]
+        pieces.extend((sql[cursor:opening], expansions.get(original, original)))
+        cursor = closing
+    pieces.append(sql[cursor:])
+    return "".join(pieces)
+
+
 def is_table_reference(original: str) -> bool:
     """``${ref("t")}``, ``${ref("dataset", "t")}``, ``${resolve("t")}`` or ``${self()}``: one table name once compiled."""
 

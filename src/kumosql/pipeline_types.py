@@ -107,6 +107,8 @@ class Model:
     # Compiled incremental tables: the query that runs after the first run, and its pre and post operations. The loaded
     # ``sql`` is the full-refresh query; these read tables and columns too.
     incremental_sql: tuple[str, ...] = ()
+    # Actual sentinels allocated by the SQLX masker (which skips collisions with authored identifiers).
+    masked_tokens: tuple[str, ...] = ()
 
     @property
     def key(self) -> str:

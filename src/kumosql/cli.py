@@ -308,6 +308,10 @@ def pipeline_main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Look up columns of tables the project does not define in BigQuery (off by default: nothing reaches the network otherwise)",
     )
+    parser.add_argument(
+        "--interpolation-sql", type=Path,
+        help="JSON mapping of exact SQLX interpolation text to its generated SQL (no JavaScript is executed)",
+    )
     parser.add_argument("--min-nodes", type=int, default=12, help="Smallest SELECT subtree to report as a duplicate")
     parser.add_argument(
         "--similarity",
@@ -387,7 +391,7 @@ def pipeline_main(argv: list[str] | None = None) -> int:
         if scope is None:
             parser.error(f"no saved scope named {args.scope!r}")
     try:
-        pipeline = _load_pipeline(args.root, args.source_schema)
+        pipeline = _load_pipeline(args.root, args.source_schema, args.interpolation_sql)
     except PipelineLoadError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -676,15 +680,20 @@ def dry_run_main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _load_pipeline(root: Path, source_schema_path: Path | None):
+def _load_pipeline(root: Path, source_schema_path: Path | None, interpolation_sql_path: Path | None = None):
     source_schema = (
         parse_json_or_raise(source_schema_path, "source schema file") if source_schema_path else None
     )
     if source_schema is not None and not isinstance(source_schema, dict):
         raise PipelineLoadError("source schema file must be a JSON object")
+    interpolation_sql = parse_json_or_raise(interpolation_sql_path, "interpolation SQL") if interpolation_sql_path else None
+    if interpolation_sql_path and not isinstance(interpolation_sql, dict):
+        raise PipelineLoadError("interpolation SQL must be a JSON object mapping expression text to SQL strings")
     if root.is_file():
+        if interpolation_sql_path:
+            raise PipelineLoadError("--interpolation-sql requires a SQLX project folder, not a compiled graph")
         return load_compiled_graph(root, source_schema=source_schema)
-    return load_sqlx_project(root, source_schema=source_schema)
+    return load_sqlx_project(root, source_schema=source_schema, interpolation_sql=interpolation_sql)
 
 
 def compare_outputs_main(argv: list[str] | None = None) -> int:

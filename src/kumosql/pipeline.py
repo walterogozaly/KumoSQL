@@ -1527,6 +1527,11 @@ class _Analysis:
                 opaque_readers_of.update(upstream.get(key, ()))
                 continue
             for unit, (writer, query, partial) in enumerate(units[key]):
+                model = pipeline.models[writer]
+                template_tokens = frozenset(getattr(model, "masked_tokens", ()))
+                if not template_tokens and model.masked_expressions:
+                    # Compatibility with manually constructed models and saved analyses predating token metadata.
+                    template_tokens = frozenset(_TEMPLATE_TOKEN.findall(model.sql))
                 excepted: set[ColumnRef] = set()
                 try:
                     marked = query.copy()
@@ -1643,7 +1648,8 @@ class _Analysis:
                             unresolved(scope, column)
                             continue
                         owner = pipeline.resolve(table) or _table_name_for_schema(table)
-                        used.add(ColumnRef(owner, column.name))
+                        if column.name not in template_tokens:
+                            used.add(ColumnRef(owner, column.name))
                 if pruned is not qualified:
                     # Pruning drops columns the outer query never uses, which is right for a ``*`` that was
                     # expanded, but a column the SQL names in a CTE or subquery is still read: dropping it
@@ -1657,7 +1663,8 @@ class _Analysis:
                                 unresolved(scope, column)
                                 continue
                             owner = pipeline.resolve(table) or _table_name_for_schema(table)
-                            used.add(ColumnRef(owner, column.name))
+                            if column.name not in template_tokens:
+                                used.add(ColumnRef(owner, column.name))
                 if before_by_name is not None:
                     # A column a by-name set operation drops (an extra under LEFT / INNER) is still read by the SQL.
                     for scope in traverse_scope(before_by_name):
@@ -1665,14 +1672,23 @@ class _Analysis:
                             table = _source_table(scope, column)
                             if table is not None:
                                 owner = pipeline.resolve(table) or _table_name_for_schema(table)
-                                used.add(ColumnRef(owner, column.name))
+                                if column.name not in template_tokens:
+                                    used.add(ColumnRef(owner, column.name))
                 used.update(excepted)
                 consumed[key] = frozenset(used) | consumed.get(key, frozenset()) if unit else frozenset(used)
                 deciding = condition_columns(qualified, lambda table: pipeline.resolve(table) or _table_name_for_schema(table))
                 deciding = set(used) if deciding is None else deciding | masked_used  # unknown: any read may change rows
                 conditions[key] = frozenset(deciding) | conditions.get(key, frozenset()) if unit else frozenset(deciding)
 
-                names = tuple(qualified.named_selects)
+                unnamed_template = any(n in template_tokens for n in qualified.named_selects)
+                names = tuple("*" if n in template_tokens else n for n in qualified.named_selects)
+                if unnamed_template:
+                    opaque_readers_of.update(upstream.get(writer, ()))
+                    diagnostics.append(PipelineDiagnostic(
+                        writer, "unresolved_template",
+                        "a SELECT-list SQLX expression may emit unnamed columns; supply interpolation SQL "
+                        "or a compiled Dataform graph to determine its output columns",
+                    ))
                 if unnamed_insert:
                     # The target's columns are not known, so the names the SELECT gives are not its columns.
                     diagnostics.append(
@@ -1728,7 +1744,8 @@ class _Analysis:
                         skipped_columns += 1
                         continue
                     if name == "*":
-                        records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "unexpanded_star")
+                        reason = "unresolved_template" if unnamed_template else "unexpanded_star"
+                        records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", reason)
                         continue
                     if by_name_problems or (union_star and star_view is None):
                         # Positional tracing would attribute columns to the wrong branch column (a ``*`` over
@@ -1748,13 +1765,13 @@ class _Analysis:
                             # label; the trace never reads that copy, and for wide models it dominated.
                             trim_selects=False,
                         )
-                        leaves, reason, transform = _scan_lineage(pipeline, schema, node, name, is_union, cte_names)
+                        leaves, reason, transform = _scan_lineage(pipeline, schema, node, name, is_union, cte_names, template_tokens)
                         if reason == "unresolved_column" and lineage_scope is not None:
                             # With no schema for a table, the pre-built scope keeps a
                             # bare column unresolved; re-qualifying resolves it when
                             # only one table is in scope and leaves real ambiguity.
                             retry = _lineage(name, traced, dialect="bigquery", copy=True)
-                            again = _scan_lineage(pipeline, schema, retry, name, is_union)
+                            again = _scan_lineage(pipeline, schema, retry, name, is_union, template_tokens=template_tokens)
                             if again[1] != "unresolved_column":
                                 leaves, reason, transform = again
                     except Exception as exc:
@@ -1769,6 +1786,13 @@ class _Analysis:
                             ref, frozenset(leaves), "unknown", "unknown", reason or "unexpanded_star"
                         )
                     elif reason:
+                        if reason == "unresolved_template":
+                            opaque_readers_of.update(upstream.get(writer, ()))
+                            diagnostics.append(PipelineDiagnostic(
+                                writer, "unresolved_template",
+                                f"{name}: a SELECT expression contains unresolved SQLX; supply interpolation SQL "
+                                "or a compiled Dataform graph to trace its generated SQL",
+                            ))
                         records[ref] = ColumnLineage(ref, frozenset(leaves), "unknown", "unknown", reason)
                     elif not leaves:
                         records[ref] = ColumnLineage(ref, frozenset(), "constant", "constant")
@@ -1971,6 +1995,7 @@ def _scan_lineage(
     name: str,
     is_union: bool,
     cte_names: dict | None = None,
+    template_tokens: frozenset[str] = frozenset(),
 ) -> tuple[set[ColumnRef], str | None, str]:
     """Leaf columns, the reason the trace is incomplete (or None), and the transform."""
 
@@ -1986,6 +2011,13 @@ def _scan_lineage(
     for item in node.walk():
         if any(id(n) in phantoms for n in _ancestors(item, parent_of)):
             continue
+        # Only the projection on this lineage path, not its entire query:
+        # a helper in another output must not taint this column.
+        if any(
+            isinstance(part, (exp.Identifier, exp.Literal)) and any(token in part.name for token in template_tokens)
+            for part in item.expression.walk()
+        ):
+            reason = "unresolved_template"
         if item.downstream:
             projection = item.expression
             if isinstance(projection, exp.Alias):
@@ -2009,6 +2041,9 @@ def _scan_lineage(
                 asked = parent.name.split(".")[-1].strip('"`')
                 if asked != "*":
                     column_name = asked
+            if column_name in template_tokens:
+                reason = "unresolved_template"
+                continue
             leaf = ColumnRef(owner, column_name)
             known = {c.lower() for c in schema.get(owner, {})}
             if known and leaf.column.lower() not in known:

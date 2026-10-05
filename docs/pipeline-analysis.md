@@ -38,6 +38,34 @@ when the schema for `events` is known.
 python -m kumosql pipeline-report path/to/dataform --source-schema sources.json --similarity 0.7 -o report.json
 ```
 
+
+### SELECT-list JavaScript helpers
+
+Kumo does not execute JavaScript helpers. An unresolved `${helpers.normalize("o.amount")}` in a SELECT expression has `status: "unknown"`, `reason: "unresolved_template"`, and an incomplete trace. Visible SQL dependencies are retained, including through CTEs and model chains; helper argument text alone cannot establish its generated SQL's dependencies. A helper that may emit an entire projection list has unknown output columns (`*`). Dead-column results for its upstream models are withheld.
+
+For exact tracing without executing project code, supply the helper's generated SQL:
+
+```python
+pipeline = load_sqlx_project(
+    "path/to/dataform",
+    interpolation_sql={
+        '${helpers.normalize("o.amount")}': 'ROUND(o.amount, 2)',
+    },
+)
+```
+
+The pipeline-report CLI accepts the same mapping in a JSON file:
+
+```json
+{"${helpers.normalize(\"o.amount\")}": "ROUND(o.amount, 2)"}
+```
+
+```powershell
+kumosql-pipeline-report path/to/dataform --interpolation-sql helpers.json
+```
+
+Keys match the full interpolation text exactly, including whitespace. Values are the SQL the helper generates, and may contain expressions, projection lists, or `${ref(...)}` calls. Expansion occurs once before reference resolution and parsing; comments remain unchanged and unmatched helpers remain unknown. A mapping applies to every identical call in the project. Supply the correct generated SQL for that project configuration; when output varies by model context, use `load_compiled_graph` with `dataform compile --json` for the complete compiled graph instead.
+
 ## Lineage that follows GoogleSQL rather than guessing
 
 Column tracing uses sqlglot; `kumosql.lineage_soundness` corrects the shapes where its answer is not GoogleSQL's, so a trace is exact or says unknown (`tests/test_lineage_soundness.py`, with the cases of an external audit in `tests/fixtures/lineage_s013/`):

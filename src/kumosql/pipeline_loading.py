@@ -23,6 +23,7 @@ from .resilience import (
 )
 from .sqlx import (
     _SQLX_BLOCK_RE as _SQLX_CONFIG_RE,
+    expand_sqlx_interpolations,
     mask_sqlx_interpolations as _mask_sqlx_interpolations,
     outside_sql_comments as _outside_sql_comments,
     split_sqlx_sections as _split_sqlx_sections,
@@ -993,15 +994,24 @@ def load_sqlx_project(
     *,
     source_schema: dict[str, dict[str, str]] | None = None,
     compiled_targets: Callable[[], Iterable[tuple[tuple[str, str, str], bool]]] | None = None,
+    interpolation_sql: dict[str, str] | None = None,
 ) -> Pipeline:
     """Load a Dataform project (``definitions/**.sqlx``) or a folder of ``.sql`` files.
 
     ``${ref(...)}`` and ``${self()}`` are resolved to table names using the
     project defaults; other interpolations are masked so the SQL still
     parses. For exact compiled SQL, prefer :func:`load_compiled_graph` with
-    the output of ``dataform compile --json``.
+    the output of ``dataform compile --json``. ``interpolation_sql`` maps exact
+    interpolation text (including ``${...}``) to caller-supplied generated SQL.
+    The same expansion applies to every matching call in the project; provide
+    compiled SQL instead when a helper depends on per-model context.
     """
 
+    if interpolation_sql is not None and (
+        not isinstance(interpolation_sql, dict)
+        or any(not isinstance(k, str) or not isinstance(v, str) for k, v in interpolation_sql.items())
+    ):
+        raise PipelineLoadError("interpolation SQL must be a JSON object mapping expression text to SQL strings")
     root = extended_path(root)
     if not root.is_dir():
         raise PipelineLoadError("project folder was not found or is not a directory")
@@ -1128,6 +1138,8 @@ def load_sqlx_project(
     def load_asset(relative: str, sections, config: str, kind: str, target: Target) -> None:
         default = Target(database, dataset, "")
         body = "".join(section for kind_, section in sections if kind_ == "sql")
+        if interpolation_sql:
+            body = expand_sqlx_interpolations(body, interpolation_sql)
         dependencies: list[Target] = []
 
         def checked(ref: Target, what: str, *, needs_output: bool = False) -> Target:
@@ -1205,9 +1217,11 @@ def load_sqlx_project(
             if declared not in dependencies:
                 dependencies.append(checked(declared, "a config dependency"))
         masked: tuple[str, ...] = ()
+        masked_tokens: tuple[str, ...] = ()
         if "${" in body:
             body, restorations = _mask_sqlx_interpolations(body)
             masked = tuple(item.original for item in restorations)
+            masked_tokens = tuple(item.token for item in restorations)
         try:
             tags = _config_tags(config)
         except Exception as exc:  # noqa: BLE001 - tags are optional; never lose the model over them
@@ -1222,7 +1236,7 @@ def load_sqlx_project(
         except Exception:  # noqa: BLE001 - a config that cannot be read keeps every column of the model in use
             config_reads, config_reads_unread = (), ("config",)
         add_model(Model(target, kind, body, relative, tuple(dependencies), masked, tags, non_null, unique_keys, tuple(operations),
-                        config_reads=config_reads, config_reads_unread=config_reads_unread,
+                        masked_tokens=masked_tokens, config_reads=config_reads, config_reads_unread=config_reads_unread,
                         logical=renamed.get(target, ()), disabled=_config_flag(config, "disabled") is True,
                         has_output=_config_flag(config, "hasOutput") is True))
 

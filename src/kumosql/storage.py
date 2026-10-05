@@ -18,7 +18,7 @@ from pathlib import Path
 from . import state
 
 SECTION = "storage"
-SNAPSHOT_VERSION = 3  # 3: models carry logical, disabled, has_output, incremental_sql and the pipeline a default_location; 2: models carry config_reads and config_reads_unread
+SNAPSHOT_VERSION = 4  # 4: models carry collision-safe masked_tokens; 3: models carry logical, disabled, has_output, incremental_sql and the pipeline a default_location; 2: models carry config_reads and config_reads_unread
 
 
 def atomic_json(path: Path, value: object) -> None:
@@ -95,7 +95,7 @@ def pipeline_from_snapshot(value: object, key: str):
         if not isinstance(obj["declared_dependencies"], list):
             raise ValueError("invalid snapshot dependencies")
         obj["declared_dependencies"] = tuple(target(t) for t in obj["declared_dependencies"])
-        for k in ("masked_expressions", "tags", "non_null", "operations_sql", "config_reads", "config_reads_unread", "logical", "incremental_sql"):
+        for k in ("masked_expressions", "masked_tokens", "tags", "non_null", "operations_sql", "config_reads", "config_reads_unread", "logical", "incremental_sql"):
             obj[k] = tuple(_strings(obj[k]))
         if not all(isinstance(obj[k], bool) for k in ("disabled", "has_output")):
             raise ValueError("invalid snapshot model flags")
