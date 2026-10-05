@@ -19,9 +19,6 @@ executed check runs, over the tables the eval declares.
 * ``cosette-adapted`` (``tools/cosette_bench.py cosette-adapted``): the adapted Cosette pairs, as ``cosette``.
 * ``arcwise-corrections`` (``tools/arcwise_bench.py``): BIRD gold SQL against its repair, decided as
   ``llm_sql_solver_bench.decide`` decides a Spider pair; the eval expects no proof (a proof is cosmetic or wrong).
-* ``analytical-sql-coverage`` (``tools/analytical_coverage.py``): the eval's execution stage runs every cleanup and
-  formatter rewrite KumoSQL marks proven against the original on generated tables; each such rewrite of the
-  sampled queries (60 spread through each corpus, ``--split all``) is a pair.
 """
 
 from __future__ import annotations
@@ -503,79 +500,10 @@ class Arcwise(Adapter):
                           "listed_keys": {t: list(k) for t, k in case.keys.items()}, "foreign_keys": list(case.foreign)})
 
 
-# --- Analytical SQL coverage ----------------------------------------------------------------------------
-
-CORPORA = ("sqlstorm/stackoverflow", "sqlstorm/tpch", "sqlstorm/tpcds", "sqlstorm/job", "sqlstorm-v0/tpch", "sqlstorm-v0/tpcds",
-           "sqlstorm-v0/job", "dsb")
-SAMPLE = 60  # ``analytical_coverage.py --split all --limit 60``, the run the results page records
-_BQ_KINDS = {"INT64": ("int", "BIGINT"), "FLOAT64": ("float", "DOUBLE"), "NUMERIC": ("decimal", "DECIMAL(38,9)"), "STRING": ("text", "VARCHAR"),
-             "BOOL": ("bool", "BOOLEAN"), "DATE": ("date", "DATE"), "TIMESTAMP": ("timestamp", "TIMESTAMP")}
-
-
-class AnalyticalCoverage(Adapter):
-    """One item per sampled query and rewrite (``cleanup`` is the six non-formatting rules in sequence, ``format`` is
-    sqlfluff's formatter). A pair is proven when the rewrite changed the query and its verification is ``PROVEN``
-    (what ``_execution`` calls a trusted rewrite); the Case runs both through the eval's own BigQuery-on-DuckDB
-    translation (``DatasetRunner.prepare``) over the corpus's tables, with no keys or NOT NULL columns."""
-
-    name = "analytical-sql-coverage"
-
-    def items(self) -> list[dict]:
-        import analytical_coverage as ac
-
-        out = []
-        for corpus in CORPORA:
-            for qid, _ in ac.sample(corpus, SAMPLE, "all"):
-                for kind in ("cleanup", "format"):
-                    out.append({"pair": f"{qid}::{kind}", "query": qid, "corpus": corpus, "kind": kind})
-        return out
-
-    def case(self, item: dict) -> Case | None:
-        import analytical_coverage as ac
-        import benchmark_corpora as corpora
-        from kumosql import rewrite
-        from kumosql.result_equivalence import DatasetRunner, _local_name
-
-        text = dict(ac.corpora_mod.queries(item["corpus"]))[item["query"]]
-        try:
-            sql = corpora.to_bigquery(text)
-        except Exception:  # noqa: BLE001 - the eval leaves a query sqlglot cannot convert out of its score
-            return None
-        schema = corpora.schema(item["corpus"])
-        if schema is None:
-            return None
-        try:
-            if item["kind"] == "cleanup":
-                result = rewrite.apply_rules(ac.cov.CLEANUP_RULES, sql)
-            else:
-                result = rewrite.apply_rule("format_sql", sql)
-        except Exception:  # noqa: BLE001 - a crash is a failure to prove, never a proof
-            return None
-        if result.sql == sql or result.verification.status is not rewrite.VerificationStatus.PROVEN:
-            return None
-        runner = DatasetRunner(schema, "bigquery")
-        try:
-            left, right = runner.prepare(sql), runner.prepare(result.sql)
-        finally:
-            runner.close()
-        tables = {
-            _local_name(t): Table(_local_name(t), [Column(c, _BQ_KINDS[k.upper()][0], sql_type=_BQ_KINDS[k.upper()][1]) for c, k in cols.items()])
-            for t, cols in schema.items()
-        }
-        return Case(self.name, item["pair"], left, right, tables, setup=bigquery_setup(), source=(sql, result.sql), dialect="bigquery",
-                    meta={"corpus": item["corpus"], "rewrite": item["kind"]})
-
-
-def bigquery_setup() -> tuple[str, ...]:
-    from kumosql import bigquery_on_duckdb as bq
-
-    return tuple(bq.SETTINGS) + tuple(bq.MACROS)
-
-
 ADAPTERS = {
     a.name: a
     for a in [
-        AnalyticalCoverage(), Arcwise(), Quite("quite-rewrites", "equal"), Quite("quite-negatives", "unequal"), Logos(), QueryBooster(),
+        Arcwise(), Quite("quite-rewrites", "equal"), Quite("quite-negatives", "unequal"), Logos(), QueryBooster(),
         DbgptStyle("dbgpt-rules", "dbgpt_rules"), DbgptStyle("documented-rewrites", "documented_rewrites"),
         OptimizerBugs(), JaffleRefactors(), CosetteAdapted(),
     ]

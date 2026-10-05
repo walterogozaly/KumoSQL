@@ -19,7 +19,7 @@ from recheck import new_evals_a as family  # noqa: E402
 
 NAMES = {
     "quite-rewrites", "quite-negatives", "logos-core-proof", "querybooster", "dbgpt-rules", "documented-rewrites",
-    "optimizer-bugs", "jaffle-shop-refactors", "cosette-adapted", "arcwise-corrections", "analytical-sql-coverage",
+    "optimizer-bugs", "jaffle-shop-refactors", "cosette-adapted", "arcwise-corrections",
 }
 
 
