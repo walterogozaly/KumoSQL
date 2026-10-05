@@ -21,7 +21,9 @@ pytest.importorskip("duckdb")
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
-_spec = importlib.util.spec_from_file_location("sample_db_bench", ROOT / "tools" / "sample_db_bench.py")
+_spec = importlib.util.spec_from_file_location(
+    "sample_db_bench", ROOT / "tools" / "sample_db_bench.py"
+)
 bench = importlib.util.module_from_spec(_spec)
 sys.modules["sample_db_bench"] = bench
 _spec.loader.exec_module(bench)
@@ -30,8 +32,8 @@ import sample_db_employees as emp  # noqa: E402
 employees = bench.DOWNLOADED["employees"]
 FOLDER = ROOT / "tests" / "fixtures" / "sample_databases" / "employees"
 
-# floors only ever go up (recorded run: see benchmarks/results/sample-databases-employees-pairs.json)
-FLOORS = {"proven": 0, "refuted": 0}
+# floors only ever go up (recorded run: 32 of 35 proved, 40 of 41 refuted)
+FLOORS = {"proven": 31, "refuted": 38}
 # workload queries the pipeline and lift_subqueries change: upstream views and functions, authored
 SUBSET = [
     "emp-view-current-dept-emp",
@@ -120,16 +122,23 @@ def test_the_checksum_chain_follows_mysqls_concat_ws():
 
     con = duckdb.connect()
     con.execute("CREATE TABLE departments (dept_no VARCHAR, dept_name VARCHAR)")
-    con.execute("INSERT INTO departments VALUES ('d002', 'Finance'), ('d001', 'Marketing')")
+    con.execute(
+        "INSERT INTO departments VALUES ('d002', 'Finance'), ('d001', 'Marketing')"
+    )
     records, md5, sha = emp.chain_checksums(con, "departments")
     crc = ""
     for row in (("d001", "Marketing"), ("d002", "Finance")):
         crc = hashlib.md5(f"{crc}#{'#'.join(row)}".encode()).hexdigest()
     assert records == 2 and md5 == crc and len(sha) == 64
     # a NULL is skipped by CONCAT_WS, not printed
-    con.execute("CREATE TABLE titles (emp_no INT, title VARCHAR, from_date DATE, to_date DATE)")
+    con.execute(
+        "CREATE TABLE titles (emp_no INT, title VARCHAR, from_date DATE, to_date DATE)"
+    )
     con.execute("INSERT INTO titles VALUES (1, 'Engineer', DATE '1990-01-01', NULL)")
-    assert emp.chain_checksums(con, "titles")[1] == hashlib.md5(b"#1#Engineer#1990-01-01").hexdigest()
+    assert (
+        emp.chain_checksums(con, "titles")[1]
+        == hashlib.md5(b"#1#Engineer#1990-01-01").hexdigest()
+    )
 
 
 def test_the_adapted_schema_declares_the_keys_the_pairs_are_about():
@@ -138,8 +147,14 @@ def test_the_adapted_schema_declares_the_keys_the_pairs_are_about():
     assert schema["titles"].primary_key == ("emp_no", "title", "from_date")
     assert schema["salaries"].primary_key == ("emp_no", "from_date")
     assert schema["dept_emp"].primary_key == ("emp_no", "dept_no")
-    assert schema["titles"].not_null >= {"emp_no", "title", "from_date"} and "to_date" not in schema["titles"].not_null
-    assert all(schema[t].columns[c] == "DATE" for t, c in (("titles", "from_date"), ("salaries", "from_date")))
+    assert (
+        schema["titles"].not_null >= {"emp_no", "title", "from_date"}
+        and "to_date" not in schema["titles"].not_null
+    )
+    assert all(
+        schema[t].columns[c] == "DATE"
+        for t, c in (("titles", "from_date"), ("salaries", "from_date"))
+    )
 
 
 def test_the_authored_files_are_well_formed():
@@ -147,13 +162,24 @@ def test_the_authored_files_are_well_formed():
     ids = [q["id"] for q in workload]
     assert len(ids) == len(set(ids)) and all(i.startswith("emp-") for i in ids)
     origins = {q["origin"] for q in workload}
-    assert origins == {"upstream-view", "upstream-procedure", "upstream-test", "authored"}
+    assert origins == {
+        "upstream-view",
+        "upstream-procedure",
+        "upstream-test",
+        "authored",
+    }
     assert all("adaptation" in q for q in workload if q["origin"] != "authored")
     pairs = employees.pairs()
     pair_ids = [p["id"] for p in pairs]
-    assert len(pair_ids) == len(set(pair_ids)) and all(i.startswith("emp-") for i in pair_ids)
+    assert len(pair_ids) == len(set(pair_ids)) and all(
+        i.startswith("emp-") for i in pair_ids
+    )
     for pair in pairs:
-        assert pair["label"] in ("equivalent", "different") and pair["left"] and pair["right"]
+        assert (
+            pair["label"] in ("equivalent", "different")
+            and pair["left"]
+            and pair["right"]
+        )
         if pair["label"] == "different":
             assert pair.get("witness") is not None, pair["id"]
         if "sibling" in pair:
@@ -165,7 +191,10 @@ def test_the_authored_files_are_well_formed():
 
 
 def test_the_results_files_report_zero_wrong():
-    for name in ("sample-databases-employees-rewrites", "sample-databases-employees-pairs"):
+    for name in (
+        "sample-databases-employees-rewrites",
+        "sample-databases-employees-pairs",
+    ):
         row = json.loads((ROOT / "benchmarks" / "results" / f"{name}.json").read_text())
         assert row["docs"] == "docs/evals/sample-databases-employees.md"
         assert row["command"].endswith("--database employees --write-results")
@@ -189,8 +218,15 @@ def test_the_load_matches_upstream():
 def test_the_upstream_views_are_in_the_workload():
     _data()
     views = employees.upstream_views()
-    assert sorted(views) == ["current_dept_emp", "dept_emp_latest_date", "v_full_departments", "v_full_employees"]
-    assert sorted(q["name"] for q in employees.workload() if q["origin"] == "upstream-view") == sorted(views)
+    assert sorted(views) == [
+        "current_dept_emp",
+        "dept_emp_latest_date",
+        "v_full_departments",
+        "v_full_employees",
+    ]
+    assert sorted(
+        q["name"] for q in employees.workload() if q["origin"] == "upstream-view"
+    ) == sorted(views)
 
 
 @pytest.mark.slow
@@ -199,13 +235,22 @@ def test_every_employees_pair_is_decided_without_a_wrong_answer():
     rows = bench.run_pairs([employees], jobs=2)
     summary = bench.summarize_pairs(rows)["all"]
     assert summary["wrong"] == 0, [r for r in rows if r["wrong"]]
-    assert summary["labels_unverified"] == 0, [r["id"] for r in rows if r["witness_ok"] is False]
-    assert summary["proven"] >= FLOORS["proven"] and summary["refuted"] >= FLOORS["refuted"]
+    assert summary["labels_unverified"] == 0, [
+        r["id"] for r in rows if r["witness_ok"] is False
+    ]
+    assert (
+        summary["proven"] >= FLOORS["proven"]
+        and summary["refuted"] >= FLOORS["refuted"]
+    )
     # a pair annotated with a prover bug is the replay gate catching an illegal counterexample: it must stay
     # unknown, never a refutation or a proof
     annotated = {p["id"] for p in employees.pairs() if p.get("known_prover_bug")}
     assert {r["id"] for r in rows if r.get("prover_bug")} <= annotated
-    assert all(r["outcome"] == "unknown" for r in rows if r["id"] in annotated and r.get("prover_bug"))
+    assert all(
+        r["outcome"] == "unknown"
+        for r in rows
+        if r["id"] in annotated and r.get("prover_bug")
+    )
 
 
 @pytest.mark.slow
