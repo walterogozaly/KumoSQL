@@ -1,8 +1,4 @@
-"""Whole-project Dataform layouts from tests/fixtures/bq_syntax/dataform/projects.
-
-What loads is asserted; what does not yet is an xfail with the reason, so the gap shows in the
-coverage docs and closing it flips the test.
-"""
+"""Whole-project Dataform layouts from tests/fixtures/bq_syntax/dataform/projects."""
 
 from pathlib import Path
 
@@ -53,8 +49,35 @@ def test_javascript_api_actions_are_loaded():
         "kumosql.kumosql_messy.users_copy"]
 
 
-@pytest.mark.xfail(reason="actions.yaml (types, dependencyTargets, file mapping) is not read; its SQL files load as untyped models", strict=True)
 def test_actions_yaml_types_and_dependencies_are_read():
     pipeline = load_sqlx_project(PROJECTS / "actions_yaml")
-    assert pipeline.models["users_view"].kind == "view"
-    assert any(dep.name == "raw_orders" for dep in pipeline.models["users_table"].declared_dependencies)
+    view = pipeline.models["kumosql.kumosql_messy.users_view"]
+    table = pipeline.models["kumosql.kumosql_messy.users_table"]
+    incremental = pipeline.models["kumosql.kumosql_messy.users_incr"]
+    assertion = pipeline.models["kumosql.kumosql_messy.users_assert"]
+    operation = pipeline.models["kumosql.kumosql_messy.users_op"]
+
+    assert view.kind == "view"
+    assert table.kind == "table"
+    assert table.tags == ("daily",)
+    assert any(dep.name == "raw_orders" for dep in table.declared_dependencies)
+    assert "created_at" in table.config_reads
+    assert incremental.kind == "incremental"
+    assert incremental.incremental_sql == ("SELECT id FROM `kumosql.kumosql_messy.raw_users`",)
+    assert assertion.kind == "assertion"
+    assert operation.kind == "operations" and not operation.has_output
+    assert "kumosql.kumosql_messy.raw_extra" in pipeline.sources
+
+
+def test_unreadable_actions_yaml_keeps_plain_sql_unknown(tmp_path):
+    definitions = tmp_path / "definitions"
+    definitions.mkdir()
+    (definitions / "actions.yaml").write_text(
+        "actions:\n  - incrementalTable:\n      filename: &model users.sql\n", encoding="utf-8"
+    )
+    (definitions / "users.sql").write_text("SELECT 1 AS id", encoding="utf-8")
+
+    pipeline = load_sqlx_project(tmp_path)
+
+    assert pipeline.models["users"].kind == "unknown"
+    assert any(d.code == "actions_yaml_unreadable" for d in pipeline.diagnostics)

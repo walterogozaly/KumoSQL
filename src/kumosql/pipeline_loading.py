@@ -86,6 +86,234 @@ _DEPENDENCY_ITEM_RE = re.compile(r"\{[^}]*\}|['\"`][^'\"`]*['\"`]")
 _STRING_RE = re.compile(r"""(['"`])((?:\\.|(?!\1).)*)\1""")
 
 
+def _yaml_scalar(value: str) -> object:
+    """Read the scalar subset used by Dataform action manifests; reject YAML features we cannot read safely."""
+
+    value = value.strip()
+    if not value:
+        return ""
+    if value.startswith("["):
+        if not value.endswith("]"):
+            raise ValueError("unterminated flow sequence")
+        inner = value[1:-1].strip()
+        return [] if not inner else [_yaml_scalar(part) for part in _split_yaml_flow(inner)]
+    if value[0] in "\"'":
+        if len(value) < 2 or value[-1] != value[0]:
+            raise ValueError("unterminated quoted scalar")
+        if value[0] == '"':
+            parsed = json.loads(value)
+            if not isinstance(parsed, str):
+                raise ValueError("expected a string scalar")
+            return parsed
+        return value[1:-1].replace("''", "'")
+    if value.lower() in {"true", "false"}:
+        return value.lower() == "true"
+    if value.lower() in {"null", "~"}:
+        return None
+    if value[0] in "&*!>|{" or value.endswith(":"):
+        raise ValueError("unsupported YAML scalar syntax")
+    return value
+
+
+def _split_yaml_flow(value: str) -> list[str]:
+    parts, start, quote, escaped = [], 0, None, False
+    for index, char in enumerate(value):
+        if quote:
+            if quote == '"' and char == "\\" and not escaped:
+                escaped = True
+                continue
+            if char == quote and not escaped:
+                quote = None
+            escaped = False
+        elif char in "\"'":
+            quote = char
+        elif char == ",":
+            parts.append(value[start:index].strip())
+            start = index + 1
+    if quote:
+        raise ValueError("unterminated quote in flow sequence")
+    parts.append(value[start:].strip())
+    if any(not part for part in parts):
+        raise ValueError("empty item in flow sequence")
+    return parts
+
+
+def _strip_yaml_comment(line: str) -> str:
+    quote, escaped = None, False
+    for index, char in enumerate(line):
+        if quote:
+            if quote == '"' and char == "\\" and not escaped:
+                escaped = True
+                continue
+            if char == quote and not escaped:
+                quote = None
+            escaped = False
+        elif char in "\"'":
+            quote = char
+        elif char == "#" and (index == 0 or line[index - 1].isspace()):
+            return line[:index].rstrip()
+    return line.rstrip()
+
+
+def _parse_actions_yaml(text: str) -> list[dict[str, object]]:
+    """Read the indentation-based action manifest subset used by Dataform; unknown structures fail closed."""
+
+    actions: list[dict[str, object]] = []
+    current: dict[str, object] | None = None
+    field, saw_actions = "", False
+    last_dependency: dict[str, object] | None = None
+
+    def flush() -> None:
+        nonlocal current
+        if current is not None:
+            actions.append(current)
+            current = None
+
+    for number, raw in enumerate(text.splitlines(), start=1):
+        line = _strip_yaml_comment(raw)
+        if not line.strip():
+            continue
+        if "\t" in line:
+            raise ValueError(f"line {number}: tabs are not supported for indentation")
+        indent = len(line) - len(line.lstrip(" "))
+        content = line[indent:]
+        if indent == 0:
+            if content == "---" and not saw_actions and current is None:
+                continue
+            if content == "actions: []" and not saw_actions and current is None:
+                saw_actions = True
+                continue
+            if content != "actions:" or saw_actions or current is not None:
+                raise ValueError(f"line {number}: expected one top-level actions: list")
+            saw_actions = True
+        elif not saw_actions:
+            raise ValueError(f"line {number}: missing top-level actions: list")
+        elif indent == 2 and content.startswith("- "):
+            flush()
+            match = re.fullmatch(r"-\s+([A-Za-z][A-Za-z0-9_-]*)\s*:\s*", content)
+            if not match:
+                raise ValueError(f"line {number}: action entries must be '- type:' mappings")
+            current = {"type": match.group(1)}
+            field, last_dependency = "", None
+        elif current is None:
+            raise ValueError(f"line {number}: content is outside an action entry")
+        elif indent == 6:
+            match = re.fullmatch(r"([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*?)\s*", content)
+            if not match:
+                raise ValueError(f"line {number}: expected an action property")
+            field, raw_value = match.groups()
+            last_dependency = None
+            if raw_value:
+                current[field] = _yaml_scalar(raw_value)
+            else:
+                current[field] = [] if field == "dependencyTargets" else {}
+        elif indent == 8:
+            if field == "dependencyTargets":
+                match = re.fullmatch(r"-\s+([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*?)\s*", content)
+                if match:
+                    key, raw_value = match.groups()
+                    last_dependency = {key: _yaml_scalar(raw_value)}
+                    current[field].append(last_dependency)
+                elif content.startswith("- "):
+                    current[field].append(_yaml_scalar(content[2:]))
+                    last_dependency = None
+                else:
+                    raise ValueError(f"line {number}: expected a dependencyTargets list item")
+            elif isinstance(current.get(field), dict):
+                match = re.fullmatch(r"([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*?)\s*", content)
+                if not match:
+                    raise ValueError(f"line {number}: expected a nested property")
+                key, raw_value = match.groups()
+                current[field][key] = _yaml_scalar(raw_value)
+            elif isinstance(current.get(field), list) and content.startswith("- "):
+                current[field].append(_yaml_scalar(content[2:]))
+            else:
+                raise ValueError(f"line {number}: unsupported nested action value")
+        elif indent == 10 and field == "dependencyTargets" and last_dependency is not None:
+            match = re.fullmatch(r"([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*?)\s*", content)
+            if not match:
+                raise ValueError(f"line {number}: expected a dependency target property")
+            key, raw_value = match.groups()
+            last_dependency[key] = _yaml_scalar(raw_value)
+        else:
+            raise ValueError(f"line {number}: unsupported actions.yaml structure")
+    flush()
+    if not saw_actions:
+        raise ValueError("missing top-level actions: list")
+    return actions
+
+
+_ACTIONS_YAML_TYPES = {
+    "table": "table",
+    "view": "view",
+    "incrementalTable": "incremental",
+    "assertion": "assertion",
+    "operation": "operations",
+}
+_ACTIONS_YAML_FIELDS = frozenset({
+    "type", "filename", "name", "project", "database", "dataset", "schema", "dependencyTargets", "tags",
+    "bigquery", "assertions", "uniqueKey", "hasOutput", "disabled", "partitionBy", "clusterBy",
+    "requirePartitionFilter", "updatePartitionFilter", "incrementalQuery", "materialized",
+})
+
+
+def _actions_yaml_sqlx_config(action: Mapping[str, object]) -> str:
+    """Translate known manifest metadata into the existing SQLX config reader's conservative subset."""
+
+    values: list[tuple[str, object]] = [("type", _ACTIONS_YAML_TYPES[str(action["type"])])]
+    for key in ("name",):
+        value = action.get(key)
+        if isinstance(value, str) and value:
+            values.append((key, value))
+    database_value = action.get("database") or action.get("project")
+    schema_value = action.get("schema") or action.get("dataset")
+    if isinstance(database_value, str) and database_value:
+        values.append(("database", database_value))
+    if isinstance(schema_value, str) and schema_value:
+        values.append(("schema", schema_value))
+    dependency_targets = action.get("dependencyTargets")
+    if isinstance(dependency_targets, list) and dependency_targets:
+        dependencies = []
+        for dependency in dependency_targets:
+            if isinstance(dependency, str) and dependency:
+                dependencies.append(dependency)
+                continue
+            if not isinstance(dependency, dict) or not isinstance(dependency.get("name"), str):
+                raise ValueError("dependencyTargets entries need a literal name")
+            target = {"name": dependency["name"]}
+            database_value = dependency.get("database") or dependency.get("project")
+            schema_value = dependency.get("schema") or dependency.get("dataset")
+            if isinstance(database_value, str) and database_value:
+                target["database"] = database_value
+            if isinstance(schema_value, str) and schema_value:
+                target["schema"] = schema_value
+            dependencies.append(target)
+        values.append(("dependencies", dependencies))
+    for key in ("tags", "bigquery", "assertions", "uniqueKey", "hasOutput", "disabled", "materialized", "partitionBy",
+                "clusterBy", "requirePartitionFilter", "updatePartitionFilter"):
+        if key in action:
+            values.append((key, action[key]))
+    def render(key: str, value: object) -> str:
+        if key == "dependencies" and isinstance(value, list):
+            items = []
+            for item in value:
+                if isinstance(item, str):
+                    items.append(json.dumps(item, ensure_ascii=False))
+                elif isinstance(item, dict):
+                    fields = ", ".join(f"{field}: {json.dumps(field_value, ensure_ascii=False)}"
+                                        for field, field_value in item.items())
+                    items.append("{" + fields + "}")
+            return "[" + ", ".join(items) + "]"
+        if key in {"bigquery", "assertions"} and isinstance(value, dict):
+            fields = ", ".join(f"{field}: {json.dumps(field_value, ensure_ascii=False)}"
+                                for field, field_value in value.items())
+            return "{" + fields + "}"
+        return json.dumps(value, ensure_ascii=False)
+
+    config = ", ".join(f"{key}: {render(key, value)}" for key, value in values)
+    return f"config {{ {config} }}\n"
+
+
 def _sub_outside_comments(pattern: re.Pattern[str], replace: Callable[[re.Match[str]], str], text: str) -> str:
     """``pattern.sub(replace, text)`` that leaves SQL comments alone: Dataform does not evaluate ``${...}`` in them."""
 
@@ -1053,6 +1281,74 @@ def load_sqlx_project(
     known: dict[str, list[Target]] = {}
     renamed: dict[Target, tuple[str, ...]] = {}  # targets a project prefix or suffix changed -> as the config wrote them
     computed_identities = False  # an asset's name, schema or database is computed: refs to unlisted names stay unresolved
+    actions_by_file: dict[str, dict[str, object] | None] = {}
+    actions_yaml_unreadable = False
+    for manifest in find_assets(search_root, (".yaml", ".yml"), unlistable):
+        if manifest.name.lower() not in {"actions.yaml", "actions.yml"}:
+            continue
+        manifest_name = str(manifest.relative_to(root))
+        manifest_text, manifest_reason = read_text_or_reason(manifest)
+        if manifest_text is None:
+            actions_yaml_unreadable = True
+            diagnostics.append(PipelineDiagnostic(manifest_name, "actions_yaml_unreadable",
+                                                  f"{manifest_reason}; SQL files covered by the manifest were kept unknown"))
+            continue
+        try:
+            actions = _parse_actions_yaml(manifest_text)
+        except (ValueError, json.JSONDecodeError) as exc:
+            actions_yaml_unreadable = True
+            diagnostics.append(PipelineDiagnostic(manifest_name, "actions_yaml_unreadable",
+                                                  f"could not read the action manifest ({type(exc).__name__}); SQL files covered by it were kept unknown"))
+            continue
+        for action in actions:
+            action_type = action.get("type")
+            if action_type == "declaration":
+                name = action.get("name")
+                if not isinstance(name, str) or not name:
+                    diagnostics.append(PipelineDiagnostic(manifest_name, "actions_yaml_unreadable",
+                                                          "a declaration has no literal name; it was not added as a source"))
+                    continue
+                target = Target(
+                    action.get("database") if isinstance(action.get("database"), str) else
+                    action.get("project") if isinstance(action.get("project"), str) else database,
+                    action.get("schema") if isinstance(action.get("schema"), str) else
+                    action.get("dataset") if isinstance(action.get("dataset"), str) else dataset,
+                    name,
+                )
+                sources[target.key] = target
+                known.setdefault(target.name, []).append(target)
+                continue
+            filename = action.get("filename")
+            if not isinstance(filename, str) or not filename:
+                continue  # non-file actions such as project-level notebook metadata are not SQL models
+            action_path = (manifest.parent / filename).resolve()
+            if not action_path.is_relative_to(search_root.resolve()):
+                diagnostics.append(PipelineDiagnostic(manifest_name, "actions_yaml_path_rejected",
+                                                      "an action filename escapes the definitions folder; it was ignored"))
+                continue
+            if not action_path.is_file():
+                diagnostics.append(PipelineDiagnostic(manifest_name, "actions_yaml_file_missing",
+                                                      "an action filename does not resolve to a project file; it was ignored"))
+                continue
+            action_relative = str(action_path.relative_to(root.resolve()))
+            if action_type not in _ACTIONS_YAML_TYPES:
+                if action_path.suffix.lower() in {".sql", ".sqlx"}:
+                    actions_by_file[action_relative] = None
+                    diagnostics.append(PipelineDiagnostic(action_relative, "actions_yaml_type_unknown",
+                                                          "the action type is not modeled; the SQL asset was kept unknown"))
+                continue
+            unsupported_fields = set(action) - _ACTIONS_YAML_FIELDS
+            if unsupported_fields:
+                actions_by_file[action_relative] = None
+                diagnostics.append(PipelineDiagnostic(action_relative, "actions_yaml_field_unknown",
+                                                      "the manifest has an unmodeled action field; its SQL asset was kept unknown"))
+                continue
+            if action_relative in actions_by_file:
+                actions_by_file[action_relative] = None
+                diagnostics.append(PipelineDiagnostic(action_relative, "actions_yaml_duplicate_file",
+                                                      "more than one action maps to this SQL file; it was kept unknown"))
+            else:
+                actions_by_file[action_relative] = action
 
     def read_asset(path: Path):
         relative = str(path.relative_to(root))
@@ -1063,7 +1359,30 @@ def load_sqlx_project(
         return read_text_asset(relative, path.stem, path.suffix, text)
 
     def read_text_asset(relative: str, stem: str, suffix: str, text: str):
+        if suffix in {".sql", ".sqlx"} and actions_yaml_unreadable:
+            add_model(Model(naming.apply(Target(database, dataset, stem)), "unknown", text, relative))
+            return None
+        if suffix in {".sql", ".sqlx"} and relative in actions_by_file and (
+            suffix == ".sqlx" or _SQLX_CONFIG_RE.search(text)
+        ):
+            diagnostics.append(PipelineDiagnostic(relative, "actions_yaml_sqlx_overlap",
+                                                  "both SQLX config and actions.yaml describe this file; its model was kept unknown"))
+            add_model(Model(naming.apply(Target(database, dataset, stem)), "unknown", text, relative))
+            return None
         if suffix == ".sql" and not _SQLX_CONFIG_RE.search(text):
+            action = actions_by_file.get(relative)
+            if relative in actions_by_file:
+                if action is None:
+                    add_model(Model(naming.apply(Target(database, dataset, stem)), "unknown", text, relative))
+                    return None
+                try:
+                    synthetic_config = _actions_yaml_sqlx_config(action)
+                except (TypeError, ValueError) as exc:
+                    diagnostics.append(PipelineDiagnostic(relative, "actions_yaml_unreadable",
+                                                          f"action metadata could not be read ({type(exc).__name__}); the SQL asset was kept unknown"))
+                    add_model(Model(naming.apply(Target(database, dataset, stem)), "unknown", text, relative))
+                    return None
+                return read_text_asset(relative, stem, ".action_yaml", synthetic_config + text)
             target = Target(name=stem)
             add_model(Model(target, "sql", text, relative))
             return None
@@ -1176,6 +1495,20 @@ def load_sqlx_project(
             except ValueError:
                 return match.group(0)  # computed argument: left masked like any other interpolation
 
+        incremental_sql: tuple[str, ...] = ()
+        action = actions_by_file.get(relative)
+        incremental_query = action.get("incrementalQuery") if action is not None else None
+        if isinstance(incremental_query, str) and incremental_query.strip():
+            incremental_query = _sub_outside_comments(_REF_RE, substitute, incremental_query)
+            incremental_query = _sub_outside_comments(_SELF_RE, lambda match: target.sql(), incremental_query)
+            incremental_query = _sub_outside_comments(_RESOLVE_RE, resolve, incremental_query)
+            if "${" in incremental_query:
+                incremental_query, _restorations = _mask_sqlx_interpolations(incremental_query)
+            incremental_sql = (incremental_query,)
+        elif action is not None and action.get("type") == "incrementalTable" and "incrementalQuery" in action:
+            diagnostics.append(PipelineDiagnostic(relative, "actions_yaml_incremental_unreadable",
+                                                  "the incremental query is not a literal SQL string; its reads were not resolved"))
+
         body = _sub_outside_comments(_RESOLVE_RE, resolve, body)
 
         def plain_ref(match: re.Match[str]) -> str:
@@ -1224,7 +1557,7 @@ def load_sqlx_project(
         add_model(Model(target, kind, body, relative, tuple(dependencies), masked, tags, non_null, unique_keys, tuple(operations),
                         config_reads=config_reads, config_reads_unread=config_reads_unread,
                         logical=renamed.get(target, ()), disabled=_config_flag(config, "disabled") is True,
-                        has_output=_config_flag(config, "hasOutput") is True))
+                        has_output=_config_flag(config, "hasOutput") is True, incremental_sql=incremental_sql))
 
     def unreadable(relative: str, exc: Exception) -> None:
         diagnostics.append(PipelineDiagnostic(
