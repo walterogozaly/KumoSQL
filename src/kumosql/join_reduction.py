@@ -341,6 +341,69 @@ def reject_in_inner_on(select: exp.Select) -> exp.Expression | None:
     return copy if changed else None
 
 
+# --- computed columns of a derived source read in a filter ---------------------------------------
+
+
+def inline_derived_computed_columns(select: exp.Select) -> exp.Expression | None:
+    """``d.c`` in a WHERE or ON of an all-inner select reads ``f(d.x)`` when the derived table ``d`` computes ``c`` as ``f(x)``.
+
+    ``x`` must be an output of ``d`` under a name of its own, so that the expression can be written outside it. The
+    derived table keeps its column; once nothing reads it the pruning rules drop it, and two spellings
+    of one filter (a cast kept inside ``d`` or written in the join) meet.
+    """
+
+    from_, joins = _from(select), select.args.get("joins") or []
+    if from_ is None or not joins or select.args.get("laterals"):
+        return None
+    for join in joins:
+        if _side(join) or (join.args.get("kind") or "").upper() not in ("", "INNER", "CROSS") or join.args.get("using") or join.args.get("method"):
+            return None
+    if any(isinstance(s, exp.Star) and not isinstance(s.parent, exp.Count) for s in select.find_all(exp.Star)):
+        return None
+    copy = select.copy()
+    sources = [_from(copy).this] + [j.this for j in copy.args["joins"]]
+    names = [_name(s) for s in sources]
+    if "" in names or len(set(names)) != len(names):
+        return None
+    holders: list[tuple[exp.Expression, str]] = []
+    if copy.args.get("where") is not None:
+        holders.append((copy.args["where"], "this"))
+    holders += [(j, "on") for j in copy.args["joins"] if j.args.get("on") is not None]
+    changed = False
+    for source in sources:
+        if not isinstance(source, exp.Subquery) or not source.alias or not isinstance(source.this, exp.Select) or not _plain_derived(source.this):
+            continue
+        inner, alias = source.this, source.alias.lower()
+        outputs: dict[str, exp.Expression] = {}
+        for item in inner.expressions:
+            name = item.alias_or_name.lower()
+            if not name or name in outputs:
+                outputs = {}
+                break
+            outputs[name] = item.this if isinstance(item, exp.Alias) else item
+        exposed = {value.sql(): name for name, value in outputs.items() if isinstance(value, exp.Column) and not isinstance(value.this, exp.Star)}
+        for holder, key in holders:
+            for column in list(holder.args[key].find_all(exp.Column)):
+                if column.table.lower() != alias or column.find_ancestor(exp.Select) is not copy:
+                    continue
+                value = outputs.get(column.name.lower())
+                if value is None or isinstance(value, exp.Column) or not _inlinable(value, exposed):
+                    continue
+                rewritten = value.copy()
+                for inner_column in list(rewritten.find_all(exp.Column)):
+                    inner_column.replace(exp.column(exposed[inner_column.sql()], table=alias))
+                column.replace(exp.Paren(this=rewritten) if isinstance(rewritten, exp.Binary) else rewritten)
+                changed = True
+    return copy if changed else None
+
+
+def _inlinable(value: exp.Expression, exposed: dict[str, str]) -> bool:
+    columns = list(value.find_all(exp.Column))
+    if not columns or any(c.sql() not in exposed for c in columns):
+        return False
+    return not any(isinstance(n, (exp.Subquery, exp.Select, exp.Window, exp.AggFunc, exp.Rand, exp.Anonymous, exp.Star)) for n in value.walk())
+
+
 # --- constants ------------------------------------------------------------------------------
 
 
@@ -440,5 +503,6 @@ def join_reduction_rules(select: exp.Select, not_null=None, keys=None) -> exp.Ex
         twin_outer_join(select, facts)
         or lookup_self_join(select, facts)
         or reject_in_inner_on(select)
+        or inline_derived_computed_columns(select)
         or constant_outer_join(select)
     )
