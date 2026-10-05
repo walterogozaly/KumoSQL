@@ -89,7 +89,6 @@ def test_a_huge_numeric_literal_is_declined(prove, literal):
         "SELECT 1 GROUP BY 1e0",
         "SELECT a FROM t ORDER BY 1.5 LIMIT 2",
         "SELECT a FROM t ORDER BY a LIMIT 1.5",
-        "SELECT " + "(" * 700 + "1" + ")" * 700,
         "SELECT 1 FROM t WHERE " + " AND ".join(f"a = {i}" for i in range(1800)),
     ],
 )
@@ -99,6 +98,19 @@ def test_unreadable_input_is_not_proven_never_an_exception(sql):
     assert prove_equivalent_algebraic(sql, "SELECT 1").status is SmtStatus.NOT_PROVEN
     bounded = check_bounded(sql, sql, schema_from_prover({"t": ["a"]}, types={"t": {"a": "INT64"}}))
     assert bounded.status is BoundedStatus.UNKNOWN
+
+
+@pytest.mark.parametrize("prove", PROVERS)
+def test_valid_deep_parentheses_are_safe_whether_parser_accepts_or_declines(prove):
+    # Pure SQLGlot can exceed its recursion limit here; the compiled parser can
+    # read this valid constant query. Acceptance is not a robustness failure.
+    sql = "SELECT " + "(" * 700 + "1" + ")" * 700
+    same = prove(sql, "SELECT 1")
+    assert same.status in (SmtStatus.PROVEN_EQUIVALENT, SmtStatus.NOT_PROVEN), same.reason
+    different = prove(sql, "SELECT 2")
+    assert different.status in (SmtStatus.NOT_EQUIVALENT, SmtStatus.NOT_PROVEN), different.reason
+    bounded = check_bounded(sql, sql, schema_from_prover({"t": ["a"]}, types={"t": {"a": "INT64"}}))
+    assert bounded.status in (BoundedStatus.UNKNOWN, BoundedStatus.BOUNDED_EQUIVALENT)
 
 
 @pytest.mark.parametrize(
