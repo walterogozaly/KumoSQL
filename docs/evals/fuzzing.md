@@ -66,6 +66,10 @@ Seeds 31 (fuzz, count 40: 850 cases) and 31 (compose, 60 queries) over the riche
 
 The generated shapes also cover window functions, QUALIFY, SAFE_*/NULLIF/IF, date arithmetic, UNNEST, STRUCT and NULL-heavy LEFT/RIGHT/FULL joins. Counterexamples that need a fractional value are replayed on DOUBLE columns (they are valid for FLOAT64 only). A fix from the first run over these shapes: when no integer model exists, a counterexample column that the queries only compare with numbers could be given a string; the model now prefers any numeric value before any other.
 
+## Tie-determinism fuzzer
+
+`tools/tie_fuzz.py` checks `kumosql.tie_determinism.analyze` rather than a rewrite: a query it calls deterministic must return the same bag whatever order the table's rows are stored in (DuckDB, one thread, every permutation of 2 to 4 rows). Details, measured numbers and limits are in [ties.md](../ties.md#fuzzing-the-verdicts); the seeded smoke test is `tests/test_tie_fuzz.py`.
+
 ## Typed soundness fuzzer
 
 `tools/soundness_fuzz.py` hunts false proofs: pairs the prover proves while a database separates them. It is adapted from Sol's S015 differential fuzzer (an external review deliverable), with its oracle and execution domain kept and the generator widened.

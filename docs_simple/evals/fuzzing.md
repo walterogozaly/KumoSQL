@@ -12,6 +12,8 @@ Fuzzing creates many queries and data shapes to look for mistakes. Here the gene
 
 A fourth, typed soundness fuzzer tests proof claims on schemas with types and integrity constraints. Its found false proofs are soundness bugs; read the full guide's current findings before relying on the affected shapes.
 
+A tie fuzzer (`tools/tie_fuzz.py`) checks something different: it runs queries that KumoSQL calls "safe from ties" with the table's rows in every order and flags any that change. See [Ties](../ties.md).
+
 NULLs need the third partition: in SQL, a condition can be unknown as well as true or false.
 
 ## Run a sample

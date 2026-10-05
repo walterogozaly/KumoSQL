@@ -23,6 +23,12 @@ for site in report.sites:
 
 Each place that can depend on ties (a window function, `LIMIT`, `ANY_VALUE`, `ARRAY_AGG` and similar) is called `deterministic` or `unknown`. `unknown` means no reason was found that the result is stable. It does not prove the result changes.
 
+## How the check is itself checked
+
+A tool, `tools/tie_fuzz.py`, writes thousands of random queries with windows, `LIMIT`, `ANY_VALUE` and similar, asks KumoSQL which ones are safe, then runs each "safe" query on tiny tables with the rows stored in every possible order. If any "safe" query ever returns different rows, the safety check was wrong and the tool prints it. On 7,500 queries none did; adding queries where a `SELECT` rename reuses a column's name found real mistakes (13 in 1,000 queries), which were fixed. Full numbers and limits are in the [reference](../docs/ties.md#fuzzing-the-verdicts).
+
+Limits: it only tries small tables of whole numbers, and it uses DuckDB's way of ordering ties, which is not BigQuery's. A clean run does not prove every query is safe.
+
 ## What the check does and does not show
 
 - It reads the query text and any declared keys; it runs no query and uses no data.
