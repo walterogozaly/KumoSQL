@@ -345,6 +345,7 @@ class Translator:
         self.dialect = catalog.dialect
         self.exact = exact
         self.group_by_constants = group_by_constants
+        self.limit_sources = False  # a LIMIT query was read as an opaque relation named by its text
 
     # ---- entry ----------------------------------------------------------
 
@@ -398,7 +399,9 @@ class Translator:
         """A query inside the query that ends in LIMIT n [OFFSET m] (n and m integer literals, n >= 1).
 
         Its select list may be all constants: every row is then the same tuple, so the limit keeps
-        ``min(n, count - m)`` copies whatever rows it cuts.
+        ``min(n, count - m)`` copies whatever rows it cuts. Otherwise the limited result is an opaque
+        relation named by the query's text (``limit_sources``): the same text, over the same database,
+        returns the same rows each time.
         """
 
         limit, offset = node.args.get("limit"), node.args.get("offset")
@@ -418,7 +421,20 @@ class Translator:
                 return Query(q.out, ind(Exists(q.body)), q.names)
             rest = NMonus(q.body, NConst(Fraction(skip))) if skip else q.body
             return Query(q.out, NMin(rest, NConst(Fraction(count))), q.names)
-        raise Unsupported("LIMIT or OFFSET inside the query")
+        for table in node.find_all(exp.Table):
+            if not table.db and not table.catalog and table.name.lower() in ctes:
+                raise Unsupported("a LIMIT query reading a CTE")
+        q = self.query(bare, None, {})  # no outer scope: a correlated query is not one relation
+        columns = [f"c{i}" for i in range(len(q.out))]
+        key = "limit!" + node.sql(dialect=self.dialect)
+        # LIMIT 1 keeps at most one row, once: any two of its rows are the same row (the empty key).
+        keys = ((),) if count == 1 and not skip else ()
+        self.catalog.tables[key] = TableInfo(key, columns, {c: v.kind for c, v in zip(columns, q.out)}, frozenset(), keys, ())
+        self.limit_sources = True
+        x = TVar(fresh_id(), key)
+        out = tuple(SVar(fresh_id(), v.kind) for v in q.out)
+        body = nsum((x,), nmul(NRel(x), ind(conj(*[Same(Ref(o), Col(x, c, v.kind)) for o, c, v in zip(out, columns, q.out)]))))
+        return Query(out, body, q.names)
 
     def set_operation(self, node, outer, ctes) -> Query:
         for key in ("by_name", "side", "kind", "on"):
