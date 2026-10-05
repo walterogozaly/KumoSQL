@@ -234,6 +234,9 @@ def _qualify_form(select: exp.Select, facts: Facts, counter: list[int]) -> exp.S
             rest.append(part)
     if chosen is None or any(r.find(exp.Window, exp.Subquery, exp.AggFunc) for r in rest):
         return None
+    # a QUALIFY condition may name a select alias; a WHERE condition reads the table's column of that name instead
+    if any(not c.table and c.name.lower() in aliases for r in rest for c in r.find_all(exp.Column)):
+        return None
     marker = chosen.sql()
     others = [w for w in owned_windows(select) if w.sql() != marker]
     if others or any(isinstance(n, exp.AggFunc) and n.find_ancestor(exp.Window) is None for item in select.expressions for n in item.walk()):

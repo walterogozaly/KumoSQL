@@ -339,6 +339,7 @@ def test_the_refused_join_would_have_been_wrong(name, why, sql, scenario, naive,
 DECLINED_SHAPES = [
     ("rank_equals_two", f"SELECT user_id, value FROM events QUALIFY RANK() OVER ({P_DESC}) = 2", USER_TS, TYPES),
     ("rank_at_most_two", f"SELECT user_id, value FROM events QUALIFY RANK() OVER ({P_DESC}) <= 2", USER_TS, TYPES),
+    ("qualify_condition_names_a_select_alias", f"SELECT value AS user_id FROM events QUALIFY ROW_NUMBER() OVER ({P_DESC}) = 1 AND user_id > 1", USER_TS, TYPES),
     ("two_order_keys", "SELECT user_id, value FROM events QUALIFY RANK() OVER (PARTITION BY user_id ORDER BY ts DESC, id) = 1", USER_TS_ID, TYPES),
     ("float_order_key", f"SELECT user_id, value FROM events QUALIFY ROW_NUMBER() OVER ({P_DESC}) = 1", USER_TS, FLOAT_TYPES),
     ("float_cast_order_key", "SELECT user_id, value FROM events QUALIFY RANK() OVER (PARTITION BY user_id ORDER BY CAST(ts AS FLOAT64) DESC) = 1", USER_TS, TYPES),
