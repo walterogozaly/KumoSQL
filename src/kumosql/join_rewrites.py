@@ -80,7 +80,8 @@ def _fk_left_join_to_inner(select: exp.Select, not_null, foreign_keys) -> exp.Ex
             if len(mine) != 1 or len(other) != 1 or child_alias not in (None, other[0].table.lower()):
                 break
             child_alias = other[0].table.lower()
-            pairs[other[0].name.lower()] = mine[0].name.lower()
+            if pairs.setdefault(other[0].name.lower(), mine[0].name.lower()) != mine[0].name.lower():
+                break  # one child column equated with two parent columns: the ON clause says more than the key
         else:
             child, child_join = by_alias.get(child_alias or "", (None, None))
             if not pairs or not isinstance(child, exp.Table) or not any(s is child for s, _ in sources[:index]):
