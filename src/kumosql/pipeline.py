@@ -1562,7 +1562,10 @@ class _Analysis:
                 )
 
                 union_star = _star_in_set_operation(qualified)
-                function_calls = sum(1 for table in qualified.find_all(exp.Table) if is_function_table(table))
+                # ``(UNNEST(a) AS x JOIN t ...)`` holds its UNNEST as a table's ``this``: not a call to a function the project could define.
+                function_calls = sum(
+                    1 for table in qualified.find_all(exp.Table) if is_function_table(table) and not isinstance(table.this, exp.Unnest)
+                )
                 if function_calls:
                     diagnostics.append(
                         PipelineDiagnostic(

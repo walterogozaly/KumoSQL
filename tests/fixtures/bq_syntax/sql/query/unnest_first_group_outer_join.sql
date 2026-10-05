@@ -1,0 +1,1 @@
+SELECT x, off, u.id, i.user_id FROM (UNNEST([10, 20]) AS x WITH OFFSET AS off CROSS JOIN `kumosql.kumosql_messy.raw_users` AS u) LEFT JOIN `kumosql.kumosql_messy.raw_order_items` AS i ON i.user_id = u.id

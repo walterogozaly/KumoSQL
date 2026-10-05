@@ -3094,6 +3094,36 @@
    ]
   },
   {
+   "id": "query/unnest_first_join_group",
+   "kind": "sql",
+   "file": "sql/query/unnest_first_join_group.sql",
+   "tags": [
+    "query",
+    "unnest",
+    "join"
+   ]
+  },
+  {
+   "id": "query/unnest_first_group_outer_join",
+   "kind": "sql",
+   "file": "sql/query/unnest_first_group_outer_join.sql",
+   "tags": [
+    "query",
+    "unnest",
+    "join"
+   ]
+  },
+  {
+   "id": "query/unnest_first_group_in_cte",
+   "kind": "sql",
+   "file": "sql/query/unnest_first_group_in_cte.sql",
+   "tags": [
+    "query",
+    "unnest",
+    "join"
+   ]
+  },
+  {
    "id": "query/unnest_path_with_offset",
    "kind": "sql",
    "file": "sql/query/unnest_path_with_offset.sql",

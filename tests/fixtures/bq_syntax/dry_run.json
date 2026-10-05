@@ -1163,6 +1163,18 @@
   "message": "Function not found: `kumosql.kumosql_messy.some_udf` at [1:8]",
   "category": "needs_objects"
  },
+ "query/unnest_first_group_in_cte": {
+  "status": "ok",
+  "bytes": 226312
+ },
+ "query/unnest_first_group_outer_join": {
+  "status": "ok",
+  "bytes": 226312
+ },
+ "query/unnest_first_join_group": {
+  "status": "ok",
+  "bytes": 80920
+ },
  "query/unnest_generate_array": {
   "status": "ok",
   "bytes": 0

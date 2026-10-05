@@ -211,8 +211,7 @@
    "feature": "parenthesized join",
    "category": "query",
    "doc_url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#query_statement",
-   "sql": "SELECT * FROM (UNNEST([1]) a JOIN UNNEST([1]) b ON a=b)",
-   "gap": "not read: sqlglot reads a parenthesized join only when it starts with a table"
+   "sql": "SELECT * FROM (UNNEST([1]) a JOIN UNNEST([1]) b ON a=b)"
   },
   {
    "feature": "UNION ALL",

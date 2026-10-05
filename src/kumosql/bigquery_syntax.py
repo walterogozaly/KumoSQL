@@ -10,7 +10,8 @@ function sqlglot does not know are kept as their own text.
 
 ``x LIKE ALL UNNEST(array)`` (and ``LIKE SOME``), an aggregate with a ``WHERE`` filter inside its parentheses (``COUNT(* WHERE c)``),
 the ``WITH(a AS 1, a + 1)`` expression and ``t.arr elem WITH OFFSET off`` are read the same way, each into nodes sqlglot already
-has or a marker call that prints back as written. ``STRUCT<>()``, which sqlglot reads as the comparison ``STRUCT <> ()``, is refused.
+has or a marker call that prints back as written. A parenthesized join that starts with ``UNNEST``
+(``FROM (UNNEST(a) AS x JOIN t ON x = t.a)``) is read by :mod:`kumosql.unnest_join_group`. ``STRUCT<>()``, which sqlglot reads as the comparison ``STRUCT <> ()``, is refused.
 
 It works the same on pure and compiled sqlglot: a compiled build ignores parser methods assigned after the fact and refuses
 subclasses of its expressions, so SQL sqlglot rejects is parsed again with the dialect's tokens rewritten and the marker call is resolved after.
@@ -25,6 +26,7 @@ from sqlglot.generator import Generator
 from sqlglot.tokens import Token, TokenType
 
 from .string_literals import _bytes_literal, _decode_bytes, _string_end
+from .unnest_join_group import resolve_unnest_join_groups, rewrite_unnest_join_groups
 
 
 TABLE_ARGUMENT = "__KUMO_TABLE_ARGUMENT__"
@@ -614,6 +616,7 @@ def _resolve_markers(trees):
         if tree is not None:
             tree = _resolve_like_all(tree)
             tree = _resolve_with_expressions(tree)
+            tree = resolve_unnest_join_groups(tree)
         yield tree
 
 
@@ -709,7 +712,7 @@ def install() -> None:
             rewritten = sql
             for rewrite in (
                 _rewrite_raw_bytes, _rewrite_verbatim_calls, _rewrite_model_arguments, _rewrite_pipe_operators, _rewrite_pipe_with,
-                _rewrite_like_quantifiers, _rewrite_aggregate_where, _rewrite_with_expressions, _rewrite_unnest_offset,
+                _rewrite_like_quantifiers, _rewrite_aggregate_where, _rewrite_with_expressions, _rewrite_unnest_offset, rewrite_unnest_join_groups,
             ):
                 rewritten = rewrite(rewritten, tokens if rewritten == sql else self.tokenize(rewritten))
             if rewritten != sql:
