@@ -14,6 +14,14 @@ A fourth, typed soundness fuzzer tests proof claims on schemas with types and in
 
 NULLs need the third partition: in SQL, a condition can be unknown as well as true or false.
 
+## Splitting a DISTINCT query by a condition
+
+Another metamorphic test splits `SELECT DISTINCT x FROM t` into three `UNION DISTINCT` pieces: rows where a condition is true, false, or NULL. KumoSQL now merges pieces of the same query that differ only in their filters back into one piece, because a set that removes duplicates does not care which piece a row came from. If the three filters together cover every row, the filter disappears and the pair is proved equal.
+
+Example: `SELECT a FROM t WHERE b > 0 UNION DISTINCT SELECT a FROM t WHERE NOT (b > 0) UNION DISTINCT SELECT a FROM t WHERE (b > 0) IS NULL` is `SELECT DISTINCT a FROM t`. Drop the NULL piece and it is not: rows where `b` is NULL disappear, and the prover says so.
+
+Limits: the rule only merges simple pieces (no aggregates, windows, LIMIT, `DISTINCT ON`, or random functions), and it was checked on generated tables and a rewrite-level fuzz, not proved for every database. See the [full reference](../../docs/evals/fuzzing.md) for the rule details and recorded scores.
+
 ## Run a sample
 
 ```sh
