@@ -11,6 +11,7 @@ Fetches into a throwaway clone next to this file; safe to run from a cloud threa
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -30,11 +31,14 @@ def main() -> int:
     parser.add_argument("--sha")
     parser.add_argument("--job")
     args = parser.parse_args()
+    if (CLONE / ".git").exists():
+        try:
+            run("fetch", "-q", "--depth", "50", "origin", BRANCH, cwd=CLONE)
+            run("reset", "-q", "--hard", "FETCH_HEAD", cwd=CLONE)
+        except subprocess.CalledProcessError:  # history rewritten or clone damaged: start fresh
+            shutil.rmtree(CLONE, ignore_errors=True)
     if not (CLONE / ".git").exists():
         run("clone", "-q", "--depth", "50", "--branch", BRANCH, "--single-branch", URL, str(CLONE))
-    else:
-        run("fetch", "-q", "--depth", "50", "origin", BRANCH, cwd=CLONE)
-        run("reset", "-q", "--hard", "FETCH_HEAD", cwd=CLONE)
     if not (args.failed or args.sha or args.job):
         print((CLONE / "latest.md").read_text(encoding="utf-8"))
         return 0
