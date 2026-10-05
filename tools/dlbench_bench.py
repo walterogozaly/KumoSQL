@@ -393,6 +393,12 @@ def _bag(rows) -> Counter:
     return Counter(tuple(norm(v) for v in row) for row in rows)
 
 
+def _uses_rowid(*queries: str) -> bool:
+    """Whether a query reads SQLite or DuckDB's implicit row id."""
+
+    return any(re.search(r"(?<![\w$])(?:rowid|_rowid_|oid)(?![\w$])", query, re.IGNORECASE) for query in queries)
+
+
 def check_proof(pair: Pair, left: str, right: str, schema: dict[str, dict[str, str]]) -> str | None:
     """A database on which a proved BIRDTrans pair differs (described), or ``None``.
 
@@ -416,44 +422,86 @@ def check_proof(pair: Pair, left: str, right: str, schema: dict[str, dict[str, s
             native = _plain(parse(pair.target_query, "duckdb"), pair.renames).sql(dialect="duckdb")
         except Exception:
             native = None
-    for _ in range(CHECK_TRIALS):
-        data = _random_rows(schema, rng, literals)
-        results = []
-        for reverse in (False, True):
-            connection = sqlite3.connect(":memory:")
+    reuse_sqlite = not _uses_rowid(left, right)
+    reuse_duckdb = native is not None and not _uses_rowid(native)
+    sqlite_connections = []
+    duckdb_connection = None
+    try:
+        if reuse_sqlite:
             try:
-                for table, columns in schema.items():
-                    connection.execute(_create(table, columns, lambda k: k or "TEXT"))
-                    rows = data[table][::-1] if reverse else data[table]
-                    if rows:
-                        connection.executemany(f'INSERT INTO "{table}" VALUES ({", ".join("?" * len(columns))})', rows)
-                results.append(tuple(connection.execute(q).fetchall() for q in (left, right)))
+                for _ in range(2):
+                    connection = sqlite3.connect(":memory:")
+                    sqlite_connections.append(connection)
+                    for table, columns in schema.items():
+                        connection.execute(_create(table, columns, lambda k: k or "TEXT"))
             except sqlite3.Error:
-                return None  # a query SQLite cannot run is not checked
-            finally:
-                connection.close()
-        (a, b), (a2, b2) = results
-        if ordered and (a != a2 or b != b2):
-            continue  # ties: the order is not determined
-        if (a != b) if ordered else (_bag(a) != _bag(b)):
-            return f"SQLite: {data}"
-        if native is not None:
-            from kumosql.duckdb_load import insert_rows, run_unoptimized
-
-            db = duckdb.connect()
+                return None  # a schema SQLite cannot load is not checked
+        if reuse_duckdb:
             try:
+                import duckdb
+
+                duckdb_connection = duckdb.connect()
                 for table, columns in schema.items():
-                    db.execute(_create(table, columns, _duck_type))
-                    if data[table]:
-                        insert_rows(db, f'"{table}"', data[table])
-                theirs = db.execute(native).fetchall()
-                if _bag(theirs) != _bag(a) and _bag(run_unoptimized(db, native)[0]) != _bag(a):
-                    return f"DuckDB: {data}"
+                    duckdb_connection.execute(_create(table, columns, _duck_type))
             except Exception:
-                pass  # DuckDB cannot load these values or run the query: not a difference
-            finally:
-                db.close()
-    return None
+                if duckdb_connection is not None:
+                    duckdb_connection.close()
+                    duckdb_connection = None
+                reuse_duckdb = False
+
+        for _ in range(CHECK_TRIALS):
+            data = _random_rows(schema, rng, literals)
+            results = []
+            for index, reverse in enumerate((False, True)):
+                connection = sqlite_connections[index] if reuse_sqlite else sqlite3.connect(":memory:")
+                try:
+                    for table, columns in schema.items():
+                        if reuse_sqlite:
+                            connection.execute(f'DELETE FROM "{table}"')
+                        else:
+                            connection.execute(_create(table, columns, lambda k: k or "TEXT"))
+                        rows = data[table][::-1] if reverse else data[table]
+                        if rows:
+                            connection.executemany(f'INSERT INTO "{table}" VALUES ({", ".join("?" * len(columns))})', rows)
+                    if reuse_sqlite:
+                        connection.commit()
+                    results.append(tuple(connection.execute(q).fetchall() for q in (left, right)))
+                except sqlite3.Error:
+                    return None  # a query SQLite cannot run is not checked
+                finally:
+                    if not reuse_sqlite:
+                        connection.close()
+            (a, b), (a2, b2) = results
+            if ordered and (a != a2 or b != b2):
+                continue  # ties: the order is not determined
+            if (a != b) if ordered else (_bag(a) != _bag(b)):
+                return f"SQLite: {data}"
+            if native is not None:
+                from kumosql.duckdb_load import insert_rows, run_unoptimized
+
+                db = duckdb_connection if reuse_duckdb else duckdb.connect()
+                try:
+                    for table, columns in schema.items():
+                        if reuse_duckdb:
+                            db.execute(f'DELETE FROM "{table}"')
+                        else:
+                            db.execute(_create(table, columns, _duck_type))
+                        if data[table]:
+                            insert_rows(db, f'"{table}"', data[table])
+                    theirs = db.execute(native).fetchall()
+                    if _bag(theirs) != _bag(a) and _bag(run_unoptimized(db, native)[0]) != _bag(a):
+                        return f"DuckDB: {data}"
+                except Exception:
+                    pass  # DuckDB cannot load these values or run the query: not a difference
+                finally:
+                    if not reuse_duckdb:
+                        db.close()
+        return None
+    finally:
+        for connection in sqlite_connections:
+            connection.close()
+        if duckdb_connection is not None:
+            duckdb_connection.close()
 
 
 def _create(table: str, columns: dict[str, str], typed) -> str:

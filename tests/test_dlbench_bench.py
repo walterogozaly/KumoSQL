@@ -41,6 +41,56 @@ def test_renamed_columns_are_read_back():
     assert bench.decide(pair)["outcome"] == "proven"
 
 
+def test_proof_check_reuses_connections_without_implicit_rowids(monkeypatch):
+    import duckdb
+    import sqlite3
+
+    schema = ["Table: `t`\nColumns:\n(`a`, integer)\n"]
+    pair = _pair("sqlite", "duckdb", "SELECT a FROM t", "SELECT a FROM t", schema)
+    left, right = bench.as_source(pair)
+    tables = bench.schema_of(pair)
+    monkeypatch.setattr(bench, "CHECK_TRIALS", 3)
+
+    sqlite_connect = sqlite3.connect
+    duckdb_connect = duckdb.connect
+    sqlite_calls = []
+    duckdb_calls = []
+
+    def count_sqlite(*args, **kwargs):
+        sqlite_calls.append(args)
+        return sqlite_connect(*args, **kwargs)
+
+    def count_duckdb(*args, **kwargs):
+        duckdb_calls.append(args)
+        return duckdb_connect(*args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", count_sqlite)
+    monkeypatch.setattr(duckdb, "connect", count_duckdb)
+    assert bench.check_proof(pair, left, right, tables) is None
+    assert (len(sqlite_calls), len(duckdb_calls)) == (2, 1)
+
+
+def test_proof_check_keeps_fresh_connections_for_implicit_rowids(monkeypatch):
+    import sqlite3
+
+    schema = ["Table: `t`\nColumns:\n(`a`, integer)\n"]
+    pair = _pair("sqlite", "postgresql", "SELECT rowid FROM t", "SELECT rowid FROM t", schema)
+    left, right = bench.as_source(pair)
+    tables = bench.schema_of(pair)
+    monkeypatch.setattr(bench, "CHECK_TRIALS", 2)
+
+    sqlite_connect = sqlite3.connect
+    sqlite_calls = []
+
+    def count_sqlite(*args, **kwargs):
+        sqlite_calls.append(args)
+        return sqlite_connect(*args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", count_sqlite)
+    assert bench.check_proof(pair, left, right, tables) is None
+    assert len(sqlite_calls) == 2 * bench.CHECK_TRIALS
+
+
 @pytest.mark.parametrize("source, target, left, right, gap", [
     ("sqlite", "postgresql", "SELECT a FROM t WHERE b LIKE 'x%'", "SELECT a FROM t WHERE b LIKE 'x%'", "LIKE and case"),
     ("sqlite", "mysql", "SELECT a FROM t", "SELECT a FROM t", "MySQL string comparison"),
