@@ -121,32 +121,11 @@
 {"name": "norm/230", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "norm/231", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "norm/306", "reason": "CAST from INT to STRING"}
-{"name": "norm/310", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/312", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/314", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/315", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/316", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/317", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/318", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/319", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/321", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/322", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/323", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/324", "reason": "reads a column of type OID (no exact encoding)"}
+{"name": "norm/324", "reason": "unsupported aggregate CORR"}
 {"name": "norm/325", "reason": "unsupported aggregate CORR"}
-{"name": "norm/327", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/328", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/331", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/332", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/334", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/335", "reason": "reads a column of type OID (no exact encoding)"}
 {"name": "norm/338", "reason": "unsupported aggregate CORR"}
-{"name": "norm/339", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/340", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/341", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/342", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/343", "reason": "reads a column of type OID (no exact encoding)"}
-{"name": "norm/345", "reason": "IN over a subquery that is not one supported column"}
+{"name": "norm/340", "reason": "projection with no columns"}
+{"name": "norm/342", "reason": "projection with no columns"}
 {"name": "norm/366", "reason": "unsupported operator DIV"}
 {"name": "norm/367", "reason": "unsupported operator DIV"}
 {"name": "norm/368", "reason": "literal of type VARBIT"}
@@ -217,7 +196,6 @@
 {"name": "norm/697", "reason": "CAST from DECIMAL to STRING"}
 {"name": "norm/702", "reason": "reads a column of type TIMESTAMPTZ (no exact encoding)"}
 {"name": "norm/720", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
-{"name": "norm/748", "reason": "reads a column of type JSONB (no exact encoding)"}
 {"name": "norm/750", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "norm/751", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "norm/753", "reason": "VALUES column type JSONB"}
@@ -299,7 +277,7 @@
 {"name": "norm/1245", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "norm/1246", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "norm/1247", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
-{"name": "norm/1248", "reason": "reads a column of type INT[] (no exact encoding)"}
+{"name": "norm/1248", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "norm/1274", "reason": "reads a column of type TIMESTAMPTZ (no exact encoding)"}
 {"name": "norm/1275", "reason": "reads a column of type TIMESTAMPTZ (no exact encoding)"}
 {"name": "norm/1276", "reason": "literal of type INTERVAL"}

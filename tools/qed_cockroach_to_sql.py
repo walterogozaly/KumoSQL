@@ -288,9 +288,10 @@ class Converter:
         ctx = outer + self.cols(a, n, dead)
         exprs, out_dead = [], {}
         for j, t in enumerate(b["target"]):
-            if "column" in t and 0 <= t["column"] < n and t["column"] in dead:
-                exprs.append(ctx[len(outer) + t["column"]])
-                out_dead[j] = dead[t["column"]]
+            c = t.get("column", -1) - len(outer)  # ordinals count the enclosing relation's columns first
+            if "column" in t and 0 <= c < n and c in dead:
+                exprs.append(ctx[len(outer) + c])
+                out_dead[j] = dead[c]
             else:
                 exprs.append(self.expr(t, ctx))
         if n == 0:
@@ -349,10 +350,11 @@ class Converter:
         ctx = outer + self.cols(a, n, dead)
         keys, out_dead = [], {}
         for j, k in enumerate(b["keys"]):
-            if "column" in k and 0 <= k["column"] < n and k["column"] in dead:
-                self.need_equality({0: dead[k["column"]]}, "GROUP BY")
-                keys.append(ctx[len(outer) + k["column"]])
-                out_dead[j] = dead[k["column"]]
+            c = k.get("column", -1) - len(outer)
+            if "column" in k and 0 <= c < n and c in dead:
+                self.need_equality({0: dead[c]}, "GROUP BY")
+                keys.append(ctx[len(outer) + c])
+                out_dead[j] = dead[c]
             else:
                 keys.append(self.expr(k, ctx))
         aggs = [self.agg(f, ctx) for f in b["function"]]
@@ -368,6 +370,8 @@ class Converter:
         a = self.alias()
         sql = f"SELECT {self.select_list(self.live(a, n, dead))} FROM ({src}) AS {a}"
         if b["collation"]:
+            if outer:
+                raise Skip("ORDER BY inside a correlated subquery (ordinal base not verified)")
             parts = []
             for col, _typ, d in b["collation"]:
                 if not 0 <= col < n:
