@@ -427,6 +427,17 @@ def _dl_kind(declared: str, dated: bool) -> str:
     return "int"
 
 
+def _bytes_length_gap(pair, plain_target) -> bool:
+    """A ClickHouse translation of a SQLite, PostgreSQL or MonetDB query (``length`` counts characters there) that
+    measures a string with ``length`` (bytes in ClickHouse)."""
+
+    return pair.target_dbms == "clickhouse" and pair.source_dbms in ("sqlite", "postgresql", "monetdb") and plain_target.find(exp.Length) is not None
+
+
+def _ascii_only(data: dict) -> bool:
+    return all(v.isascii() for rows in data.values() for row in rows for v in row if isinstance(v, str))
+
+
 class DLBench(Adapter):
     """Pairs ``dlbench_bench.decide`` counts as proven (same parse, dialect-gap and ``prove`` calls).
 
@@ -510,12 +521,18 @@ class DLBench(Adapter):
             else:
                 left_sql, right_sql = to_duckdb(left, source_dialect), to_duckdb(right, source_dialect)
         ordered = dl._ordered(left, source_dialect)
+        meta = {"engines": engines, "results": "text-dates", "sqlite_tables": sqlite_tables, "label": pair.label,
+                "source_dbms": pair.source_dbms, "target_dbms": pair.target_dbms, "target_query": pair.target_query,
+                "source_query": pair.source_query}
+        legal = None
+        if self.target and _bytes_length_gap(pair, plain_target):
+            # Known dialect gap, not a false proof: ClickHouse's length() counts bytes, the source's counts
+            # characters, so the proof (sqlglot reads both as LENGTH) holds for ASCII text only.
+            legal = _ascii_only
+            meta["known_dialect_gap"] = "ClickHouse length() counts bytes, the source counts characters: checked on ASCII text only"
         return Case(
             self.name, pair.id, left_sql, right_sql, tables, setup=MACROS, held_out=pair.held_out,
-            source=(left, right), dialect=source_dialect, mode="list" if ordered else "bag",
-            meta={"engines": engines, "results": "text-dates", "sqlite_tables": sqlite_tables, "label": pair.label,
-                  "source_dbms": pair.source_dbms, "target_dbms": pair.target_dbms, "target_query": pair.target_query,
-                  "source_query": pair.source_query},
+            source=(left, right), dialect=source_dialect, mode="list" if ordered else "bag", legal=legal, meta=meta,
         )
 
 

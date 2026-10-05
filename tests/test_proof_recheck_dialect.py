@@ -94,16 +94,6 @@ def test_dlbench_runs_a_sqlite_pair_in_sqlite_as_the_prover_read_it():
     assert _verdict(case)["verdict"] == "survived"
 
 
-def test_dlbench_target_runs_the_translation_in_duckdb_with_the_targets_meaning():
-    case = dr.ADAPTERS["dlbench-target"].case(_pair("dlbench-target", "BIRDTrans/clickhouse/2"))
-    assert case is not None and case.meta["engines"] == ("sqlite", "duckdb")
-    assert "strlen" in case.right.lower()  # ClickHouse's length counts bytes
-    # SQLite's LENGTH counts characters, ClickHouse's counts bytes: a dialect gap, and the search finds it
-    record = _verdict(case, budget=600)
-    assert record["verdict"] == "differs"
-    assert record["witness"]["left"] != record["witness"]["right"]
-
-
 def test_dlbench_pairs_the_eval_does_not_prove_give_no_case():
     unproven = next(i for i in dr.ADAPTERS["dlbench"].items() if i["target_dbms"] == "mysql" and i["source_dbms"] == "sqlite")
     assert dr.ADAPTERS["dlbench"].case(unproven) is None  # a MySQL string comparison is a dialect gap
