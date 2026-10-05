@@ -25,7 +25,7 @@ The reason names the construct, for example `parser disagreement: GoogleSQL read
 
    Both readings are reduced to operation keys: for each operator, clause, set operation or `LIMIT`, its kind and the source positions of the names and literals under each operand. Every key of the independent reading must appear in sqlglot's tree (AND and OR chains are flattened through parentheses on both sides). A few operations must also not appear without a source: a `NOT`, a unary minus or `~`, a `DESC`, a `SELECT DISTINCT` or an aggregate `DISTINCT` in sqlglot's tree that the text does not have is a disagreement too, since adding one flips what a query returns just as dropping one does. Three more checks run on top: the token stream against sqlglot's own tokenizer (a comment or string that one side ends earlier), the names (compared as a multiset by text), and the literals. sqlglot 30 records where each name and literal starts; for sqlglot 26, which records nothing, the check makes the parser record it as each node is made. sqlglot gives `NULL`, `TRUE` and `FALSE` no position in any release, so they are placed by order between positioned neighbours; without that, `!2 IS NULL` looked the same under both readings.
 2. **A round trip.** sqlglot prints the tree and reads it back; the operator grouping must come back the same. The provers print trees and read them again, so a printing that regroups operators would turn one query into another between two stages. Only grouping is compared: MySQL has no `FULL JOIN` and no `DESC NULLS FIRST` (sqlglot prints an emulation) and prints `a DIV b` as a rounding `CAST`, none of which is a reading of the text; `ast_utils.faithful_sql` already declines the pairs where such a printing matters.
-3. **Cross-version agreement.** `tools/parse_check_matrix.py` reads the dev corpora under sqlglot 26.0.0, 30.20.0, 30.21.0 and compiled sqlglotc 30.21.0 in temporary virtual environments and lists every query whose verdict, round trip or operator grouping differs (see below).
+3. **Build agreement.** `tools/parse_check_matrix.py` optionally reads the dev corpora under pure-Python and compiled SQLGlot 30.21.0 in temporary virtual environments and lists every query whose verdict, round trip or operator grouping differs. This focused diagnostic does not add another routine full-suite CI run. The older cross-version measurements below are historical.
 
 ## What sqlglot gets wrong
 
@@ -101,7 +101,7 @@ The BigQuery edge-case eval (`tools/bq_behavior_eval.py --corpus edge --pipeline
 
 ## Cross-version agreement
 
-`python tools/parse_check_matrix.py` reads up to 250 dev queries of each fixture directory (2,448 dialect-and-text readings, 2,305 distinct texts) under sqlglot 26.0.0, 30.20.0, 30.21.0 and 30.21.0 with the compiled `sqlglotc`, and compares the verdict of each. Result:
+The historical cross-version run of `python tools/parse_check_matrix.py` read up to 250 dev queries of each fixture directory (2,448 dialect-and-text readings, 2,305 distinct texts) under sqlglot 26.0.0, 30.20.0, 30.21.0 and 30.21.0 with the compiled `sqlglotc`, and compares the verdict of each. Result:
 
 | Release | Agree | Unchecked | Disagree |
 | --- | --- | --- | --- |

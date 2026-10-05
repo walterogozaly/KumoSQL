@@ -48,6 +48,8 @@ Every other site is `unknown`, with `fix` saying what would pin it down: a known
 
 A window nobody reads (a column a reader never uses) is not a site, and neither is a top-level `ORDER BY` without `LIMIT`: the result is a bag of rows, so presentation order does not change it.
 
+The prover's rewrites of the first row of each group rely on the same facts (a total order, a declared key): see [Window idioms the prover reads alike](rewrite-rules.md#window-idioms-the-prover-reads-alike).
+
 ## Checks
 
 `tests/test_tie_determinism.py` lists the verdicts for 50 queries without and with a declared key, and runs every query judged deterministic on DuckDB with its table's rows stored in every order (DuckDB on one thread breaks ties by storage order): each returns the same rows every time.
