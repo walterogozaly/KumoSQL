@@ -36,7 +36,7 @@ To show a project in the graph, start with `--project path/to/project`, or conne
 - **Catalogs** describe the objects your team owns, including objects outside Dataform.
 - **Local data folder** chooses where settings, caches, and logs are stored.
 
-Project files must have relative paths. Windows drive names, colons and paths that escape the temporary folder are refused. When loading a local project, KumoSQL skips linked files and directories and shows gaps for them. Keep the files you want analyzed inside the selected project.
+Project files must have relative paths. Windows drive names, colons, short-name aliases such as `PROGRA~1`, and paths that escape the temporary folder are refused. Local reads also skip any path written with a short-name alias, linked files, and linked directories, and show gaps for skipped project files. Keep the files you want analyzed inside the selected project. The full [project trust notes](../docs/ui.md) describe the checks in detail.
 
 Saved project snapshots use checked JSON data. Old pickle snapshots are ignored, so reload the project once after upgrading. A restart can restore the saved model definitions without fetching Git or reading SQLX again; SQL analysis and lineage are rebuilt.
 

@@ -139,6 +139,8 @@ def read_text_or_reason(path: Path) -> tuple[str | None, str | None]:
     """Return ``(text, None)`` or ``(None, reason)``; never raises for I/O errors."""
 
     try:
+        if has_windows_short_name_alias(path):
+            return None, "Windows short-name aliases are not read"
         # Refuse even in-root file links, including settings files read outside find_assets.
         if path.is_symlink():
             return None, "symbolic links are not read"
@@ -157,6 +159,9 @@ def find_assets(
 
     wanted = tuple(suffixes)
     found: list[Path] = []
+    if has_windows_short_name_alias(root):
+        on_error(root, "Windows short-name aliases are not read")
+        return found
     # The root itself may be a link the user chose (``--project ~/link``); only links below it are pruned.
     def walk_error(exc: OSError) -> None:
         on_error(Path(exc.filename) if exc.filename else root, describe_os_error(exc))
@@ -167,9 +172,10 @@ def find_assets(
         for name in list(dirs):
             path = Path(directory) / name
             try:
-                if _linked_directory(path) or not path.resolve().is_relative_to(resolved_root):
+                if has_windows_short_name_alias(path) or _linked_directory(path) or not path.resolve().is_relative_to(resolved_root):
                     dirs.remove(name)
-                    on_error(path, "linked directories are not read")
+                    reason = "Windows short-name aliases are not read" if has_windows_short_name_alias(path) else "linked directories are not read"
+                    on_error(path, reason)
             except OSError as exc:
                 dirs.remove(name)
                 on_error(path, describe_os_error(exc))
@@ -178,8 +184,9 @@ def find_assets(
                 continue
             path = Path(directory) / name
             try:
-                if path.is_symlink() or not path.resolve().is_relative_to(resolved_root):
-                    on_error(path, "symbolic links are not read")
+                if has_windows_short_name_alias(path) or path.is_symlink() or not path.resolve().is_relative_to(resolved_root):
+                    reason = "Windows short-name aliases are not read" if has_windows_short_name_alias(path) else "symbolic links are not read"
+                    on_error(path, reason)
                     continue
             except OSError as exc:
                 on_error(path, describe_os_error(exc))
@@ -189,6 +196,13 @@ def find_assets(
 
 
 _WINDOWS_DEVICE = re.compile(r"(?i)(?:con|prn|aux|nul|conin\$|conout\$|(?:com|lpt)[0-9\u00b9\u00b2\u00b3])")
+_WINDOWS_SHORT_NAME_ALIAS = re.compile(r"~[0-9]+(?:\.|$)")
+
+
+def has_windows_short_name_alias(path: str | Path) -> bool:
+    """True when any path component uses the Windows 8.3 ``~N`` alias form."""
+
+    return any(_WINDOWS_SHORT_NAME_ALIAS.search(part) for part in re.split(r"[\\/]+", str(path)))
 
 
 def is_windows_device_name(part: str) -> bool:
@@ -202,7 +216,8 @@ def unsafe_checkout_path(path: str) -> bool:
 
     return (
         not path or ":" in path or "\\" in path or "\0" in path or path.startswith("/")
-        or any(p in ("", ".", "..") or p.endswith((".", " ")) or is_windows_device_name(p) for p in path.split("/"))
+        or any(p in ("", ".", "..") or p.endswith((".", " ")) or is_windows_device_name(p)
+               or has_windows_short_name_alias(p) for p in path.split("/"))
     )
 
 
