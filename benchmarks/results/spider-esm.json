@@ -1,0 +1,28 @@
+{
+  "suite": "Spider ESM false negatives (TestSuiteEval)",
+  "order": 39,
+  "size": 359,
+  "score": "33/359 proved, 221 refuted (label disputes), 0 wrong",
+  "metric": "Distinct (gold, prediction) pairs the TestSuiteEval authors hand-labelled equivalent: proved by the algebraic prover with no keys; refuted means SQLite returns different results on a database KumoSQL builds from Spider's declared schema, so the label needs a constraint the schema does not declare or the metric's DISTINCT removal.",
+  "evidence": "proof",
+  "correctness": "Every proof is re-run on 1,000 random databases that respect the listed keys and foreign keys (a difference counts as wrong). A refutation of a pair the authors call equivalent is a replayed SQLite run on a schema-valid database: a label dispute, not a KumoSQL answer.",
+  "coverage": {
+    "proven": 33,
+    "refuted": 221,
+    "unknown": 103,
+    "unsupported": 2
+  },
+  "held_out": "7/66 proved, 47 refuted, 0 wrong",
+  "docs": "docs/evals/spider-esm.md",
+  "command": "python tools/spider_esm_bench.py --write-results",
+  "date": "2026-10-05",
+  "caveats": "Downloaded at run time from pinned commits (TestSuiteEval has no licence) and never committed. The 558 rows hold 359 distinct pairs, each decided once. Spider's databases are blocked here, so refutations use databases KumoSQL builds from tables.json's types, keys and foreign keys; the prover gets no key (tables.json lists only the first column of a composite key). Taken as published: 23/235 proved, 152 refuted. 124 pairs hold value placeholders and are decided with TestSuiteEval's plug-in of the gold's values (scored apart): 10 proved, 69 refuted. Refuted causes: columns 3, columns+null 5, distinct 12, distinct+null 37, nonempty 24, null 133, other 3, values 2, values+null 2. A pair that runs past 300 s or crashes z3 is unknown (0 here). Tuned on test: no knowledge of it; the harness was written by an earlier, interrupted session whose log is not available, and this run is the first full scoring of the held-out pairs (the development pairs alone scored 26/293 proved earlier the same day).",
+  "environment": {
+    "python": "3.11.15",
+    "sqlglot": "30.21.0",
+    "duckdb": "1.5.6",
+    "z3-solver": "5.1.0.0",
+    "sqlfluff": "4.4.0",
+    "commit": "8655327f+changes"
+  }
+}

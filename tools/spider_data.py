@@ -1,5 +1,7 @@
 """Spider's data for the Spider evals: pinned downloads and the schemas of ``tables.json``.
 
+Shared by the two Spider evals (``spider_esm_bench.py``, ``spider_gold_bench.py``).
+
 Spider 1.0 (https://github.com/taoyds/spider, Apache-2.0 repository, CC BY-SA 4.0 data; Yu et al., EMNLP 2018)
 and TestSuiteEval (https://github.com/ruiqi-zhong/TestSuiteEval, no licence; Zhong, Yu and Klein, EMNLP 2020)
 are downloaded at run time from pinned commits, checked against SHA-256 digests and kept in
@@ -36,6 +38,8 @@ SPIDER_BASE = f"https://raw.githubusercontent.com/taoyds/spider/{SPIDER_COMMIT}/
 TESTSUITE_BASE = f"https://raw.githubusercontent.com/ruiqi-zhong/TestSuiteEval/{TESTSUITE_COMMIT}/"
 FILES = {
     "tables.json": (SPIDER_BASE + "evaluation_examples/examples/tables.json", "61bb20aa401f03164e2d7f3b16509b7b5f79cc9c943ca7bd159046df1159e2ed"),
+    "dev.json": (SPIDER_BASE + "evaluation_examples/examples/dev.json", "30d64a3fccde493226df79687aed9e4a1c0129525baf44f29c0573d914d758a4"),
+    "train_spider.json": (SPIDER_BASE + "evaluation_examples/examples/train_spider.json", "c43d0d72e59e1a9e1a60837da9bf70d5a6277226bdb7f634d544f380646f527a"),
     "ESMFalseNegatives.tsv": (TESTSUITE_BASE + "ESMFalseNegatives.tsv", "6367141ab7d4c7290dba3ba45361c558e5ef986d2f78af647378974ffa4c7f80"),
 }
 CACHE = Path(os.environ.get("KUMOSQL_BENCH_DATA", Path.home() / ".cache" / "kumosql-bench")) / "spider"
@@ -112,11 +116,11 @@ def load_schemas(path: Path | None = None) -> dict[str, Schema]:
     return parse_schemas(json.loads((path or fetch("tables.json")).read_text(encoding="utf-8")))
 
 
-def check_sources() -> list[str]:
-    """Download every pinned file and return the problems found (none when all match their digests)."""
+def check_sources(names: tuple[str, ...] | None = None) -> list[str]:
+    """Download the pinned files (every one by default) and return the problems found (none when all match their digests)."""
 
     problems = []
-    for name in FILES:
+    for name in names or FILES:
         try:
             fetch(name)
         except (OSError, ValueError) as error:
