@@ -18,6 +18,10 @@ Proofs are cross-checked on random databases. That can expose a false proof, but
 
 `(a UNION b) ORDER BY k LIMIT 1` keeps one row of the combined result. An earlier version of the prover lost that `LIMIT` when it looked inside the parentheses and called the query equal to `a UNION b`, which keeps every row. For example, over the values 3, 3, 3, 4 and NULL, the first returns one row and the second returns three. Both provers now keep the cut, in a derived table, a CTE, a subquery or at the top. When two cuts are stacked in a way that cannot be combined, the answer is "not proven". This covers only the shapes that were tested; the full guide lists them and the regression tests.
 
+## A second engine in progress
+
+KumoSQL is also building a new engine for these pairs that counts how many times each row appears in a result and lets Z3 check that two queries give the same counts (steps 2 and 3 of the plan in the reference). It is measured on its own, without the rules, on the Calcite, TPC-H and TPC-C pairs with `python tools/uexpr_bench.py`: it proves most of the Calcite and TPC-C pairs and few of the TPC-H ones so far, with no wrong proof on random databases. The count at that point is in the [full reference](../../docs/evals/sqlsolver.md#port-steps-2-and-3-the-backend-alone). The engine is not used by the app and does not change the scores above; a pair it cannot prove stays unknown, not different.
+
 ## Read the caveats
 
 Some rules were built while inspecting failing corpus cases, so those scores are “tuned on test.” A case once held out ceases to be an untouched test if it is later used in development. The full guide tracks that exposure.

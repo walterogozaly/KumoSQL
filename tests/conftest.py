@@ -211,6 +211,7 @@ EVAL_FILES = {
     "test_sqlsolver_benchmarks.py",
     "test_targeted_data_bench.py",
     "test_transformation_bench.py",
+    "test_uexpr_benchmarks.py",
     "test_unsafe_fuzz.py",
     "test_verieql_benchmarks.py",
 }

@@ -121,3 +121,15 @@ A database that compares a whole number with a decimal column first converts the
 ## Example: a DISTINCT that can move outward
 
 A query that removes duplicates inside a subquery, then joins it to a table on whole-number key columns, can have its duplicate removal moved to the outside when the join already makes every output row unique. KumoSQL's prover applies that move only when the columns are declared whole numbers and the joined tables' keys are fully pinned down; any grouping, limit, outer join or other twist makes it decline and leave the pair unproven. The evidence is a handful of textbook query pairs, so treat it as a narrow rule. The reference page has the exact conditions and the recorded scores: [Full reference](../docs/provers.md).
+
+## A new prover that is not switched on yet
+
+KumoSQL has a new prover, in `src/kumosql/uexpr/`, that treats a query as a count: for each possible row, how many times does it appear in the result? `UNION ALL` adds the counts, a join multiplies them, `DISTINCT` turns any positive count into one, and a `WHERE` condition keeps a count or sets it to zero. Two queries are the same when their counts agree for every row, and the Z3 solver checks that. It follows the way the SQLSolver research system reasons about SQL.
+
+**Not used yet.** Nothing in the app calls it, so it changes no verdict. It can only be run directly, for example with `python tools/uexpr_bench.py`, which measures it on SQLSolver's published query pairs.
+
+**Example.** `SELECT a FROM t UNION ALL SELECT a FROM u` and the same query with the two parts swapped have the same counts for every row, so the prover says they match. `SELECT a FROM t` and `SELECT DISTINCT a FROM t` do not (a row that appears twice has count 2 in one and 1 in the other), so it makes no claim.
+
+**It never says "different".** When it cannot prove a pair it answers "not proven": the pair might be equal anyway. That includes every query that uses something it does not read yet (window functions, `ROLLUP`, `UNNEST`, recursive queries, a `LIMIT` inside a subquery), pairs where the proof needs sums of sums or a count over a union, and cases where the solver runs out of its few seconds. A declared key or NOT NULL column can make a proof possible, and the result says when a key was used.
+
+**Limits of the evidence.** The backend is tested on hand-written pairs and on SQLSolver's Calcite, TPC-H and TPC-C pairs, where it proves most but not all, and every proof is re-run on random databases. That can expose a wrong proof but is not itself a proof. The exact fragment, the reasoning it relies on and every known gap are in the [full reference](../docs/provers.md#multiplicity-algebra-backend-bag-equivalence-not-wired-in); the recorded counts are in the [SQLSolver eval page](../docs/evals/sqlsolver.md#port-steps-2-and-3-the-backend-alone).
