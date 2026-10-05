@@ -52,7 +52,8 @@ def test_pair_parses(case):
     for key in ("sql_a", "sql_b"):
         tree = sqlglot.parse_one(case[key], read="mysql")
         assert isinstance(tree, sqlglot.exp.Query)
-    for stmt in sqlglot.parse(case["ddl"], read="mysql"):
+    # a pair that only uses VALUES reads no table and has no DDL
+    for stmt in sqlglot.parse(case["ddl"], read="mysql") if case["ddl"] else []:
         assert isinstance(stmt, sqlglot.exp.Create)
 
 

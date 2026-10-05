@@ -181,9 +181,9 @@
 {"name": "norm/576", "reason": "unsupported aggregate REGRESSION COUNT"}
 {"name": "norm/598", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/602", "reason": "CAST from DECIMAL to STRING"}
-{"name": "norm/606", "reason": "literal of type INT"}
+{"name": "norm/606", "reason": "PLACEHOLDER (a query parameter has no value)"}
 {"name": "norm/610", "reason": "projection with no columns"}
-{"name": "norm/611", "reason": "literal of type INT"}
+{"name": "norm/611", "reason": "PLACEHOLDER (a query parameter has no value)"}
 {"name": "norm/636", "reason": "unsupported operator CONCAT"}
 {"name": "norm/641", "reason": "unsupported operator U D F (function name or arguments not kept by QED's IR)"}
 {"name": "norm/642", "reason": "unsupported operator U D F (function name or arguments not kept by QED's IR)"}
@@ -234,7 +234,7 @@
 {"name": "norm/916", "reason": "projection with no columns"}
 {"name": "norm/930", "reason": "unsupported operator CONCAT"}
 {"name": "norm/933", "reason": "projection with no columns"}
-{"name": "norm/938", "reason": "literal of type INT"}
+{"name": "norm/938", "reason": "PLACEHOLDER (a query parameter has no value)"}
 {"name": "norm/973", "reason": "VALUES column type JSONB"}
 {"name": "norm/974", "reason": "VALUES column type JSONB"}
 {"name": "norm/975", "reason": "VALUES column type JSONB"}
@@ -245,7 +245,7 @@
 {"name": "norm/1011", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/1012", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "norm/1016", "reason": "projection with no columns"}
-{"name": "norm/1019", "reason": "literal of type TIMESTAMP"}
+{"name": "norm/1019", "reason": "PLACEHOLDER (a query parameter has no value)"}
 {"name": "norm/1020", "reason": "unsupported operator CONCAT"}
 {"name": "norm/1021", "reason": "unsupported operator DIV"}
 {"name": "norm/1022", "reason": "unsupported aggregate CONST AGG over FLOAT"}
@@ -307,9 +307,9 @@
 {"name": "norm/1354", "reason": "VALUES column type JSONB"}
 {"name": "norm/1358", "reason": "unsupported operator DIV"}
 {"name": "norm/1359", "reason": "unsupported operator DIV"}
-{"name": "norm/1366", "reason": "string literal with a prefix or escape"}
+{"name": "norm/1366", "reason": "PLACEHOLDER (a query parameter has no value)"}
 {"name": "norm/1375", "reason": "VALUES column type JSONB"}
-{"name": "norm/1380", "reason": "string literal with a prefix or escape"}
+{"name": "norm/1380", "reason": "PLACEHOLDER (a query parameter has no value)"}
 {"name": "norm/1381", "reason": "unsupported aggregate CONST AGG over INT"}
 {"name": "norm/1382", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
 {"name": "norm/1383", "reason": "unsupported aggregate CONST AGG over INT"}
@@ -452,8 +452,8 @@
 {"name": "xform/1180", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "xform/1226", "reason": "reads a column of type JSONB (no exact encoding)"}
 {"name": "xform/1315", "reason": "reads a column of type JSONB (no exact encoding)"}
-{"name": "xform/1328", "reason": "literal of type INT"}
-{"name": "xform/1329", "reason": "literal of type INT"}
+{"name": "xform/1328", "reason": "PLACEHOLDER (a query parameter has no value)"}
+{"name": "xform/1329", "reason": "PLACEHOLDER (a query parameter has no value)"}
 {"name": "xform/1374", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "xform/1375", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}
 {"name": "xform/1376", "reason": "unsupported operator FUNCTION (function name or arguments not kept by QED's IR)"}

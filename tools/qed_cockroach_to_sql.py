@@ -114,6 +114,8 @@ class Converter:
 
     # ------------------------------------------------------------------ scalars
     def literal(self, op: str, typ: str) -> str:
+        if op == "PLACEHOLDER":
+            raise Skip("PLACEHOLDER (a query parameter has no value)")
         if op in ("TRUE", "true", "FALSE", "false"):
             return op.upper()
         if op == "NULL":
