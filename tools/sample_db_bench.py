@@ -1,11 +1,12 @@
 """Sample databases eval: complete public databases loaded into DuckDB, their workloads through KumoSQL.
 
-Each database is an *adapter* (``ADAPTERS``): the pinned upstream script, committed unchanged with
-its licence under ``tests/fixtures/sample_databases/<name>/upstream/``, and the adapted BigQuery DDL
+Each database is an *adapter* (``ADAPTERS``): its pinned upstream files (committed unchanged with
+their licence under ``tests/fixtures/sample_databases/<name>/upstream/``, except the large Employees
+data files, fetched at run time) and the adapted BigQuery DDL
 (``adapted/schema.sql``, labelled ADAPTED) that says how the upstream tables become BigQuery tables.
 Chinook (lerocha/chinook-database) and Northwind (microsoft/sql-server-samples) are the first two and Sakila (datacharmer/test_db) the third;
-Pagila (devrimgunduz/pagila) the fourth; the Oracle HR and Customer Orders schemas (oracle-samples/db-sample-schemas, ``OracleSample``: SQL*Plus scripts, the DDL and the rows in separate files) the fifth and sixth; AdventureWorks and Employees plug in as further adapters (subclass ``Adapter``, give
-the pins, the type conversions and the expected row counts).
+Pagila (devrimgunduz/pagila) the fourth; the Oracle HR and Customer Orders schemas (oracle-samples/db-sample-schemas, ``OracleSample``: SQL*Plus scripts, the DDL and the rows in separate files) the fifth and sixth; AdventureWorks and Employees are further adapters (subclass ``Adapter``, give
+the pins, the type conversions and the expected row counts). Employees is a slow-lane adapter because it loads 3.9 million rows.
 
 For every database the harness
 
@@ -50,6 +51,7 @@ One case in five (by SHA-1 of its id) is held out and reported apart.
 from __future__ import annotations
 
 import argparse
+import csv
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
@@ -62,7 +64,9 @@ import os
 from pathlib import Path
 import re
 import sys
+import tempfile
 import time
+import urllib.request
 
 import sqlglot
 
@@ -94,6 +98,7 @@ class Upstream:
     path: str  # path inside the repository
     sha256: str
     licence: str
+    runtime_download: bool = False
 
     @property
     def url(self) -> str:
@@ -103,7 +108,11 @@ class Upstream:
 
 
 def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 # ---------------------------------------------------------------- reading upstream SQL text
@@ -542,13 +551,62 @@ class Adapter:
     def folder(self) -> Path:
         return FIXTURES / self.name
 
+    def upstream_path(self, local: str) -> Path:
+        """Resolve a pinned source file, fetching large/share-alike files into the OS temp cache."""
+
+        path = self.folder / local
+        pin = next((item for item in self.upstream if item.local == local), None)
+        if path.exists() or pin is None or not pin.runtime_download:
+            return path
+
+        cache = Path(tempfile.gettempdir()) / "kumosql-upstream-cache"
+        cache.mkdir(parents=True, exist_ok=True)
+        key = hashlib.sha256(pin.url.encode("utf-8")).hexdigest()
+        cached = cache / f"{key}{Path(pin.path).suffix}"
+        if cached.exists() and sha256(cached) == pin.sha256:
+            return cached
+
+        last_error = None
+        for attempt in range(4):
+            temporary = None
+            try:
+                digest = hashlib.sha256()
+                with urllib.request.urlopen(pin.url, timeout=90) as response:
+                    with tempfile.NamedTemporaryFile(
+                        mode="wb",
+                        prefix=f"{key}.",
+                        suffix=".download",
+                        dir=cache,
+                        delete=False,
+                    ) as target:
+                        temporary = Path(target.name)
+                        for chunk in iter(lambda: response.read(1024 * 1024), b""):
+                            target.write(chunk)
+                            digest.update(chunk)
+                actual = digest.hexdigest()
+                if actual != pin.sha256:
+                    raise ValueError(
+                        f"{pin.local}: downloaded SHA-256 {actual} is not pinned {pin.sha256}"
+                    )
+                os.replace(temporary, cached)
+                return cached
+            except Exception as error:
+                last_error = error
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+                if attempt < 3:
+                    time.sleep(0.5 * (attempt + 1))
+        raise RuntimeError(
+            f"could not fetch pinned upstream file {pin.url}: {last_error}"
+        ) from last_error
+
     def upstream_text(self) -> str:
-        return (self.folder / self.data_file).read_text(encoding="utf-8")
+        return self.upstream_path(self.data_file).read_text(encoding="utf-8")
 
     def ddl_text(self) -> str:
         if not self.ddl_file:
             return self.upstream_text()
-        return (self.folder / self.ddl_file).read_text(encoding="utf-8")
+        return self.upstream_path(self.ddl_file).read_text(encoding="utf-8")
 
     def upstream_tables(self) -> dict[str, TableDef]:
         """The tables of the upstream DDL under their adapted names."""
@@ -559,6 +617,11 @@ class Adapter:
         """Every upstream data row by upstream table name, as ``read_inserts`` returns them."""
 
         return read_inserts(self.upstream_text())
+
+    def upstream_row_counts(self) -> dict[str, int]:
+        """Number of inserted rows per upstream table, without retaining the source rows."""
+
+        return {table: len(rows) for table, rows in self.upstream_rows().items()}
 
     def upstream_views(self) -> dict[str, str]:
         """The views the upstream script creates, by name (a database whose script reads differently overrides this)."""
@@ -1478,9 +1541,183 @@ class OracleCO(OracleSample):
     identity = {"inventory": "inventory_id"}  # the only INSERTs that leave the identity column to the database
 
 
+class Employees(Adapter):
+    """The CC BY-SA Employees sample, streamed from its pinned SQL dump files at run time."""
+
+    name = "employees"
+    title = "Employees"
+    results_order = 360
+    data_file = "upstream/employees.sql"
+    workload_note = (
+        "Authored queries over the complete datacharmer Employees sample. Its 3.9 million rows are "
+        "downloaded from the pinned source at run time, "
+        "because the data is large and licensed CC BY-SA 3.0."
+    )
+    baseline_note = (
+        "The hash-based held-out fifth is reported, but the workload and pairs were authored for "
+        "this adapter before its first run, so it is not a blind source-corpus holdout"
+    )
+    _REPO = "datacharmer/test_db"
+    _COMMIT = "e324b56193ca506ab7cc1ab143a9153d8c4535d7"
+    _LICENCE = (
+        "CC BY-SA 3.0, MySQL AB, "
+        "https://dev.mysql.com/doc/employee/en/employees-license.html"
+    )
+    _DUMPS = (
+        ("upstream/load_departments.dump", "departments"),
+        ("upstream/load_dept_emp.dump", "dept_emp"),
+        ("upstream/load_dept_manager.dump", "dept_manager"),
+        ("upstream/load_employees.dump", "employees"),
+        ("upstream/load_salaries1.dump", "salaries"),
+        ("upstream/load_salaries2.dump", "salaries"),
+        ("upstream/load_salaries3.dump", "salaries"),
+        ("upstream/load_titles.dump", "titles"),
+    )
+    upstream = (
+        Upstream(
+            "upstream/employees.sql", _REPO, _COMMIT, "employees.sql",
+            "cfe3f89f7b21326c516ba65d253e35e795877e9bb60c388520d915f348403a9a",
+            _LICENCE, True,
+        ),
+        Upstream(
+            "upstream/load_departments.dump", _REPO, _COMMIT, "load_departments.dump",
+            "2271cfef20852e395ec72ce269a119b2c799a973a9277c971409ea53d5a17cfa",
+            _LICENCE, True,
+        ),
+        Upstream(
+            "upstream/load_dept_emp.dump", _REPO, _COMMIT, "load_dept_emp.dump",
+            "52cc6dbc1b139254533264bd5d44a6012377f34ecf1eef693ddfb349aeb40ed6",
+            _LICENCE, True,
+        ),
+        Upstream(
+            "upstream/load_dept_manager.dump", _REPO, _COMMIT, "load_dept_manager.dump",
+            "d9cff691f09f2399f5490e435deb8c932946246aaf483b8f1cbef0bc556aa1dc",
+            _LICENCE, True,
+        ),
+        Upstream(
+            "upstream/load_employees.dump", _REPO, _COMMIT, "load_employees.dump",
+            "ba004ebc5fcdad59544fd8ced262d1793ca02c7936c5d7668a355c6a683d6fa8",
+            _LICENCE, True,
+        ),
+        Upstream(
+            "upstream/load_salaries1.dump", _REPO, _COMMIT, "load_salaries1.dump",
+            "aa485ea7b1553f1660d6db5a93e9ede0a0c182cb923f9471a39594f7ca967c5b",
+            _LICENCE, True,
+        ),
+        Upstream(
+            "upstream/load_salaries2.dump", _REPO, _COMMIT, "load_salaries2.dump",
+            "cad589bff736cb575358d7806e4e4a13e28a2e9c714c2fb51fbe4db74a5706fa",
+            _LICENCE, True,
+        ),
+        Upstream(
+            "upstream/load_salaries3.dump", _REPO, _COMMIT, "load_salaries3.dump",
+            "75fc473d2472341fbfd635d6f4853c63645051829a9c7a1a18ee819fe5816f45",
+            _LICENCE, True,
+        ),
+        Upstream(
+            "upstream/load_titles.dump", _REPO, _COMMIT, "load_titles.dump",
+            "dcd382989c46719e1e216ffef4919483f0f71d52da517c37c22d39cdaf9bc044",
+            _LICENCE, True,
+        ),
+    )
+    published_counts = {"employees": 300_024, "salaries": 2_844_047}
+    published_counts_source = "the upstream Employees sample documentation"
+    published_counts_complete = False
+
+    def upstream_rows(self):
+        raise RuntimeError(
+            "Employees rows are streamed directly into DuckDB; "
+            "materializing them in Python is not supported"
+        )
+
+    def inserted_rows(self):
+        # No triggers add rows in the Employees source.
+        return {}
+
+    def upstream_row_counts(self) -> dict[str, int]:
+        """Count tuple lines without tokenizing or retaining the 168 MB upstream dumps."""
+
+        counts = Counter()
+        for local, table in self._DUMPS:
+            count = 0
+            with self.upstream_path(local).open(encoding="utf-8") as source:
+                for line in source:
+                    stripped = line.strip()
+                    if stripped.startswith("INSERT INTO"):
+                        values = stripped.split("VALUES", 1)[-1].strip()
+                        count += values.startswith("(")
+                    else:
+                        count += stripped.startswith("(")
+            counts[table] += count
+        return dict(counts)
+
+    def _source_rows(self, table: str, path: Path):
+        spec = self.schema()[table]
+        with path.open(encoding="utf-8", newline="") as source:
+            for line_number, line in enumerate(source, 1):
+                text = line.strip()
+                if text.startswith("INSERT INTO"):
+                    text = text.split("VALUES", 1)[-1].strip()
+                if not text.startswith("("):
+                    continue
+                row_text = text.rstrip(",;").strip()
+                if not row_text.endswith(")"):
+                    raise ValueError(f"{path.name}:{line_number}: malformed row")
+                values = next(
+                    csv.reader(
+                        [row_text[1:-1]],
+                        quotechar="'",
+                        doublequote=True,
+                        skipinitialspace=True,
+                    )
+                )
+                if len(values) != len(spec.columns):
+                    raise ValueError(
+                        f"{path.name}:{line_number}: {len(values)} values for "
+                        f"{len(spec.columns)} columns"
+                    )
+                yield tuple(
+                    self.convert(
+                        table, column, kind,
+                        Raw("null", None) if value.upper() == "NULL" else Raw("string", value),
+                    )
+                    for (column, kind), value in zip(spec.columns.items(), values)
+                )
+
+    def connect(self, rows: dict[str, list[tuple]] | None = None):
+        """Stream the large source in bounded batches instead of materializing millions of tuples."""
+
+        if rows is not None:
+            return super().connect(rows)
+        import duckdb
+
+        schema = self.schema()
+        con = duckdb.connect(":memory:")
+        con.execute("SET threads=1")
+        try:
+            for table in schema.values():
+                con.execute(create_table_sql(table))
+            for local, name in self._DUMPS:
+                table = schema[name]
+                batch = []
+                for row in self._source_rows(name, self.upstream_path(local)):
+                    batch.append(row)
+                    if len(batch) == 10_000:
+                        insert_all(con, table, batch, chunk=len(batch))
+                        batch.clear()
+                if batch:
+                    insert_all(con, table, batch, chunk=len(batch))
+            for name, sql in self.views():
+                con.execute(f'CREATE VIEW "{name}" AS {to_duckdb(sql)}')
+            return con
+        except Exception:
+            con.close()
+            raise
+
+
 ADAPTERS: dict[str, Adapter] = {
     a.name: a
-    for a in (Chinook(), Northwind(), Sakila(), Pagila(), OracleHR(), OracleCO())
+    for a in (Chinook(), Northwind(), Sakila(), Pagila(), OracleHR(), OracleCO(), Employees())
 }
 
 
@@ -1492,7 +1729,7 @@ def check_database(adapter: Adapter, con=None) -> dict:
 
     problems: list[str] = []
     for pin in adapter.upstream:
-        digest = sha256(adapter.folder / pin.local)
+        digest = sha256(adapter.upstream_path(pin.local))
         if digest != pin.sha256:
             problems.append(
                 f"{pin.local}: SHA-256 {digest} is not the pinned {pin.sha256}"
@@ -1531,8 +1768,8 @@ def check_database(adapter: Adapter, con=None) -> dict:
         declared["foreign_keys"] += len(table.foreign_keys)
         declared["not_null"] += len(table.not_null)
     inserted = Counter()
-    for upstream_table, rows in adapter.upstream_rows().items():
-        inserted[adapter.renames.get(upstream_table, upstream_table)] += len(rows)
+    for upstream_table, count in adapter.upstream_row_counts().items():
+        inserted[adapter.renames.get(upstream_table, upstream_table)] += count
     for table, added in adapter.trigger_rows(adapter.inserted_rows()).items():
         inserted[table] += len(added)  # rows an upstream trigger adds while loading
     upstream_views = adapter.upstream_views()

@@ -45,7 +45,7 @@ Status: **covered** (an existing eval already scores it), **new** (being added, 
 | D08 | Microsoft DSB | MIT | yes | 52 templates | covered: `analytical-sql-coverage` ([page](analytical-sql-coverage.md)) |
 | D09 | AdventureWorks OLTP | MIT | yes (release asset) | about 70 tables, 20 views | **new** (batch 2): views as workload queries if the T-SQL adapts cleanly |
 | D10 | WideWorldImporters | MIT | release holds only SQL Server `.bak` backups | — | not added: needs a SQL Server restore |
-| D11 | Employees (`datacharmer/test_db`) | CC BY-SA 3.0 | yes (167 MB) | 6 tables, 3.9 M rows | **new** (batch 2): downloaded at run time, slow lane |
+| D11 | Employees (`datacharmer/test_db`) | CC BY-SA 3.0 | yes (167 MB) | 6 tables, 3.9 M rows | covered: `sample-databases-employees-rewrites`, `sample-databases-employees-pairs` ([page](sample-databases.md#employees)); files fetched at run time and streamed into DuckDB |
 | D12 | Postgres Professional Airlines | MIT | no: `postgrespro.ru` is blocked | 9 tables, 133 MB dump | not added |
 | D13 | Join Order Benchmark / IMDb | unverified, IMDb terms | yes | 113 queries | covered: `job-cardinality`, `job-endtoend`, `job-alternative-forms`, `mv-benchmark` |
 | D14 | BigQuery Stack Overflow | hosted | needs a billed Google project | — | not added: evals run offline without credentials. The Dataform example project (below) models the same tables |

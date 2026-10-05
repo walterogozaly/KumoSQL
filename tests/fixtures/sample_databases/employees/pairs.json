@@ -1,0 +1,90 @@
+{
+  "about": "Authored query pairs for tools/sample_db_bench.py. Labels are under the declared Employees primary and foreign keys; each different pair has a legal separating database.",
+  "pairs": [
+    {
+      "id": "emp-distinct-on-primary-key",
+      "category": "distinct elimination",
+      "label": "equivalent",
+      "why": "employees.emp_no is the declared primary key",
+      "left": "SELECT DISTINCT emp_no FROM employees",
+      "right": "SELECT emp_no FROM employees"
+    },
+    {
+      "id": "emp-distinct-on-primary-key-without-key",
+      "category": "distinct elimination",
+      "label": "different",
+      "sibling": "emp-distinct-on-primary-key",
+      "drop": ["pk:employees"],
+      "why": "without the primary key two employees may share an employee number",
+      "left": "SELECT DISTINCT emp_no FROM employees",
+      "right": "SELECT emp_no FROM employees",
+      "witness": {
+        "employees": [
+          {"emp_no": 1, "birth_date": "1960-01-01", "first_name": "A", "last_name": "One", "gender": "M", "hire_date": "1985-01-01"},
+          {"emp_no": 1, "birth_date": "1960-01-01", "first_name": "A", "last_name": "One", "gender": "M", "hire_date": "1986-01-01"}
+        ]
+      }
+    },
+    {
+      "id": "emp-inner-join-employee-through-dept-emp-fk",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "dept_emp.emp_no is a non-null foreign key to the employee primary key, so each row matches exactly one employee",
+      "left": "SELECT de.emp_no, de.dept_no FROM dept_emp AS de JOIN employees AS e ON e.emp_no = de.emp_no",
+      "right": "SELECT emp_no, dept_no FROM dept_emp"
+    },
+    {
+      "id": "emp-inner-join-employee-without-fk",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "emp-inner-join-employee-through-dept-emp-fk",
+      "drop": ["fk:dept_emp.emp_no"],
+      "why": "without the foreign key a department assignment can name a missing employee",
+      "left": "SELECT de.emp_no, de.dept_no FROM dept_emp AS de JOIN employees AS e ON e.emp_no = de.emp_no",
+      "right": "SELECT emp_no, dept_no FROM dept_emp",
+      "witness": {
+        "departments": [{"dept_no": "d001", "dept_name": "Engineering"}],
+        "dept_emp": [{"emp_no": 1, "dept_no": "d001", "from_date": "2000-01-01", "to_date": "9999-01-01"}]
+      }
+    },
+    {
+      "id": "emp-left-join-employee-through-salary-fk",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "salaries.emp_no is a non-null foreign key to the employee primary key and no employee column is read",
+      "left": "SELECT s.emp_no, s.from_date FROM salaries AS s LEFT JOIN employees AS e ON e.emp_no = s.emp_no",
+      "right": "SELECT emp_no, from_date FROM salaries"
+    },
+    {
+      "id": "emp-count-primary-key-column",
+      "category": "aggregate",
+      "label": "equivalent",
+      "why": "employees.emp_no is non-null by its primary key",
+      "left": "SELECT COUNT(*) FROM employees",
+      "right": "SELECT COUNT(emp_no) FROM employees"
+    },
+    {
+      "id": "emp-count-nullable-title-end-date",
+      "category": "aggregate",
+      "label": "different",
+      "why": "titles.to_date is nullable, so COUNT(to_date) can skip a row",
+      "left": "SELECT COUNT(*) FROM titles",
+      "right": "SELECT COUNT(to_date) FROM titles",
+      "witness": {
+        "employees": [{"emp_no": 1, "birth_date": "1960-01-01", "first_name": "A", "last_name": "One", "gender": "M", "hire_date": "1985-01-01"}],
+        "titles": [{"emp_no": 1, "title": "Engineer", "from_date": "2000-01-01", "to_date": null}]
+      }
+    },
+    {
+      "id": "emp-filter-different-gender",
+      "category": "filter",
+      "label": "different",
+      "why": "one legal male row appears only in the first query",
+      "left": "SELECT emp_no FROM employees WHERE gender = 'M'",
+      "right": "SELECT emp_no FROM employees WHERE gender = 'F'",
+      "witness": {
+        "employees": [{"emp_no": 1, "birth_date": "1960-01-01", "first_name": "A", "last_name": "One", "gender": "M", "hire_date": "1985-01-01"}]
+      }
+    }
+  ]
+}

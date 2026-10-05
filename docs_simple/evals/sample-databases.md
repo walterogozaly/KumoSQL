@@ -2,7 +2,7 @@
 
 [Simple eval index](README.md) · [Full reference](../../docs/evals/sample-databases.md)
 
-Most evals use small invented tables. This one loads three complete public sample databases, Chinook (a music store), Northwind (a trading company) and Sakila (a DVD rental shop), into DuckDB from their pinned upstream scripts. They come with real keys, foreign keys, NOT NULL columns, thousands of rows, and Northwind's and Sakila's own views and stored procedures. Chinook and Northwind share one pair of recorded scores; Sakila has its own, so adding a database never changes the numbers of another. A fourth database, Pagila (a PostgreSQL DVD-rental sample), has [its own page](sample-databases-pagila.md) and its own results files; Oracle's Human Resources and Customer Orders schemas follow, each with its own results files.
+Most evals use small invented tables. This one loads complete public sample databases into DuckDB from pinned upstream scripts: Chinook (a music store), Northwind (a trading company), Sakila (a DVD rental shop), Oracle's Human Resources and Customer Orders schemas, and the Employees sample. They come with real keys, foreign keys, NOT NULL columns, data, and some upstream views and stored procedures. The Employees sample has six tables and 3.9 million rows; its roughly 167 MB of CC BY-SA data is fetched at run time and streamed into DuckDB. Each database after Chinook and Northwind has its own pair of results files, so adding a database never changes the numbers for another. Pagila (another DVD-rental sample) has [its own page](sample-databases-pagila.md) and results files too.
 
 ## What it checks
 
@@ -14,6 +14,8 @@ Most evals use small invented tables. This one loads three complete public sampl
 `SELECT c.CustomerId FROM Customer c JOIN Invoice i ON i.CustomerId = c.CustomerId WHERE i.Total > 5` and the `IN (SELECT ...)` form return the same customers only if each customer appears once per match. The eval checks that the prover's answer agrees with what DuckDB returns on the real Chinook rows.
 
 Sakila adds shapes the first two lack: a table whose primary key is two columns (which film an actor played in), two foreign keys from one table to another, a foreign key that is empty in a few real rows (a payment with no rental) and one that is empty in every row, and a loop of required foreign keys between `store` and `staff`. Its seven views and the SELECTs of its stored routines are in the workload, rewritten from MySQL into BigQuery SQL with every change written beside the query. The same rewrite is asked about with and without the guarantee it needs: `SELECT r.rental_id FROM rental r JOIN inventory i ON i.inventory_id = r.inventory_id` equals `SELECT rental_id FROM rental` only because `rental.inventory_id` is required and points at inventory's key.
+
+Employees adds a larger set of real rows and relationships: six primary keys, six foreign keys and eight authored query pairs. Its workload has eight queries for department headcounts, salaries, hire years, titles, managers, and salary history. The data files stay out of the repository because of their size and licence; each run fetches pinned files, verifies their hashes, and caches them under the operating system's temporary directory.
 
 ## The Oracle schemas
 
@@ -35,7 +37,7 @@ Left out on purpose: Oracle's Sales History (91 MB of CSV, almost a million sale
 - Oracle's UNIQUE and CHECK constraints are not given to the provers (BigQuery cannot declare them), so a pair that depends on one is labelled "different" under the declared keys even though the real rows agree.
 - The held-out queries and pairs (chosen by hash of their id) are run once and reported apart.
 
-The recorded scores, the pinned upstream versions, licences, and every adaptation are in the [full reference](../../docs/evals/sample-databases.md) and the `sample-databases-*` results files (two each for Chinook and Northwind together, Sakila, Pagila, Oracle HR and Oracle Customer Orders).
+The recorded scores, the pinned upstream versions, licences, and every adaptation are in the [full reference](../../docs/evals/sample-databases.md) and the `sample-databases-*` results files (Chinook and Northwind together; separate files for Sakila, Pagila, Oracle HR, Oracle Customer Orders and Employees).
 
 ```sh
 python tools/sample_db_bench.py --check

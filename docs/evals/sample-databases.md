@@ -1,6 +1,6 @@
 # Sample databases
 
-Complete public sample databases, loaded whole into DuckDB from their pinned upstream scripts, with two scores: KumoSQL's rewrites on each database's workload, checked on the real data, and query pairs on its schema run through the provers. Chinook and Northwind are the first two databases and share one pair of results files; Sakila is the third and has results files of its own (see [Sakila](#sakila)), so adding a database never moves another's numbers. Pagila is the fourth ([its own page](sample-databases-pagila.md), with its own results files) and the Oracle HR and Customer Orders schemas the fifth and sixth ([below](#oracle-schemas-hr-and-customer-orders), one pair of results files each); AdventureWorks and Employees are meant to plug in as further adapters.
+Complete public sample databases, loaded whole into DuckDB from their pinned upstream scripts, with two scores: KumoSQL's rewrites on each database's workload, checked on the real data, and query pairs on its schema run through the provers. Chinook and Northwind are the first two databases and share one pair of results files; Sakila is the third and has results files of its own (see [Sakila](#sakila)), so adding a database never moves another's numbers. Pagila is the fourth ([its own page](sample-databases-pagila.md), with its own results files), Oracle HR and Customer Orders are fifth and sixth ([below](#oracle-schemas-hr-and-customer-orders)), and Employees is seventh ([below](#employees)); each has its own pair of results files.
 
 | Database | Upstream (pinned) | Licence | Loaded | Declared keys |
 | --- | --- | --- | --- | --- |
@@ -9,6 +9,7 @@ Complete public sample databases, loaded whole into DuckDB from their pinned ups
 | Sakila (Spatial 0.9) | [datacharmer/test_db](https://github.com/datacharmer/test_db) `e324b56193ca`, `sakila/sakila-mv-schema.sql` and `sakila/sakila-mv-data.sql` | New BSD (Oracle) | 16 tables, 47,273 rows | 16 primary, 22 foreign keys, 73 NOT NULL columns |
 | Oracle HR | [oracle-samples/db-sample-schemas](https://github.com/oracle-samples/db-sample-schemas) `6660bad68c07`, `human_resources/hr_create.sql`, `hr_populate.sql`, `hr_code.sql` | MIT text (Copyright (c) 2023 Oracle) | 7 tables, 216 rows | 7 primary, 10 foreign keys, 17 NOT NULL columns |
 | Oracle Customer Orders | the same commit, `customer_orders/co_create.sql`, `co_populate.sql` | MIT text (Copyright (c) 2023 Oracle) | 7 tables, 8,783 rows | 7 primary, 9 foreign keys, 26 NOT NULL columns |
+| Employees | [datacharmer/test_db](https://github.com/datacharmer/test_db) `e324b56193ca`, source and load dumps fetched at run time | CC BY-SA 3.0, MySQL AB | 6 tables, 3,919,015 rows | 6 primary, 6 foreign keys, 23 NOT NULL columns |
 
 | Score | Results file |
 | --- | --- |
@@ -20,6 +21,8 @@ Complete public sample databases, loaded whole into DuckDB from their pinned ups
 | Oracle HR: 54 authored pairs: **18/22 equivalent proved, 32/32 different refuted (every refutation replayed), 0 wrong** | `sample-databases-oracle_hr-pairs` |
 | Oracle Customer Orders: 34 workload queries through every rewrite: **0 wrong in 233 executed cases, 107 rewrites verified on the real data** | `sample-databases-oracle_co-rewrites` |
 | Oracle Customer Orders: 52 authored pairs: **18/21 equivalent proved, 29/31 different refuted (every refutation replayed), 0 wrong** | `sample-databases-oracle_co-pairs` |
+| Employees: 8 workload queries through every rewrite: **0 wrong in 56 executed cases, 24 rewrites verified on the real data** | `sample-databases-employees-rewrites` |
+| Employees: 8 authored pairs: **4/4 equivalent proved, 4/4 different refuted (every refutation replayed), 0 wrong** | `sample-databases-employees-pairs` |
 
 ```
 python tools/sample_db_bench.py --check            # load every database and check it against upstream (seconds)
@@ -28,6 +31,7 @@ python tools/sample_db_bench.py --part rewrites --no-optimizer --query nw-view-i
 python tools/sample_db_bench.py --write-results    # everything; about 15 minutes on 3 busy cores
 python tools/sample_db_bench.py --database sakila --write-results   # only Sakila's two results files (about 6 minutes)
 python tools/sample_db_bench.py --database oracle_hr --write-results   # only Oracle HR's two results files
+python tools/sample_db_bench.py --database employees --write-results   # Employees downloads about 168 MB and streams 3.9 million rows
 ```
 
 `--write-results` writes the combined Chinook and Northwind files from those two databases' cases only, and one pair of files per further database from that database's cases only; naming only some of the combined databases is refused.
@@ -224,6 +228,16 @@ Unknown (9), the same prover limits as for Chinook and Northwind: the nullable-f
 - Oracle's `order_entry` and `product_media` schemas are not part of this eval.
 
 **Baseline, tuning and held-out.** Nothing was tuned. The workload and pairs were written and run once as a baseline (rewrites 0 wrong; pairs 36/43 proved, 56/63 refuted, 3 wrong from the bounded checker's DATE bug above, one unverified label, the one corrected above); the recorded scores are the rerun after master's fix for that bug, with the same workload, pairs, harness and provers (rewrites 0 wrong again; pairs 36/43, 61/63, 0 wrong). Besides the three pairs the fix repaired, one CO pair moved from unknown to refuted; the executed counterexample search is time-limited, so a refutation can also move between runs on a shared machine. The held-out fifth was seen only in printed totals and per-pair verdicts and nothing was changed after seeing them. Three of the authored workload queries were rewritten before the first run because they returned no rows (an empty result cannot show a rewrite is right). DuckDB stands in for BigQuery, as above.
+
+## Employees
+
+The Employees sample from [`datacharmer/test_db`](https://github.com/datacharmer/test_db) adds a larger real-data adapter: six related tables and 3,919,015 rows. The upstream DDL is pinned at `e324b56193ca506ab7cc1ab143a9153d8c4535d7`. Its files total about 167 MB and the data is CC BY-SA 3.0, so the harness fetches each unchanged file from that commit at run time, verifies its SHA-256, and keeps it in the OS temporary cache. The source data is not committed. See the [fixture inventory](../../tests/fixtures/sample_databases/README.md) for every file hash.
+
+`employees.sql` defines the schema and the loader statements; seven `.dump` files hold the rows for `departments` (9), `dept_emp` (331,603), `dept_manager` (24), `employees` (300,024), `salaries` (2,844,047 across three files) and `titles` (443,308). The published counts for `employees` and `salaries` are checked against the source documentation; other table counts are checked against the pinned dump contents. The adapted BigQuery DDL preserves column order, `NOT NULL`, six primary keys and six foreign keys. MySQL integer types become `INT64`, character and enum types become `STRING`, and `DATE` remains `DATE`; keys are declared `NOT ENFORCED`. The loader parses one tuple per source line and streams rows into DuckDB in batches, keeping the multi-million-row data out of Python lists.
+
+The source has no shipped application query workload or views. Its eight authored queries cover department headcounts and salary totals, year-of-hire counts, current titles and managers, salary history with a window, an above-average salary subquery, and current departments with titles. The eight authored pairs check DISTINCT removal on a primary key (and without it), join elimination through non-null foreign keys, COUNT over a primary-key column, COUNT over a nullable title end date, and a separating gender filter. Different labels have small legal witness databases; the same harness checks proofs against the full loaded data and replays counterexamples.
+
+The hash-based held-out fifth is reported in the results (6 of 6 held-out rewrite cases verified; 1 equivalent pair proved and 1 different pair refuted, with 0 wrong), but the workload and pairs were authored for this adapter before its first run, so this is an authored baseline rather than a blind source-corpus holdout. The full run takes several minutes because it downloads or reads the 167 MB source and loads 3.9 million rows. Run only this adapter with `python tools/sample_db_bench.py --database employees --write-results`.
 
 ## Baseline, held-out cases and limits
 

@@ -11,6 +11,8 @@ Complete public sample databases for `tools/sample_db_bench.py` ([docs](../../..
 
 The Oracle schemas are `oracle_hr/` and `oracle_co/` (the Oracle scripts split the DDL and the rows into `*_create.sql` and `*_populate.sql`, both kept unchanged); each has results files of its own.
 
+Employees is the exception to the checked-in-file rule: its 168 MB CC BY-SA 3.0 data is fetched at run time from the pinned commit into the operating system's temporary cache, then hash-checked before use. No upstream data files are committed. The adapter streams the dump rows to DuckDB in batches.
+
 The data is never copied out of the upstream scripts: the harness reads the INSERT statements at run time. Sakila's DDL and INSERTs are two files (`sakila-mv-schema.sql`, `sakila-mv-data.sql`); its `pairs.json` also holds a `not_scored` list (a pair the harness cannot replay, with the reason).
 
 | Database | Source | Commit | File | SHA-256 | Licence |
@@ -28,6 +30,15 @@ The data is never copied out of the upstream scripts: the harness reads the INSE
 | Oracle Customer Orders | [oracle-samples/db-sample-schemas](https://github.com/oracle-samples/db-sample-schemas) | `6660bad68c07bd143430ace58565b3f727e17263` | `customer_orders/co_create.sql` | `8ce42790ec255840bcaf22ff8bc4f53e53996ccecb318410a0b3a36a4c3d6cc1` | MIT text, Copyright (c) 2023 Oracle and/or its affiliates (`oracle_co/upstream/LICENSE.txt`) |
 | Oracle Customer Orders | [oracle-samples/db-sample-schemas](https://github.com/oracle-samples/db-sample-schemas) | `6660bad68c07bd143430ace58565b3f727e17263` | `customer_orders/co_populate.sql` (1.3 MB) | `e636942e49d9f7cb586f779122ffa2b4da95b07cc7f314c0ef1dae60a5f0cefa` | MIT text, Copyright (c) 2023 Oracle and/or its affiliates (`oracle_co/upstream/LICENSE.txt`) |
 | Oracle Customer Orders | [oracle-samples/db-sample-schemas](https://github.com/oracle-samples/db-sample-schemas) | `6660bad68c07bd143430ace58565b3f727e17263` | `LICENSE.txt` | `2da4f8e1f04662e5db9b224a20dfd13db8bc396398271d607bda0343212fbce3` | MIT text, Copyright (c) 2023 Oracle and/or its affiliates (`oracle_co/upstream/LICENSE.txt`) |
+| Employees | [datacharmer/test_db](https://github.com/datacharmer/test_db) | `e324b56193ca506ab7cc1ab143a9153d8c4535d7` | `employees.sql` | `cfe3f89f7b21326c516ba65d253e35e795877e9bb60c388520d915f348403a9a` | CC BY-SA 3.0, MySQL AB ([licence](https://dev.mysql.com/doc/employee/en/employees-license.html)); fetched at run time |
+| | | | `load_departments.dump` | `2271cfef20852e395ec72ce269a119b2c799a973a9277c971409ea53d5a17cfa` | |
+| | | | `load_dept_emp.dump` | `52cc6dbc1b139254533264bd5d44a6012377f34ecf1eef693ddfb349aeb40ed6` | |
+| | | | `load_dept_manager.dump` | `d9cff691f09f2399f5490e435deb8c932946246aaf483b8f1cbef0bc556aa1dc` | |
+| | | | `load_employees.dump` | `ba004ebc5fcdad59544fd8ced262d1793ca02c7936c5d7668a355c6a683d6fa8` | |
+| | | | `load_salaries1.dump` | `aa485ea7b1553f1660d6db5a93e9ede0a0c182cb923f9471a39594f7ca967c5b` | |
+| | | | `load_salaries2.dump` | `cad589bff736cb575358d7806e4e4a13e28a2e9c714c2fb51fbe4db74a5706fa` | |
+| | | | `load_salaries3.dump` | `75fc473d2472341fbfd635d6f4853c63645051829a9c7a1a18ee819fe5816f45` | |
+| | | | `load_titles.dump` | `dcd382989c46719e1e216ffef4919483f0f71d52da517c37c22d39cdaf9bc044` | |
 
 Pagila's DDL and data are two files; `LICENSE.txt` of Pagila has the SHA-256 `516e7dac679ac1eeb62d5614b01c4e7318154e9a147377d6264954215997ff38`. Its rows are `COPY` blocks, which the harness reads (`read_copy`); `pagila-insert-data.sql` (19 MB, the same data as `INSERT`s) is not committed.
 

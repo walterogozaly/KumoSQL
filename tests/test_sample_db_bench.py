@@ -1,12 +1,14 @@
-"""Sample databases eval (Chinook, Northwind, Sakila): loads checked against upstream, rewrites and pairs with 0 wrong.
+"""Sample database eval: loads checked against upstream, rewrites and pairs with 0 wrong.
 
 The full run is ``python tools/sample_db_bench.py --write-results`` (every workload query through every
 rewrite stage, including the slow proof-gated optimizer). Here every pair runs, and a pinned subset of the
-workload runs through the rewrite pipeline and lift_subqueries.
+workload runs through the rewrite pipeline and lift_subqueries. Employees is a slow-lane adapter: its
+large CC BY-SA source is fetched at run time and streamed into DuckDB.
 """
 
 import datetime
 import importlib.util
+import io
 import json
 import sys
 from pathlib import Path
@@ -32,6 +34,7 @@ DATABASE_FLOORS = {
     "sakila": {"proven": 23, "refuted": 36},
     "oracle_hr": {"proven": 18, "refuted": 30},
     "oracle_co": {"proven": 18, "refuted": 27},
+    "employees": {"proven": 4, "refuted": 4},
 }
 # Siblings the bounded checker cannot decide: Oracle CO's stores has a BYTES column (logo) and the checker has no NULL
 # padding for that type in a LEFT JOIN, so it raises KeyError (a crash is counted as unknown, not as a refutation).
@@ -72,6 +75,35 @@ def test_database_loads_as_upstream_declares_it(name):
         counts = {table: counts[table] for table in adapter.published_counts}
     assert counts == adapter.published_counts
     assert report["declared"]["primary_keys"] == report["tables"]
+
+
+def test_runtime_download_is_hash_checked_and_cached(tmp_path, monkeypatch):
+    payload = b"pinned upstream bytes\n"
+    pin = bench.Upstream(
+        "upstream/source.dump",
+        "owner/repo",
+        "0123456789abcdef",
+        "source.dump",
+        bench.hashlib.sha256(payload).hexdigest(),
+        "test licence",
+        runtime_download=True,
+    )
+    adapter = bench.Adapter()
+    adapter.name = "runtime-download-test"
+    adapter.upstream = (pin,)
+    monkeypatch.setattr(bench.tempfile, "gettempdir", lambda: str(tmp_path))
+    downloads = []
+
+    def open_pinned(url, timeout):
+        downloads.append((url, timeout))
+        return io.BytesIO(payload)
+
+    monkeypatch.setattr(bench.urllib.request, "urlopen", open_pinned)
+
+    first = adapter.upstream_path(pin.local)
+    second = adapter.upstream_path(pin.local)
+    assert first == second and first.read_bytes() == payload
+    assert downloads == [(pin.url, 90)]
 
 
 def test_the_upstream_workload_is_upstream():
@@ -257,6 +289,8 @@ def test_results_files_report_zero_wrong():
         "sample-databases-pairs",
         "sample-databases-sakila-rewrites",
         "sample-databases-sakila-pairs",
+        "sample-databases-employees-rewrites",
+        "sample-databases-employees-pairs",
     ):
         row = json.loads((ROOT / "benchmarks" / "results" / f"{name}.json").read_text())
         database = name.split("-")[2] if name.count("-") == 3 else None
