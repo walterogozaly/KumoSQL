@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
+import itertools
 
 from .ir import (
     FALSE,
@@ -69,6 +70,7 @@ from .ir import (
     free_vars,
     neg,
     subst,
+    value_kind,
     walk,
 )
 from .translate import Catalog, Unsupported
@@ -294,10 +296,13 @@ def simplify_term(t: Term, ctx: Ctx) -> list:
             if s == FALSE:
                 return []
             new_conjs.extend(_conjuncts(s))
-        new_conjs = _dedup(new_conjs)
+        new_conjs = _prune_non_null(_dedup(new_conjs))
         propagated = _propagate_equalities(new_conjs, set(t.vars))
         if propagated is not None:
             new_conjs = propagated
+        pulled = _pull_outer_equalities(new_conjs, set(t.vars))
+        if pulled is not None:
+            new_conjs = pulled
         others = []
         for f in t.factors:
             if isinstance(f, NInd):
@@ -334,7 +339,12 @@ def simplify_term(t: Term, ctx: Ctx) -> list:
         if changed is not None:
             t = changed
             continue
-        # 4. conditions simplified against each other: once more, until they settle
+        # 4. an existence test that the term's own rows witness is redundant
+        changed = _drop_implied_exists(t, ctx)
+        if changed is not None:
+            t = changed
+            continue
+        # 5. conditions simplified against each other: once more, until they settle
         if passes < 3 and not _settled(new_conjs, conjs):
             passes += 1
             continue
@@ -343,6 +353,80 @@ def simplify_term(t: Term, ctx: Ctx) -> list:
         if isinstance(v, SVar) and not any(v in free_vars(f) for f in t.factors):
             raise Unsupported("an unconstrained scalar variable (an infinite sum)")
     return [Term(_ordered_vars(t), t.coef, t.factors)]
+
+
+def _cond_key(c):
+    """A formula up to the order of the two sides of ``=`` / ``≡``."""
+
+    if isinstance(c, (Same,)) or (isinstance(c, Cmp) and c.op == "="):
+        return (type(c).__name__, getattr(c, "op", None), frozenset((c.a, c.b)))
+    return c
+
+
+def _witnessed(ex, conds: set, rows: set, ctx: Ctx) -> bool:
+    """Whether the existence test ``ex`` holds wherever a term with rows ``rows`` and conditions ``conds`` is non-zero.
+
+    ``ex`` is ``∃ Σy. R(y)·φ1(y)··φk(y)`` over rows only. If some choice of rows ``x`` of the
+    term (of the same tables) makes every ``φi(x)`` one of the term's own conditions, then wherever
+    the term is non-zero its rows ``x`` are in their tables and satisfy those conditions, so they
+    witness ``ex``. ``rows`` are the tuple variables the term sums over and the rows ``ι`` it
+    requires to exist (``ι ∈ R`` is one of its conditions)."""
+
+    body = ex.term
+    if not isinstance(body, NSum) or not all(isinstance(v, TVar) for v in body.vars):
+        return False
+    factors = body.body.args if isinstance(body.body, NMul) else (body.body,)
+    rel_vars = {f.tup for f in factors if isinstance(f, NRel)}
+    if set(body.vars) != rel_vars or len(rel_vars) != len(body.vars):
+        return False
+    needed = []
+    for f in factors:
+        if isinstance(f, NRel):
+            continue
+        if not isinstance(f, NInd):
+            return False
+        needed.extend(_conjuncts(f.f))
+    pools = [[x for x in sorted(rows, key=repr) if x.table == y.table] for y in body.vars]
+    if any(not p for p in pools) or len(body.vars) > 4:
+        return False
+    inner = ctx.with_known(rows)
+    count = 0
+    for choice in itertools.product(*pools):
+        count += 1
+        if count > 64:
+            return False
+        m = dict(zip(body.vars, choice))
+        for c in needed:
+            c = simplify_formula(subst(c, m), inner)
+            if c == TRUE or (isinstance(c, InRel) and c.tup in rows):
+                continue
+            if _cond_key(c) not in conds:
+                break
+        else:
+            return True
+    return False
+
+
+def _drop_implied_exists(t: Term, ctx: Ctx) -> Term | None:
+    """``Σx. R(x)·φ(x)·[∃y. R(y)·φ(y)]·f = Σx. R(x)·φ(x)·f``: the existence test is witnessed by ``x`` itself."""
+
+    rows = {f.tup for f in t.factors if isinstance(f, NRel) and f.tup in t.vars and isinstance(f.tup, TVar)}
+    for f in t.factors:
+        if isinstance(f, NInd):
+            rows.update(c.tup for c in _conjuncts(f.f) if isinstance(c, InRel) and isinstance(c.tup, Iota))
+    if not rows:
+        return None
+    for f in t.factors:
+        if not isinstance(f, NInd):
+            continue
+        c = f.f
+        tests = [c] if isinstance(c, Exists) else [a for a in c.args if isinstance(a, Exists)] if isinstance(c, Or) else []
+        if not tests:
+            continue
+        conds = {_cond_key(x) for g in t.factors if isinstance(g, NInd) and g is not f for x in _conjuncts(g.f)}
+        if any(_witnessed(e, conds, rows, ctx) for e in tests):
+            return Term(t.vars, t.coef, tuple(g for g in t.factors if g is not f))
+    return None
 
 
 def _settled(new: list, old: list) -> bool:
@@ -361,6 +445,27 @@ def _ordered_vars(t: Term) -> tuple:
     for f in t.factors:
         free_vars(f, used)
     return tuple(v for v in t.vars if v in used or isinstance(v, TVar))
+
+
+def _alpha_equal(x, y) -> bool:
+    """Equal up to the names of bound variables (an aggregate is renamed each time it is normalized)."""
+
+    if x == y:
+        return True
+    from .canon import canon
+
+    return canon(x) == canon(y)
+
+
+def _prune_non_null(conjs: list) -> list:
+    """Drop ``¬a IS NULL`` when another condition is a comparison with ``a`` (it is TRUE only for non-NULL operands)."""
+
+    compared = set()
+    for c in conjs:
+        if isinstance(c, Cmp):
+            compared.add(c.a)
+            compared.add(c.b)
+    return [c for c in conjs if not (isinstance(c, Not) and isinstance(c.a, IsNull) and c.a.a in compared)]
 
 
 def _dedup(items: list) -> list:
@@ -675,6 +780,42 @@ def _propagate_equalities(conjs: list, bound: set):
     return None if out == conjs else _dedup(out)
 
 
+def _pull_outer_equalities(conjs: list, bound: set):
+    """Equalities between outside values that a term's conditions force, taken out of the sum.
+
+    ``Σy. [s = y.a]·[y.a = 10]·f(y) = [s = 10]·Σy. [y.a = 10]·f(y)``: when an equality class of the
+    conditions holds two or more values that do not mention the summed variables, the conditions say those
+    values are equal, whatever the rows. Done for such classes only (see ``_pull_equalities``)."""
+
+    parent: dict = {}
+
+    def find(a):
+        while parent.get(a, a) != a:
+            a = parent[a]
+        return a
+
+    links = [c for c in conjs if isinstance(c, Same) or (isinstance(c, Cmp) and c.op == "=")]
+    for c in links:
+        ra, rb = find(c.a), find(c.b)
+        if ra != rb:
+            parent[ra] = rb
+    outside: dict = {}
+    inside_roots = set()
+    for c in links:
+        for a in (c.a, c.b):
+            if _bound_in(a, bound):
+                inside_roots.add(find(a))
+            else:
+                outside.setdefault(find(a), set()).add(a)
+    roots = {r for r, m in outside.items() if len(m) >= 2 and r in inside_roots}
+    if not roots:
+        return None
+    chosen = [c for c in links if find(c.a) in roots]
+    extra, rewritten = _pull_equalities(chosen, bound)
+    new = _dedup([c for c in conjs if c not in chosen] + extra + rewritten)
+    return None if set(new) == set(conjs) else new
+
+
 _NEGATED_CMP = {"=": "<>", "<>": "=", "<": ">=", "<=": ">", ">": "<=", ">=": "<"}
 
 
@@ -763,6 +904,8 @@ def simplify_value(v, ctx: Ctx):
         a, b = simplify_value(v.a, ctx), simplify_value(v.b, ctx)
         if a == b:
             return a
+        if isinstance(b, Lit) and b.value is None and isinstance(c, Not) and isinstance(c.a, IsNull) and _alpha_equal(c.a.a, a):
+            return a  # CASE WHEN a IS NOT NULL THEN a END is a
         return Ite(c, a, b)
     if isinstance(v, BoolV):
         t, f = simplify_formula(v.t, ctx), simplify_formula(v.f, ctx)
@@ -810,6 +953,8 @@ def _canonical_agg(v: Agg, ctx: Ctx):
         terms = normalize(NSum(tuple(v.vars), v.body) if v.vars else v.body, ctx)
         result = _empty_aggregate(v) if not terms else Agg(v.func, v.distinct, (), rebuild(terms), None)
     else:
+        if v.distinct and v.func in ("MIN", "MAX"):
+            v = Agg(v.func, False, v.vars, v.body, v.arg)  # only the set of values matters to them
         w = SVar(fresh_id(), None)
         body = nmul(v.body, NInd(Same(Ref(w), v.arg)))
         terms = normalize(NSum(tuple(v.vars), body) if v.vars else body, ctx)
@@ -821,8 +966,117 @@ def _canonical_agg(v: Agg, ctx: Ctx):
             result = Agg(v.func, False, (w,), rebuild(normalize(NInd(squashed), ctx)), Ref(w))
         else:
             result = Agg(v.func, v.distinct, (w,), rebuild(terms), Ref(w))
+        if terms and isinstance(result, Agg):
+            single = _one_valued_aggregate(v, terms, w, ctx)
+            if single is not None:
+                result = single
+            else:
+                merged = _extremum_of_extrema(v, terms, w)
+                if merged is not None:
+                    result = _canonical_agg(merged, ctx)
     ctx.cache[key] = result
     return result
+
+
+def _one_valued_aggregate(v: Agg, terms: list, w: SVar, ctx: Ctx):
+    """``MIN``/``MAX``/``SUM(DISTINCT)`` over a bag whose only possible value is one expression ``e``.
+
+    ``terms`` is the bag as ``V(w)``, the multiplicity of each argument value ``w``. If every term
+    forces ``w ≡ e`` for the same ``e`` that mentions neither ``w`` nor the term's own variables
+    (through its ``=`` / ``≡`` conditions), the set of non-NULL values is ``{e}`` when some term
+    holds at ``w = e`` with ``e`` non-NULL, and empty otherwise. Only the set matters to ``MIN``,
+    ``MAX`` and ``SUM(DISTINCT)``, and each of them is ``e`` on ``{e}`` and NULL on the empty set,
+    so the aggregate is ``CASE WHEN ∃ ... THEN e END``. ``SUM`` of the bag itself (without
+    ``DISTINCT``) is the same only when no value has multiplicity above one; ``AVG`` is left alone.
+    """
+
+    from .canon import canon
+    from .ir import nsum, nmul
+
+    # SUM without DISTINCT also depends on the multiplicities: only a bag that holds each value at most once
+    # (one term without variables, made of conditions) is the set.
+    plain_sum = v.func == "SUM" and not v.distinct
+    if not (v.func in ("MIN", "MAX") or v.func == "SUM"):
+        return None
+    if plain_sum and not (len(terms) == 1 and not terms[0].vars and terms[0].coef == 1 and all(isinstance(f, NInd) for f in terms[0].factors)):
+        return None
+    chosen = None
+    key = None
+    parts = []
+    for t in terms:
+        if t.coef <= 0 or not all(isinstance(f, (NRel, NInd)) for f in t.factors):
+            return None
+        conjs = [x for f in t.factors if isinstance(f, NInd) for x in _conjuncts(f.f)]
+        bound = set(t.vars)
+        members = _equalities(conjs).get(Ref(w), [])
+        best = None
+        for m in members:
+            if m == Ref(w) or w in free_vars(m) or (free_vars(m) & bound) or any(_mentions_tuple(m, y) for y in bound if isinstance(y, TVar)):
+                continue
+            rank = (0 if isinstance(m, Lit) and m.value is not None else 1 if isinstance(m, (Ref, Col)) else 2, repr(m))
+            if best is None or rank < best[0]:
+                best = (rank, m)
+        if best is None:
+            return None
+        e = best[1]
+        ck = repr(canon(e))
+        if key is None:
+            chosen, key = e, ck
+        elif ck != key:
+            return None
+        body = nmul(*[subst(f, {w: chosen}) if not isinstance(f, NRel) else f for f in t.factors], NInd(neg(IsNull(chosen))))
+        parts.append(nsum(t.vars, body))
+    if v.func == "SUM" and not any(value_kind(x) in ("int", "num") for x in (v.arg, chosen)):
+        return None
+    cond = exists_formula(_sum_of(parts), ctx)
+    return simplify_value(Ite(cond, chosen, Lit(None, value_kind(chosen))), ctx)
+
+
+def _extremum_of_extrema(v: Agg, terms: list, w: SVar):
+    """``MIN`` over per-group ``MIN`` values is the ``MIN`` over the union of the groups (likewise ``MAX``).
+
+    The bag is ``Σ g. Q(g)·[w ≡ MIN(w' | W_g(w'))]`` for scalar variables ``g`` (the groups). Every
+    value of every group ``W_g`` is at least that group's minimum, and the minimum is itself a value of the
+    group, so the minimum of the group minima is the minimum over all the values of the groups that satisfy
+    ``Q``; and the group minima are NULL only for groups without a non-NULL value. Only the set of values
+    matters to ``MIN``, so the result is ``MIN(w' | Σ g. Q(g)·W_g(w'))``, a bag whose multiplicities are
+    not the aggregates' (the inner multiplicities are summed with ``Q``)."""
+
+    from .ir import nadd, nsum, nmul, rename_bound, fresh_id
+
+    if v.func not in ("MIN", "MAX"):
+        return None
+    w2 = SVar(fresh_id(), None)
+    parts = []
+    for t in terms:
+        if t.coef <= 0 or any(isinstance(x, TVar) for x in t.vars) or not all(isinstance(f, NInd) for f in t.factors):
+            return None
+        conjs = [x for f in t.factors for x in _conjuncts(f.f)]
+        found = None
+        for c in conjs:
+            if isinstance(c, (Same,)) or (isinstance(c, Cmp) and c.op == "="):
+                for a, b in ((c.a, c.b), (c.b, c.a)):
+                    if a == Ref(w) and isinstance(b, Agg) and b.func == v.func and len(b.vars) == 1 and b.arg == Ref(b.vars[0]):
+                        found = (c, b)
+                        break
+            if found:
+                break
+        if found is None:
+            return None
+        c, inner = found
+        rest = [x for x in conjs if x is not c]
+        if w in free_vars(inner) or any(w in free_vars(x) for x in rest):
+            return None
+        fresh = rename_bound(inner)
+        body = subst(fresh.body, {fresh.vars[0]: Ref(w2)})
+        parts.append(nsum(t.vars, nmul(*[NInd(x) for x in rest], body)))
+    return Agg(v.func, False, (w2,), nadd(*parts), Ref(w2))
+
+
+def _sum_of(parts):
+    from .ir import nadd
+
+    return nadd(*parts)
 
 
 def _mul(a, b):
