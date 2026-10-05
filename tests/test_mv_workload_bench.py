@@ -6,6 +6,7 @@ download is not possible. ``FLOORS`` only ever go up.
 """
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -67,7 +68,7 @@ FLOORS = {"job_sample_rewritten": 20, "sample": 24}
 
 def _run(tracks, sample=FLOORS["sample"]):
     try:
-        return bench.run_workload("job", None, sample, 6, 1, False, tracks)
+        return bench.run_workload("job", None, sample, 6, int(os.environ.get("KUMOSQL_EVAL_JOBS", "1")), False, tracks)
     except OSError as error:
         pytest.skip(f"benchmark data not available: {error}")
 
@@ -88,3 +89,20 @@ def test_job_full_workload():
     assert report["tracks"]["mined"]["all"]["rewritten"] >= 108
     assert report["tracks"]["mined"]["held_out"]["rewritten"] >= 12
     assert report["tracks"]["given"]["all"]["rewritten"] >= 90
+
+
+def test_parallel_query_batches_preserve_serial_verdicts():
+    from kumosql.random_check import Column, Schema, Table
+    schema = Schema([Table("t", [Column("id", "int"), Column("x", "int")])])
+    views = [{"name": "view0", "sql": "SELECT id, x FROM t", "tables": ["t"]}]
+    tasks = [{"id": str(i), "sql": sql, "held_out": bool(i % 2),
+              "schema": schema, "views": views, "track": "mined", "baseline": False}
+             for i, sql in enumerate(["SELECT id FROM t", "SELECT x FROM t", "SELECT id, x FROM t"])]
+    serial = bench.run_tasks(tasks, 1)
+    parallel = bench.run_tasks(tasks, 2)
+    for records in (serial, parallel):
+        for record in records:
+            record.pop("seconds")
+    assert parallel == serial
+    assert [r["id"] for r in parallel] == ["0", "1", "2"]
+    assert all(r["status"] == "rewritten" and r["check"] == "verified" for r in parallel)

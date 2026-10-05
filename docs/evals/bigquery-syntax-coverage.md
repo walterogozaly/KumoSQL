@@ -41,7 +41,7 @@ python tools/bq_syntax_coverage.py --markdown out.md       # the table below
 python tools/bq_dry_run_manifest.py --project kumosql      # free dry runs; needs BQ_ACCESS_TOKEN or ADC
 ```
 
-After a change that closes (or opens) a gap, run `python tools/bq_syntax_coverage.py --update-known-gaps` under each supported sqlglot version (CI tests 26.0.0 and the latest) and delete the entries that now pass.
+After a change that closes (or opens) a gap, run `python tools/bq_syntax_coverage.py --update-known-gaps` under the supported sqlglot 30.21.0 version (routine CI uses its matching compiled build) and delete the entries that now pass.
 
 See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrites of GoogleSQL compliance queries and BigQuery edge cases and compares results.
 
@@ -80,7 +80,7 @@ See also [the behaviour eval](bigquery-behavior-eval.md), which executes rewrite
 
 ## Gaps that are not fixed here
 
-- **sqlglot** keeps procedural statements (`DECLARE`, `IF`, `LOOP`, `BEGIN ... END`, `CALL`, `EXECUTE IMMEDIATE`) and many `ALTER`/`DROP`/`CREATE` forms (reservations, indexes, aggregate and remote functions) as opaque commands, and cannot parse `LOAD DATA`, `CHANGES`/`APPENDS`, `UNION ... CORRESPONDING` and some pipe operators. KumoSQL leaves such statements untouched and says so. Which cases fail differs between sqlglot 26.0.0 and the latest, so `known_gaps.json` holds the union of both.
+- **sqlglot** keeps procedural statements (`DECLARE`, `IF`, `LOOP`, `BEGIN ... END`, `CALL`, `EXECUTE IMMEDIATE`) and many `ALTER`/`DROP`/`CREATE` forms (reservations, indexes, aggregate and remote functions) as opaque commands, and cannot parse `LOAD DATA`, `CHANGES`/`APPENDS`, `UNION ... CORRESPONDING` and some pipe operators. KumoSQL leaves such statements untouched and says so. The historical 26.0.0 and 30.21.0 runs found different gaps, so `known_gaps.json` still contains their union; this does not imply current support for 26.0.0.
 - **Scripts** are read by KumoSQL's own splitter ([scripts.md](../scripts.md)), so the graph reads of `MERGE`, `UPDATE`, `DELETE` and scripts work even where sqlglot's `parse` stage still lists a script case as a gap (sqlglot cannot parse `BEGIN ... END` and procedural statements). Dynamic `EXECUTE IMMEDIATE` and undefined `CALL`s stay unknown.
 - **sqlfluff** cannot parse `GRANT`/`REVOKE`, `EXPORT MODEL`, remote functions and models, property graphs, some literals and a few other statements, so they are not formatted (`parse_error`, or `statements_not_formatted` when other statements in the file are).
 - **Project layouts**: `actions.yaml` is not read (`tests/test_bq_syntax_projects.py`, as xfail). `projectSuffix`/`datasetSuffix`/`namePrefix` are applied as the compiler does, and a literal `publish(...).query(...)` in a `.js` file is read; `operate()`, `assert()` and publishes inside loops or functions are not.

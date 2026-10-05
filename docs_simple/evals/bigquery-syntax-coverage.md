@@ -12,6 +12,8 @@ This suite has small examples of BigQuery and Dataform constructs: queries, scri
 | Unsupported | The stage explicitly declined it without damaging it |
 | Fail | A crash, lost dependency, or changed meaning occurred |
 
+Use the supported SQLGlot 30.21.0 version when updating this coverage; routine testing uses its matching compiled build. Older version results in the reference are historical.
+
 Unsupported cases are recorded in `tests/fixtures/bq_syntax/known_gaps.json`. A newly unsupported case needs an explanation rather than silently disappearing.
 
 ## Why this matters
