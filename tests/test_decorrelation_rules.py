@@ -307,7 +307,7 @@ def test_existence_join_refuses_groupings_with_a_total_row():
 
 def test_same_table_follows_the_dialects_name_case():
     sql = "SELECT 1 FROM ds.T AS x WHERE EXISTS (SELECT 1 FROM ds.t AS y WHERE y.c = x.c)"
-    not_null = {"T": frozenset({"c"}), "t": frozenset({"c"})}
+    not_null = {"ds.t": frozenset({"c"})}  # declared facts name the spelling, folded to lower case
     # BigQuery table names are case-sensitive: ds.T and ds.t are two tables
     assert self_witnessed_exists(sqlglot.parse_one(sql, read="bigquery"), not_null, "bigquery") is None
     # Postgres folds unquoted names, so they are one table

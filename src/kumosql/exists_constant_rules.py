@@ -22,6 +22,7 @@ from __future__ import annotations
 from sqlglot import exp
 
 from .ast_utils import conjuncts, declared_key, is_function_table, select_sources
+from .decorrelation_rules import lift_membership_tests
 from .fk_rules import _same_table
 
 _INTEGER_TYPES = {"INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "MEDIUMINT", "INT64", "INT32", "INT16", "INT8", "HUGEINT"}
@@ -29,7 +30,8 @@ _BLOCKING = ("group", "having", "qualify", "limit", "offset", "laterals", "with"
 
 
 def exists_constant_rules(select: exp.Select, schema, not_null, foreign_keys, types) -> exp.Select | None:
-    return _drop_witnessed_exists(select, schema, not_null, foreign_keys) or _fix_correlations(select, schema, types)
+    # the membership lift sits here because only this hook is handed the declared types
+    return _drop_witnessed_exists(select, schema, not_null, foreign_keys) or _fix_correlations(select, schema, types) or lift_membership_tests(select, schema, None, types)
 
 
 # --- 1. witnessed by a foreign key -------------------------------------------------------------

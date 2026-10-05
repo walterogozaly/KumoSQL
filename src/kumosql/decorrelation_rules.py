@@ -303,7 +303,7 @@ def existence_joins(select: exp.Select) -> exp.Expression | None:
 def decorrelation_step(select: exp.Select, not_null: dict[str, frozenset[str]] | None = None, schema: dict[str, list[str]] | None = None, dialect: str | None = None) -> exp.Expression | None:
     """The rules above, in order, for ``algebraic_equivalence.normalize``."""
 
-    for rule in (null_comparison_filter, merge_correlated_derived, existence_joins, push_filter_to_lateral, distinct_lateral_to_in, one_row_joins, single_value_scalar, lambda sel: self_witnessed_exists(sel, not_null, dialect), lambda sel: self_domain_join(sel, not_null, dialect), lambda sel: lift_membership_tests(sel, schema, dialect), lambda sel: drop_implied_membership(sel, dialect), extreme_of_top_rows):
+    for rule in (null_comparison_filter, merge_correlated_derived, existence_joins, push_filter_to_lateral, distinct_lateral_to_in, one_row_joins, single_value_scalar, lambda sel: self_witnessed_exists(sel, not_null, dialect), lambda sel: self_domain_join(sel, not_null, dialect), lambda sel: drop_implied_membership(sel, dialect), extreme_of_top_rows):
         rewritten = rule(select)
         if rewritten is not None:
             return rewritten
@@ -658,7 +658,7 @@ def _closed(node: exp.Expression, schema: dict[str, list[str]] | None) -> bool:
     return True
 
 
-def lift_membership_tests(select: exp.Select, schema: dict[str, list[str]] | None, dialect: str | None = None) -> exp.Expression | None:
+def lift_membership_tests(select: exp.Select, schema: dict[str, list[str]] | None, dialect: str | None = None, types: dict[str, dict[str, str]] | None = None) -> exp.Expression | None:
     """``x IN (SELECT c FROM t WHERE p AND c IN q AND NOT c IN r)`` is ``x IN (SELECT c FROM t WHERE p) AND x IN q AND NOT x IN r``.
 
     The inner tests read only the column that ``IN`` compares, so for a row with ``c = x`` they are
@@ -666,11 +666,12 @@ def lift_membership_tests(select: exp.Select, schema: dict[str, list[str]] | Non
     conjunct of the ``WHERE`` is rewritten, where FALSE and NULL both drop the row; the lifted tests
     may read no column of the query (uncorrelated subqueries and constants).
 
-    ``c`` and ``x`` must be the same column of the same table, so they have one declared type. ``IN`` compares
-    an INT64 with a FLOAT64 as doubles, and the tests are written for ``c``: ``FLOAT64 f IN (SELECT w .. WHERE
-    w = 9007199254740993)`` finds no row when the table holds ``9007199254740992`` (the literal is not that
-    integer), but ``f IN (SELECT w ..) AND f = 9007199254740993`` compares the literal as a double and does.
-    No types reach this rule, so it lifts only when the two sides cannot differ in type.
+    With declared ``types``, ``c`` and ``x`` must be columns of one declared type (or the same column of the same
+    table). ``IN`` compares an INT64 with a FLOAT64 as doubles, and the tests are written for ``c``:
+    ``FLOAT64 f IN (SELECT w .. WHERE w = 9007199254740993)`` finds no row when the table holds
+    ``9007199254740992`` (the literal is not that integer), but ``f IN (SELECT w ..) AND f = 9007199254740993``
+    compares the literal as a double and does. Without types every number is one exact rational, as everywhere
+    else in the untyped reading, and the tests move freely.
     """
 
     where = select.args.get("where")
@@ -698,8 +699,7 @@ def lift_membership_tests(select: exp.Select, schema: dict[str, list[str]] | Non
         outer = part.this
         while isinstance(outer, exp.Paren):
             outer = outer.this
-        read = _base_column(select, outer) if isinstance(outer, exp.Column) else None
-        if read is None or read[1] != name or not same_table(read[0], sources[0], dialect):
+        if types and not _one_type(select, outer, sources[0], name, types, dialect):
             continue
 
         def is_output(column: exp.Column) -> bool:
@@ -740,6 +740,19 @@ def lift_membership_tests(select: exp.Select, schema: dict[str, list[str]] | Non
         select.set("where", exp.Where(this=_and_all(new_parts)))
         return select
     return None
+
+
+def _one_type(select: exp.Select, outer: exp.Expression, table: exp.Table, name: str, types: dict[str, dict[str, str]], dialect: str | None) -> bool:
+    """Whether ``outer`` is a column of ``select`` with the declared type of column ``name`` of ``table``."""
+
+    read = _base_column(select, outer) if isinstance(outer, exp.Column) else None
+    if read is None:
+        return False
+    if read[1] == name and same_table(read[0], table, dialect):
+        return True
+    outer_type = (types.get(declared_key(read[0])) or {}).get(read[1])
+    inner_type = (types.get(declared_key(table)) or {}).get(name)
+    return bool(outer_type) and bool(inner_type) and str(outer_type).upper() == str(inner_type).upper()
 
 
 def _membership_source(part: exp.Expression) -> tuple[str, exp.Table, str, bool] | None:

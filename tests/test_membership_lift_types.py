@@ -1,11 +1,12 @@
-"""Lifting a nested membership test out of ``x IN (SELECT c ..)`` needs ``x`` and ``c`` to have one type.
+"""Lifting a nested membership test out of ``x IN (SELECT c ..)`` needs ``x`` and ``c`` to have one declared type.
 
 ``x IN (SELECT c FROM t WHERE p AND c IN q)`` was read as ``x IN (SELECT c FROM t WHERE p) AND x IN q``: the tests
 written for ``c`` moved to ``x``. They are the same tests only while ``x`` and ``c`` agree on the type: ``IN``
 compares a FLOAT64 with an INT64 as doubles, so an integer test (``c = 9007199254740993``) still holds exactly
 for ``c`` but, written for the double ``x``, also accepts the neighbouring integer ``9007199254740992``.
-DuckDB, with the optimizer on and off, returns different rows for the pair below. The near miss lifts the same
-tests off the same column of the same table, where the type cannot differ.
+DuckDB, with the optimizer on and off, returns different rows for the pair below. The near misses lift the same
+tests between columns of one declared type, and when no types are declared (the untyped reading, where every number is
+one exact rational).
 """
 
 from collections import Counter
@@ -31,12 +32,12 @@ DDL = [
 ]
 
 
-def prove(left, right):
+def prove(left, right, types=TYPES):
     return prove_equivalent_algebraic(
         left,
         right,
         schema=COLUMNS,
-        types=TYPES,
+        types=types,
         constraints={name: TableConstraints() for name in COLUMNS},
         compare_names=False,
         dialect="bigquery",
@@ -64,6 +65,19 @@ def test_a_nested_test_does_not_move_to_a_column_of_another_table():
     assert not prove(left, right)
     (off_left, on_left), (off_right, on_right) = rows(left), rows(right)
     assert off_left != off_right and on_left != on_right
+
+
+def test_a_test_moves_between_columns_of_one_declared_type():
+    left = "SELECT t.id FROM t WHERE t.x IN (SELECT u.w FROM u WHERE u.w > 0 AND u.w IN (SELECT p.id FROM p))"
+    right = "SELECT t.id FROM t WHERE t.x IN (SELECT u.w FROM u WHERE u.w > 0) AND t.x IN (SELECT p.id FROM p)"
+    assert prove(left, right)
+    assert rows(left)[0] == rows(right)[0]
+
+
+def test_without_declared_types_the_test_still_moves():
+    left = "SELECT t.id FROM t WHERE t.f IN (SELECT u.w FROM u WHERE u.w IN (SELECT p.id FROM p))"
+    right = "SELECT t.id FROM t WHERE t.f IN (SELECT u.w FROM u) AND t.f IN (SELECT p.id FROM p)"
+    assert prove(left, right, types=None)
 
 
 def test_the_same_column_of_the_same_table_still_lifts():
