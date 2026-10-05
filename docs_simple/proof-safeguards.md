@@ -16,6 +16,10 @@ On its first run the checker caught a real mistake: `inline_single_use_ctes` rep
 
 Two more cleanups are checked the same way. Removing parentheses is accepted only if the query still groups every operator exactly as before, so `(a OR b) AND c` can never quietly become `a OR b AND c`. Removing `DISTINCT` is accepted only if the query already has a plain `GROUP BY` and every grouping column is in the output, so every row is already unique.
 
+## PIVOT and UNPIVOT
+
+`PIVOT` turns row values into columns and `UNPIVOT` the other way, so the result has different columns and a different number of rows than the table it reads. The algebraic prover did not read them, and several of its rewrites looked straight through a derived table that carried one: a pivoted query was treated as the plain query underneath, so it was called equal to it, to the same pivot over other values, and to an `UNPIVOT` without the `LIMIT` that hid half of its rows. The provers now decline any query with a `PIVOT` or `UNPIVOT`, as they already do for time travel and sampling; a pivot written with `CASE` is still proven. The limit: this is a refusal, not a model, so a rewrite that only touches a pivoted query is reported as unproven. Details in the [full reference](../docs/proof-safeguards.md#pivot-and-unpivot).
+
 ## Qualifying columns
 
 `qualify_columns` writes `o.id` in place of a bare `id` when `id` belongs to the table `o`. Picking the owner is easy to get wrong: a name can be a column of two tables, a nickname the query gave to a column (`SELECT x AS y ... GROUP BY y` means the nickname, not some table's `y`), a field inside a struct, or a column of the outer query. If the rule and the prover made the same wrong pick, both would agree on a query that reads a different column.

@@ -76,6 +76,10 @@ Both texts are printed and read once by sqlglot before they are compared, becaus
 
 After the fixes the checker accepts 2,506 changed statements of the rule and 2,441 lifts of the prover, and refuses none. The corpora's queries were read while fixing, so any eval over them is tuned on test for this change, though the fixes are general.
 
+## PIVOT and UNPIVOT
+
+Neither prover reads `PIVOT` or `UNPIVOT`, and rewrites that look through a derived table (`_peel_star_wrappers`, `_expand_stars`, `_fold_filter_into_grouping`, `trim_redundant_row_clauses`) dropped them: `SELECT * FROM (SELECT y, x FROM t) PIVOT (SUM(x) FOR y IN (1, 2))` normalized to `SELECT y, x FROM t` and was proven equal to it, to the same pivot over other values, and (with a `LIMIT 1` that cut its two rows) to an `UNPIVOT` without the `LIMIT`. `ast_utils.check_modeled` now declines any table or derived table that carries a pivot, as it does the other table modifiers (`FOR SYSTEM_TIME AS OF`, `TABLESAMPLE`, `WITH OFFSET`). A pivot written with `CASE` stays modeled. Tests: `tests/test_soundness_pivot_derived.py`.
+
 ## Column qualification
 
 `qualify_columns` rewrites `SELECT id FROM o JOIN c ON ...` to `SELECT o.id ...`. Which FROM item owns a bare column is a decision the rule makes and the algebraic and SMT provers make again when they resolve a bare column with a schema, so a wrong owner, a select alias qualified as if it were a table column, or a name two sources share could be agreed on by both. (The structural prover's `_prepare_query` never qualifies a column, so it has no transition to record; the algebraic and SMT provers' own resolution is not re-derived, and the rule's step is what is checked.) `proof_qualify` re-derives the claim from the step's before and after text and imports no rule, normalizer, lifter or prover (`proof_steps` record types and `proof_syntax._reparse` only). Assumptions recorded: `only_qualifiers_added`, `qualifier_names_the_only_readable_source_with_the_column`, `source_columns_known_exactly`, `output_names_and_value_names_stay_bare`, `supplied_table_columns_complete_and_input_valid`.

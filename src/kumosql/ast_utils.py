@@ -214,6 +214,8 @@ _UNMODELED_ARGS = (
     (exp.Table, "only"),
     (exp.Table, "pattern"),
     (exp.Table, "ordinality"),
+    (exp.Table, "pivots"),  # PIVOT and UNPIVOT change the relation's columns and rows; the rewrites drop them from a derived table
+    (exp.Subquery, "pivots"),
 )
 
 
