@@ -29,12 +29,17 @@ from .scripts import block_statements, script_skeleton
 from .dryrun import Transport, check_rewrite
 from .engine import RewriteRule, RuleDiagnostic, RuleOutput, available_rules, get_rule
 from .equivalence import prove_equivalent
+from .input_validity import invalid_input_reason
+from .type_names import invalid_type_name
 from .layout_equivalence import created_function_calls, layout_only_change, touching_literal_chunks
 from . import prover_context
 from .smt_equivalence import SmtStatus, prove_equivalent_smt
 from .sqlx import looks_like_sqlx, mask_sqlx_by_content, split_sqlx_sections
 from .sqlx_fragments import dynamic_sentinels, holds_dynamic_fragment
-from .proof_steps import PREDICATE_FAMILY, RewriteStep, StepCheck, check_predicate_transition, same_tree
+from .proof_qualify import QUALIFY_FAMILY
+from .proof_format import FORMAT_FAMILY
+from .proof_registry import FAMILIES, RULE_FAMILIES
+from .proof_steps import RewriteStep, StepCheck, same_tree
 
 # Import built-in rules so they are registered.
 from . import cleanup as _cleanup  # noqa: F401
@@ -46,10 +51,10 @@ from . import qualify_columns as _qualify_columns  # noqa: F401
 
 
 #: Rules whose every changed statement must also pass a checker that shares no code with the rule or the
-#: prover (``proof_steps``). The table belongs to this acceptance layer, keyed by rule name, so a rule (or an
+#: prover (``proof_registry``). The table belongs to this acceptance layer, keyed by rule name, so a rule (or an
 #: override passed to ``apply_rule``) cannot opt out. Such a step is accepted only if both the prover and the
 #: independent checker accept it.
-INDEPENDENT_CHECK_FAMILIES = {"remove_trivial_predicates": PREDICATE_FAMILY}
+INDEPENDENT_CHECK_FAMILIES = RULE_FAMILIES
 INDEPENDENT_CHECK = "independent_check"
 
 
@@ -192,6 +197,26 @@ def _lossy_types(query: exp.Expression) -> str | None:
     return None
 
 
+def _known_columns(statement: exp.Expression) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """The columns the loaded project and saved catalog give the physical tables a statement reads.
+
+    The qualification check cannot learn a table's columns from the SQL, so the acceptance layer supplies them
+    (catalog data, not decision code): each table the statement names, under its lower-case dotted name.
+    """
+
+    try:
+        columns = prover_context.current_schema().columns
+    except Exception:  # noqa: BLE001 - no schema means no known tables, and the check then refuses plain tables
+        return ()
+    found: dict[str, tuple[str, ...]] = {}
+    for table in statement.find_all(exp.Table):
+        parts = [p.name.lower() for p in (table.args.get("catalog"), table.args.get("db"), table.this) if p is not None and p.name]
+        key = ".".join(parts)
+        if key in columns:
+            found[key] = tuple(str(column).lower() for column in columns[key])
+    return tuple(sorted(found.items()))
+
+
 def _independent_checks(
     left: list[exp.Expression],
     right: list[exp.Expression],
@@ -202,18 +227,44 @@ def _independent_checks(
 ) -> list[str]:
     """Run the independent checker on every changed statement pair; the problems it found."""
 
+    registered = FAMILIES[family]
     problems: list[str] = []
     for index, (old, new) in enumerate(zip(left, right)):
         if same_tree(old, new):
             continue
         step = RewriteStep(
-            rule, family, index, old.sql(dialect="bigquery"), new.sql(dialect="bigquery"), section_index=section_index
+            rule, family, index, old.sql(dialect="bigquery"), new.sql(dialect="bigquery"),
+            registered.assumptions, section_index,
+            _known_columns(old) if family == QUALIFY_FAMILY else (),
         )
-        check = check_predicate_transition(step, old.copy(), new.copy())
+        check = registered.check(step, old.copy(), new.copy())
         step_checks.append(check)
         if not check.accepted:
-            problems.append(f"statement {index}: the independent predicate check refused the change: {check.reason}")
+            problems.append(f"statement {index}: the independent {registered.label} check refused the change: {check.reason}")
     return problems
+
+
+def _layout_check(
+    before: str,
+    after: str,
+    rule: str,
+    family: str,
+    section_index: int,
+    step_checks: list[StepCheck],
+) -> list[str]:
+    """Run the independent layout checker on the whole before and after text; the problems it found.
+
+    A formatting step is not a change of any statement's tree, so it is checked from the two texts, before any
+    layout shortcut can accept it.
+    """
+
+    registered = FAMILIES[family]
+    step = RewriteStep(rule, family, 0, before, after, registered.assumptions, section_index)
+    check = registered.check(step, exp.Placeholder(), exp.Placeholder())
+    step_checks.append(check)
+    if check.accepted:
+        return []
+    return [f"the independent {registered.label} check refused the change: {check.reason}"]
 
 
 def _verify_sql(
@@ -224,6 +275,11 @@ def _verify_sql(
     dynamic: frozenset[str] = frozenset(),
     independent: tuple[str, str, int, list[StepCheck]] | None = None,
 ) -> tuple[bool, list[str]]:
+    if independent is not None and independent[1] == FORMAT_FAMILY:
+        layout_problems = _layout_check(before, after, *independent)
+        if layout_problems:
+            return False, layout_problems
+        independent = None  # the statements are compared by the shortcuts and the prover below
     if layout_only_change(before, after):
         if before != after and any(sentinel in before or sentinel in after for sentinel in dynamic):
             # Layout in the template is not layout in the compiled SQL: an expansion can end in a line
@@ -237,6 +293,18 @@ def _verify_sql(
         return True, []
     if touching_literal_chunks(before) or touching_literal_chunks(after):
         return False, ["two string literals touch ('a''b'); GoogleSQL needs whitespace or a comment between them"]
+    if any(before.count(sentinel) != after.count(sentinel) for sentinel in dynamic):
+        # A Dataform expression dropped or added with a comment. sqlglot 26 drops a comment at the end of a
+        # BigQuery statement from the parse tree, so the statements below would compare equal without it.
+        return False, [
+            "a Dataform expression other than ref() or self() was dropped, added or repeated; "
+            "compile the SQLX to prove a change to this statement"
+        ]
+    unknown_type = invalid_type_name(before) or invalid_type_name(after)
+    if unknown_type:
+        # The BigQuery printer writes FLOAT as FLOAT64, INT32 as INT64 and VARCHAR as STRING, so both sides of a
+        # comparison would read the same; BigQuery rejects the name and there is nothing to preserve.
+        return False, [f"the query would not run on BigQuery: {unknown_type}"]
     calls = created_function_calls(before), created_function_calls(after)
     if calls[0] is None or calls[0] != calls[1]:
         # sqlglot prints `abs(1)` and `ABS(1)` alike, but a script can create both as temporary functions.
@@ -285,6 +353,11 @@ def _verify_sql(
         old_sql = old_query.sql(dialect="bigquery")
         new_sql = new_query.sql(dialect="bigquery")
         if old_sql == new_sql:
+            continue
+        invalid = invalid_input_reason(old_query) or invalid_input_reason(new_query)
+        if invalid:
+            # Nothing to preserve: BigQuery would reject the statement, so no prover's agreement is evidence.
+            problems.append(f"statement {index}: the query would not run on BigQuery: {invalid}")
             continue
         # The prover compares result bags; a rewrite must also keep ordering.
         if _order_sql(old_query) != _order_sql(new_query):
@@ -525,16 +598,42 @@ def _verify_rewrite(
     )
 
 
+RECOVERED_PARSE_CHECK = "recovered_parse"
+
+
+def _without_unchanged_trust(verification: Verification, recovered: bool) -> Verification:
+    """Withdraw the ``unchanged`` label from a result whose input only parsed in recovery mode.
+
+    Recovery keeps valid BigQuery that sqlglot cannot parse strictly, but it also accepts truncated or
+    trailing-garbage input (``WHERE 1 =``). A rule that never changed such an input has not shown it is
+    SQL, so "the output is identical to the input" must not read as trusted.
+    """
+
+    if not recovered or verification.status is not VerificationStatus.UNCHANGED:
+        return verification
+    detail = "Strict BigQuery parsing failed and the statements were read in sqlglot recovery mode."
+    return Verification(
+        VerificationStatus.UNPROVEN,
+        "the output is identical to the input, but the input only parsed in recovery mode and may not be valid SQL",
+        (detail,),
+        verification.checks + (VerificationCheck(RECOVERED_PARSE_CHECK, "failed", detail),),
+        verification.proof_checks,
+    )
+
+
 def _result(rule_name: str, sql: str, output: RuleOutput) -> RewriteResult:
     failure_details = tuple(
         f"{diagnostic.code}: {diagnostic.message}" for diagnostic in output.diagnostics
     )
-    verification = _verify_rewrite(
-        sql,
-        output.sql,
-        rewrite_succeeded=output.success,
-        failure_details=failure_details,
-        rule=rule_name,
+    verification = _without_unchanged_trust(
+        _verify_rewrite(
+            sql,
+            output.sql,
+            rewrite_succeeded=output.success,
+            failure_details=failure_details,
+            rule=rule_name,
+        ),
+        any(diagnostic.code == "recovered_parse" for diagnostic in output.diagnostics),
     )
     return RewriteResult(
         rule=rule_name,
@@ -702,6 +801,10 @@ def apply_rules(
                 base.details,
                 step_checks + base.checks,
             )
+    verification = _without_unchanged_trust(
+        verification,
+        any(diagnostic.code == "recovered_parse" for step in steps for diagnostic in step.diagnostics),
+    )
     return PipelineResult(sql, current, tuple(steps), verification)
 
 

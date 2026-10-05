@@ -10,6 +10,7 @@ unoptimized plan agrees and neither query depends on row order.
     python tools/proof_recheck.py --list
     python tools/proof_recheck.py qed-calcite --jobs 4 --out proof-recheck
     python tools/proof_recheck.py qed-calcite --pairs testAggregateMerge --budget 20000
+    python tools/proof_recheck.py qed-calcite --since old-run --out new-run    # only what the old run did not settle
 
 Each eval writes ``<out>/<eval>.jsonl``, one record per pair (``verdict`` is ``survived``, ``differs``,
 ``not-proven``, ``unrunnable``, ``timeout`` or ``search-error``); a rerun skips the pairs already
@@ -71,7 +72,8 @@ def _work(job: tuple) -> dict:
     adapter = _ADAPTERS[name]
     start = time.time()
     signal.signal(signal.SIGALRM, _alarm)
-    signal.alarm(int(options["seconds"] * 2 + options["prove_seconds"]))
+    # Repeating timer: an exception raised inside a destructor (z3's __del__) is swallowed, so one alarm can be lost.
+    signal.setitimer(signal.ITIMER_REAL, int(options["seconds"] * 2 + options["prove_seconds"]), 5)
     try:
         case = adapter.case(item)
         if case is None:
@@ -90,7 +92,7 @@ def _work(job: tuple) -> dict:
     except Exception as error:
         return {"eval": name, "pair": item["pair"], "verdict": "search-error", "error": f"{type(error).__name__}: {error}"[:400]}
     finally:
-        signal.alarm(0)
+        signal.setitimer(signal.ITIMER_REAL, 0)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -108,6 +110,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--every", type=int, default=1, help="run every n-th pair")
     parser.add_argument("--fresh", action="store_true", help="ignore records already written")
+    parser.add_argument(
+        "--since",
+        default="",
+        help="folder of an earlier run: skip pairs it already re-checked (survived or differs) and run only the rest "
+        "(pairs it did not prove then, timeouts, unrunnable ones and new pairs)",
+    )
     args = parser.parse_args(argv)
 
     registry = adapters()
@@ -131,6 +139,14 @@ def main(argv: list[str] | None = None) -> int:
         done = set()
         if path.exists() and not args.fresh and not args.pairs:
             done = {json.loads(line)["pair"] for line in path.read_text(encoding="utf-8").splitlines() if line.strip()}
+        if args.since:
+            earlier = Path(args.since) / f"{name}.jsonl"
+            if earlier.exists():
+                done |= {
+                    record["pair"]
+                    for record in map(json.loads, filter(str.strip, earlier.read_text(encoding="utf-8").splitlines()))
+                    if record["verdict"] in ("survived", "differs")
+                }
         todo = [i for i in items if i["pair"] not in done]
         print(f"{name}: {len(items)} pairs, {len(todo)} to run", flush=True)
         counts: Counter = Counter()

@@ -6,6 +6,8 @@ are only used in searched CASE WHEN, where FALSE and UNKNOWN both skip an arm.
 
 from sqlglot import exp
 
+from .ast_utils import extended_grouping
+
 
 def fold_grouped_count_cases(tree, not_null):
     for select in tree.find_all(exp.Select):
@@ -19,7 +21,7 @@ def fold_grouped_count_cases(tree, not_null):
             group = inner.args.get("group")
             base = inner.args.get("from_") or inner.args.get("from")
             if (group is None or not group.expressions or any(not isinstance(k, exp.Column) for k in group.expressions)
-                    or any(group.args.get(k) for k in ("grouping_sets", "rollup", "cube", "totals"))
+                    or extended_grouping(group)
                     or inner.args.get("joins") or base is None or not isinstance(base.this, exp.Table)):
                 continue
             table = base.this

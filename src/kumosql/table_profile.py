@@ -23,6 +23,7 @@ from typing import Any, Mapping, Sequence
 
 from sqlglot import exp
 
+from .ast_utils import extended_grouping, is_aggregate, star_modifier
 from .output_properties import set_returning_item
 from .pipeline import ColumnRef, Model, Pipeline, Target, _parse_script, _table_name_for_schema
 from .set_operations import is_by_name
@@ -422,7 +423,7 @@ def _has_aggregate(expr: exp.Expression) -> bool:
         node = stack.pop()
         if isinstance(node, (exp.Window, exp.Query)):
             continue
-        if isinstance(node, exp.AggFunc):
+        if is_aggregate(node):
             return True
         stack.extend(node.iter_expressions())
     return False
@@ -644,14 +645,12 @@ class _Profiler:
         stars = [expr for _, expr in ctx.projs if _is_star(expr)]
         for star in stars:
             qualifier = star.table.lower() if isinstance(star, exp.Column) else ""
-            excluded = {c.name.lower() for c in star.args.get("except_") or []} if isinstance(star, exp.Star) else set()
-            if name in excluded:
+            # ``t.*`` keeps its modifiers on the Star under the column, as ``*`` does on itself.
+            if star_modifier(star, "rename") or star_modifier(star, "ilike"):
+                raise _Unresolved("unexpanded_star")
+            if name in {c.name.lower() for c in star_modifier(star, "except") or []}:
                 continue
-            replaced = (
-                {a.alias.lower(): a.this for a in star.args.get("replace") or [] if isinstance(a, exp.Alias)}
-                if isinstance(star, exp.Star)
-                else {}
-            )
+            replaced = {a.alias.lower(): a.this for a in star_modifier(star, "replace") or [] if isinstance(a, exp.Alias)}
             if name in replaced:
                 return self._render_meaning(replaced[name], ctx)
             if qualifier:
@@ -767,7 +766,7 @@ class _Profiler:
             if isinstance(node, exp.Window):
                 wrapped += 1
                 return exp.Var(this="window:" + _canon_sql(node))
-            if isinstance(node, exp.AggFunc):
+            if is_aggregate(node):
                 wrapped += 1
                 collapsed = _collapse_nested(node)
                 if collapsed is not None:
@@ -872,7 +871,7 @@ class _Profiler:
         distinct = select.args.get("distinct") is not None and not select.args["distinct"].args.get("on")
         group = select.args.get("group")
         if group is not None:
-            if any(group.args.get(k) for k in ("grouping_sets", "rollup", "cube", "totals")):
+            if extended_grouping(group):
                 return Grain(reason="grouping_sets")
             if group.args.get("all"):
                 exprs = [e for _, e in ctx.projs if not _has_aggregate(e) and not _is_star(e)]
@@ -1005,11 +1004,12 @@ class _Profiler:
                     continue
             elif len(ctx.srcs) != 1 and column.table.lower() not in ctx.by_alias:
                 continue
-            if isinstance(proj, exp.Star):
-                if name in {c.name.lower() for c in proj.args.get("except_") or []}:
-                    continue
-                if name in {a.alias.lower() for a in proj.args.get("replace") or [] if isinstance(a, exp.Alias)}:
-                    continue
+            if star_modifier(proj, "rename") or star_modifier(proj, "ilike"):
+                continue
+            if name in {c.name.lower() for c in star_modifier(proj, "except") or []}:
+                continue
+            if name in {a.alias.lower() for a in star_modifier(proj, "replace") or [] if isinstance(a, exp.Alias)}:
+                continue
             return column.name
         return None
 

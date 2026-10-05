@@ -19,19 +19,21 @@ from kumosql.smt_equivalence import prove_equivalent_smt, SmtStatus
 DIALECTS = ("mysql", "duckdb", "bigquery", "postgres")
 PROVERS = (prove_equivalent_algebraic, prove_equivalent_smt)
 
-# (left, right): the comparison reads differently on the engines, so neither prover may call the pair equivalent
-DECLINED = [
+# (left, right): the comparison reads differently on the engines, so neither prover may call the pair equivalent.
+# An exact integer string against an integer is read as a number on MySQL, DuckDB and PostgreSQL (see FOLDED) and
+# still declined on BigQuery, where it is a type error.
+BIGQUERY_DECLINED = [
     ("SELECT t.a FROM t WHERE '2' <> 2", "SELECT t.a FROM t"),
     ("SELECT t.a FROM t WHERE '2' = 2", "SELECT t.a FROM t WHERE FALSE"),
     ("SELECT t.a FROM t WHERE '2' < 3", "SELECT t.a FROM t"),
     ("SELECT t.a FROM t WHERE 2 <> '2'", "SELECT t.a FROM t"),
+]
+DECLINED = [
     ("SELECT t.a FROM t WHERE '2' BETWEEN 1 AND 3", "SELECT t.a FROM t"),
     ("SELECT t.a FROM t WHERE '2' IN (2, 3)", "SELECT t.a FROM t"),
-    ("SELECT t.a FROM t WHERE CASE WHEN '2' = 2 THEN 1 ELSE 0 END = 0", "SELECT t.a FROM t"),
+    ("SELECT t.a FROM t WHERE CASE WHEN '2.5' = 2 THEN 1 ELSE 0 END = 0", "SELECT t.a FROM t"),
     ("SELECT t.a FROM t WHERE CASE '2' WHEN 2 THEN FALSE ELSE TRUE END", "SELECT t.a FROM t"),
     ("SELECT t.a FROM t WHERE NULLIF('2', 2) IS NULL", "SELECT t.a FROM t WHERE FALSE"),
-    ("SELECT t.a FROM t WHERE '2' <> 1 + 1", "SELECT t.a FROM t"),
-    ("SELECT t.a FROM t WHERE '2' <> CAST(2 AS INT)", "SELECT t.a FROM t"),
     # the same column against a string and a number: 'abc' reads as 0 on MySQL, so a = 0 satisfies both
     ("SELECT t.a FROM t WHERE t.a = 'abc' AND t.a = 0", "SELECT t.a FROM t WHERE FALSE"),
     ("SELECT t.a FROM t WHERE t.a = '2.0' AND t.a = 2", "SELECT t.a FROM t WHERE FALSE"),
@@ -43,18 +45,29 @@ PROVEN = [
     ("SELECT t.a FROM t WHERE '2' <> '2'", "SELECT t.a FROM t WHERE FALSE"),
     ("SELECT t.a FROM t WHERE '2' = '3'", "SELECT t.a FROM t WHERE FALSE"),
     ("SELECT t.a FROM t WHERE 2 = 2", "SELECT t.a FROM t"),
-    ("SELECT t.a FROM t WHERE t.a = 'x' AND t.a = 'y'", "SELECT t.a FROM t WHERE FALSE"),
     ("SELECT t.a FROM t WHERE t.a = 1 AND t.a = 2", "SELECT t.a FROM t WHERE FALSE"),
 ]
+
+# two different strings against one untyped column: proven where the column must be text, not on MySQL, where an integer
+# column reads both as 0 (tests/test_untyped_string_columns.py)
+TEXT_ONLY = [("SELECT t.a FROM t WHERE t.a = 'x' AND t.a = 'y'", "SELECT t.a FROM t WHERE FALSE")]
 
 
 @pytest.mark.parametrize("dialect", DIALECTS)
 @pytest.mark.parametrize("prover", PROVERS)
-@pytest.mark.parametrize("left,right", DECLINED)
+@pytest.mark.parametrize("left,right", DECLINED + [("SELECT t.a FROM t WHERE '2' <> CAST(2 AS INT)", "SELECT t.a FROM t")])
 def test_string_versus_number_is_not_proven(prover, dialect, left, right):
     result = prover(left, right, dialect=dialect)
     assert not result.proven, (dialect, left, result.reason)
-    assert result.status is SmtStatus.NOT_PROVEN
+    if "CAST" not in left:  # a cast number is a literal's twin once folded: refuted, never proven
+        assert result.status is SmtStatus.NOT_PROVEN
+
+
+@pytest.mark.parametrize("prover", PROVERS)
+@pytest.mark.parametrize("left,right", BIGQUERY_DECLINED + [("SELECT t.a FROM t WHERE CASE WHEN '2' = 2 THEN 1 ELSE 0 END = 0", "SELECT t.a FROM t")])
+def test_bigquery_keeps_declining_a_string_against_a_number(prover, left, right):
+    result = prover(left, right, dialect="bigquery")
+    assert result.status is SmtStatus.NOT_PROVEN, (left, result.reason)
 
 
 @pytest.mark.parametrize("dialect", DIALECTS)
@@ -66,10 +79,21 @@ def test_same_kind_comparisons_stay_proven(prover, dialect, left, right):
 
 @pytest.mark.parametrize("dialect", DIALECTS)
 @pytest.mark.parametrize("prover", PROVERS)
+@pytest.mark.parametrize("left,right", TEXT_ONLY)
+def test_different_strings_against_an_untyped_column(prover, dialect, left, right):
+    assert (prover(left, right, dialect=dialect).status is SmtStatus.PROVEN_EQUIVALENT) == (dialect != "mysql")
+    assert prover(left, right, dialect=dialect, types={"t": {"a": "VARCHAR"}}).status is SmtStatus.PROVEN_EQUIVALENT
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+@pytest.mark.parametrize("prover", PROVERS)
 def test_declared_types_count(prover, dialect):
     numeric = {"t": {"a": "INT"}}
     text = {"t": {"a": "VARCHAR"}}
-    assert not prover("SELECT t.a FROM t WHERE t.a = '2' AND t.a = 3", "SELECT t.a FROM t WHERE FALSE", dialect=dialect, types=numeric).proven
+    # an exact integer string is read as a number outside BigQuery (see test_exact_integer_strings_read_as_numbers)
+    exact = prover("SELECT t.a FROM t WHERE t.a = '2' AND t.a = 3", "SELECT t.a FROM t WHERE FALSE", dialect=dialect, types=numeric).proven
+    assert exact == (dialect != "bigquery")
+    assert not prover("SELECT t.a FROM t WHERE t.a = '2.5' AND t.a = 3", "SELECT t.a FROM t WHERE FALSE", dialect=dialect, types=numeric).proven
     assert not prover("SELECT t.a FROM t WHERE t.a = 2 AND t.a = 'x'", "SELECT t.a FROM t WHERE FALSE", dialect=dialect, types=text).proven
     # the declared type of a string column agrees with a string literal
     assert prover("SELECT t.a FROM t WHERE t.a = 'x' AND t.a = 'y'", "SELECT t.a FROM t WHERE FALSE", dialect=dialect, types=text).proven
@@ -92,7 +116,7 @@ def test_converted_comparison_is_never_refuted(dialect):
     """The result of the conversion is unknown to the prover, so a model of it is not a counterexample."""
 
     result = prove_equivalent_algebraic(
-        "SELECT t.a FROM t WHERE '2' = 2", "SELECT t.a FROM t WHERE 2 = '2'", dialect=dialect, search_counterexample=True
+        "SELECT t.a FROM t WHERE '2.5' = 2", "SELECT t.a FROM t WHERE 2 = '2.5'", dialect=dialect, search_counterexample=True
     )
     assert result.status is SmtStatus.NOT_PROVEN
 

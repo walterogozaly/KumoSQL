@@ -1,20 +1,20 @@
 {
   "suite": "BigQuery real-code corpora",
   "order": 225,
-  "size": 202,
-  "score": "202 files in 8 projects: 0 failures; statements read 120/121; columns traced 1359/1371",
+  "size": 385,
+  "score": "385 files in 13 projects: 3 failures; statements read 287/294; columns traced 2481/2596",
   "metric": "Open-source Dataform projects and BigQuery SQL, copied at pinned commits. Each project is loaded whole; every file goes through the cleanup rules and the formatter. A failure is a crash, a change accepted without a proof, a changed backticked name, or a literal ref() that is not a graph edge.",
   "evidence": "executed",
-  "correctness": "0 failures; dependencies 217/217 literal ref() and config dependencies found",
+  "correctness": "3 failures; dependencies 402/405 literal ref() and config dependencies found",
   "coverage": {
-    "proven": 129,
-    "unsupported": 73
+    "proven": 236,
+    "unsupported": 149
   },
   "docs": "docs/evals/bq-real-corpora.md",
   "command": "python tools/bq_corpus_bench.py --write-results",
-  "date": "2026-10-03",
-  "performance": "63.7 s for every project and stage",
-  "caveats": "Eight projects only, chosen for licence and feature spread, not at random. dbt projects (Jinja) are left out because KumoSQL does not render Jinja. basedosdados is a 40-file sample of 536 near-identical view definitions, renamed after their folders because every file is called publish.sql. Statement and column counts cover query models; operations and generated SQL that only running JavaScript can produce are counted as gaps, not failures. No results are compared against BigQuery. A changed statement that holds a JavaScript constant (${sp.entropy}) stays unproven until the SQLX is compiled (docs/proof-safeguards.md).",
-  "held_out": "First run: two bugs found and fixed on this corpus (a long header comment hid a statement's kind, so all 40 basedosdados views were unread; a wrong count in the unparsed-operations message). The corpus is not held out.",
-  "analysis": "Files read with no blocking gap, cleaned up and formatted: 129/202. Cleanup: 199 pass, 3 unsupported; format: 202 pass. Gaps the loader reports: 59 unresolved_template, 41 external_tables, 7 parse_error, 7 unexpanded_star, 5 unparsed_operation, 2 template_columns, 1 no_query, 1 unknown_reads, 1 dynamic_config (a declaration whose schema is computed)."
+  "date": "2026-10-04",
+  "performance": "299.5 s for every project and stage",
+  "caveats": "Thirteen projects only, chosen for licence and feature spread, not at random. dbt projects (Jinja) are left out because KumoSQL does not render Jinja. basedosdados is a 40-file sample of 536 near-identical view definitions, renamed after their folders because every file is called publish.sql. bigquery-utils contributes its five view files and one of its three Dataform examples (the others hold no SQL). Statement and column counts cover query models; operations and generated SQL that only running JavaScript can produce are counted as gaps, not failures. The 3 failures are refs to tables that JavaScript publishes from a query KumoSQL does not read, so they are not graph nodes. Baseline of the five projects added last, on master before the loader fixes: 35 failures, dependencies 150/185, statements 146/169, columns 924/1,006, 99 files handled; after: 3 failures, dependencies 185/188, statements 167/173, columns 1,122/1,225, 107 files handled (marketing-jumpstart reads more but is handled in 3 files, was 6, because each model it now tells apart carries a blocking gap). Three loader bugs fixed (refs and publishes with computed datasets, a when() ending with its connective, FROM inside EXTRACT read as a table). No results are compared against BigQuery. A changed statement that holds a JavaScript constant (${sp.entropy}) stays unproven until the SQLX is compiled (docs/proof-safeguards.md).",
+  "held_out": "A fifth of the files, chosen by SHA-1 of project/path, scored apart: 35/58 handled, 1 with a failure (the five added projects: 15/28 handled, 1 with a failure; 14/28 and 6 at the baseline). Tuned on test: the three loader bugs were fixed with every file's failures in view, held-out files included. The first eight projects were never held out: two bugs were found and fixed on them at their first run.",
+  "analysis": "Files read with no blocking gap, cleaned up and formatted: 236/385. Cleanup: 379 pass, 6 unsupported; format: 385 pass. Gaps the loader reports: 68 unresolved_template, 54 dynamic_config, 49 external_tables, 25 template_columns, 22 unexpanded_star, 11 cycle, 7 parse_error, 5 unparsed_operation, 5 skipped_statements, 2 no_query, 2 unsupported_ref, 1 unknown_reads."
 }

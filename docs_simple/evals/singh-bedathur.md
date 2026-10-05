@@ -19,3 +19,5 @@ The source repository has no license file, so the query files are downloaded int
 The automated tests include a smaller fixed sample and a slow full-corpus run. Download failures can cause those tests to skip, so check the test output before treating a run as complete.
 
 The full guide provides commands, corpus details, canonicalization limits, score tables, and label comparisons. The rules were developed with available cases in view; consult its caveats before treating the percentage as unseen-case performance.
+
+The query pairs come without column types. The benchmark treats any column that a query compares with text, such as a product name compared with `'S8'`, as a text column. This matches how its counterexample search already treats those columns. Without that, the prover would decline pairs where the result depends on two different pieces of text being different, because an integer column in MySQL could read both as the same number. The score is unchanged by this. The full guide has the numbers.

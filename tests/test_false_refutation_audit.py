@@ -132,6 +132,20 @@ def test_bounded_numeric_stays_in_range_and_scale():
     assert result.status is be.BoundedStatus.DIFFERENT
 
 
+def test_bounded_declared_numeric_precision_and_scale_are_kept():
+    schema = be.BoundedSchema({"t": be.BTable("t", [be.BColumn("x", "NUMERIC(10, 2)")])})
+    # a NUMERIC(10, 2) column holds no third decimal digit, so a tenth-of-a-cent difference is no counterexample
+    result = be.check_bounded("SELECT x FROM t WHERE x * 100 <> FLOOR(x * 100)", "SELECT x FROM t WHERE FALSE", schema, rows=2, dialect="bigquery", timeout_ms=2000)
+    assert result.status is not be.BoundedStatus.DIFFERENT, result.counterexample
+    # nor reaches 1e8 (10 digits, 2 after the point)
+    result = be.check_bounded("SELECT x FROM t WHERE x >= 100000000", "SELECT x FROM t WHERE FALSE", schema, rows=2, dialect="bigquery", timeout_ms=2000)
+    assert result.status is not be.BoundedStatus.DIFFERENT, result.counterexample
+    # a difference inside the declared range is still found
+    result = be.check_bounded("SELECT x FROM t WHERE x > 0.5", "SELECT x FROM t WHERE x > 1", schema, rows=2, dialect="bigquery", timeout_ms=2000)
+    assert result.status is be.BoundedStatus.DIFFERENT
+    assert result.counterexample is not None
+
+
 @pytest.mark.parametrize("label", ["nan_eq", "nan_gt", "safe_overflow"])
 def test_direct_executed_search_does_not_refute(label):
     from kumosql.executed_refutation import search_counterexample
@@ -147,3 +161,27 @@ def test_countif_over_no_rows_is_not_a_difference():
     left, right = "SELECT COUNTIF(x > 1) AS c FROM t", "SELECT COUNT(CASE WHEN x > 1 THEN 1 END) AS c FROM t"
     assert search_counterexample(left, right, schema=COLUMNS, types=TYPES) is None
     assert endpoint(left, right, COLUMNS, {}, TYPES)["status"] != "not_equivalent"
+
+
+@pytest.mark.parametrize("sql_type", ["DATE", "DATETIME", "TIMESTAMP"])
+def test_bounded_date_key_models_stay_distinct_and_in_range(sql_type):
+    # a model value below year 1 used to be clamped to 0001-01-01, so two rows that differ only in the key's
+    # date came out equal and the counterexample repeated the primary key
+    constraints = {"t": TableConstraints(not_null=frozenset({"a", "d"}), keys=(("a", "d"),))}
+    schema = be.schema_from_prover({"t": ["a", "d", "b"]}, constraints, {"t": {"a": "INT64", "d": sql_type, "b": "INT64"}})
+
+    def check(left, right):
+        return be.check_bounded(left, right, schema, rows=2, dialect="bigquery", timeout_ms=5000)
+
+    # (a, d) is the key, so DISTINCT over it drops nothing
+    result = check("SELECT DISTINCT a, d, b FROM t", "SELECT a, d, b FROM t")
+    assert result.status is not be.BoundedStatus.DIFFERENT, result.counterexample
+    # a is only part of the key: two rows with the same a and b differ, and the witness keeps the key unique
+    result = check("SELECT DISTINCT a, b FROM t", "SELECT a, b FROM t")
+    assert result.status is be.BoundedStatus.DIFFERENT
+    keys = [(row[0], row[1]) for row in result.counterexample["t"]]
+    assert len(keys) == len(set(keys)) == 2, keys
+    # a real difference between dates is still found
+    result = check("SELECT d FROM t", f"SELECT d FROM t WHERE d > {sql_type} '2000-01-01'")
+    assert result.status is be.BoundedStatus.DIFFERENT
+    assert result.counterexample is not None

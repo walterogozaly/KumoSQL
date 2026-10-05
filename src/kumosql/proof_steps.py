@@ -65,9 +65,12 @@ class RewriteStep:
     after_sql: str
     assumptions: tuple[str, ...] = PREDICATE_ASSUMPTIONS
     section_index: int = -1
+    #: Facts the statements cannot give, supplied by the acceptance layer: each physical table's column names, as
+    #: ``(lower-case dotted table name, (column, ...))``. Only the qualification family reads them (``proof_qualify``).
+    known_columns: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     def to_json(self) -> dict[str, object]:
-        return {
+        data: dict[str, object] = {
             "rule": self.rule,
             "family": self.family,
             "statement_index": self.statement_index,
@@ -76,6 +79,9 @@ class RewriteStep:
             "after_sql": self.after_sql,
             "assumptions": list(self.assumptions),
         }
+        if self.known_columns:
+            data["known_columns"] = {table: list(columns) for table, columns in self.known_columns}
+        return data
 
 
 @dataclass(frozen=True)

@@ -11,6 +11,10 @@
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 19."
  },
+ "data/export_model::cleanup": {
+  "owner": "kumosql",
+  "reason": "recovered_parse; recovered_parse; recovered_parse; recovered_parse; recovered_parse; recovered_parse"
+ },
  "data/export_model::format": {
   "owner": "sqlfluff",
   "reason": "parse_error"
@@ -26,6 +30,10 @@
  "data/load_data::parse": {
   "owner": "sqlglot",
   "reason": "AttributeError: 'NoneType' object has no attribute 'name'"
+ },
+ "data/load_data_overwrite::cleanup": {
+  "owner": "kumosql",
+  "reason": "recovered_parse; recovered_parse; recovered_parse; recovered_parse; recovered_parse; recovered_parse"
  },
  "data/load_data_overwrite::parse": {
   "owner": "sqlglot",
@@ -251,6 +259,10 @@
   "owner": "sqlglot",
   "reason": "sqlglot keeps DROP as an opaque command"
  },
+ "ddl/undrop_schema::cleanup": {
+  "owner": "kumosql",
+  "reason": "recovered_parse; recovered_parse; recovered_parse; recovered_parse; recovered_parse; recovered_parse"
+ },
  "ddl/undrop_schema::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 16."
@@ -270,6 +282,10 @@
  "query/aggregate_where_filter::prover": {
   "owner": "prover",
   "reason": "unsupported: nondeterministic: ARRAY_AGG(first_name IGNORE NULLS)"
+ },
+ "query/anon_differential_privacy::cleanup": {
+  "owner": "kumosql",
+  "reason": "recovered_parse; recovered_parse; recovered_parse; recovered_parse; recovered_parse; recovered_parse"
  },
  "query/anon_differential_privacy::format": {
   "owner": "sqlfluff",
@@ -342,6 +358,10 @@
  "query/pipe_distinct::parse": {
   "owner": "sqlglot",
   "reason": "ParseError: Invalid expression / Unexpected token. Line 1, Col: 40."
+ },
+ "query/pipe_extend_set_drop::cleanup": {
+  "owner": "kumosql",
+  "reason": "recovered_parse; pipe_syntax_kept; recovered_parse; pipe_syntax_kept; recovered_parse; pipe_syntax_kept; recovered_parse; pipe_syntax_kept; recovered_parse; pip"
  },
  "query/pipe_extend_set_drop::parse": {
   "owner": "sqlglot",

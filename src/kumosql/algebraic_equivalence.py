@@ -33,11 +33,14 @@ import re
 
 import sqlglot
 from sqlglot import exp
-from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, parenthesize_is_operands, plain_distinct, same_table, select_sources as _sources_of, strip_positions
+from . import proof_columns
+from .ast_utils import FROM_KEY, UnmodeledConstruct, canonical_negation, check_modeled, distinct_on, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, free_reads, parenthesize_is_operands, plain_distinct, same_table, select_sources as _sources_of, star_modified, strip_positions, visible_ctes
 from .set_operations import positional_sql_pair
 from .literal_fold_rules import distribute_over_constant_union, fold_string_literals
+from .parse_check import refuse_misread_proofs
 from .solver_lock import serialized
 from .string_literals import canonical_literals, invalid_literal
+from .type_names import invalid_type_name
 from .sqlx_fragments import masked_template_problem
 
 from .eager_aggregation import flatten_grouped_join, pull_up_aggregate, unnest_grouped_source
@@ -92,7 +95,7 @@ from .set_operation_types import ASSUMPTION as SET_TYPES_ASSUMPTION, mixed_types
 from .grouped_join_facts import propagate_grouped_join_facts
 from .correlated_key_groups import expose_correlated_key_groups
 from .lateral_boolean_groups import nullable_lateral_boolean_group
-from . import string_number_compare
+from . import numeric_column_reading, string_number_compare, string_number_literals
 from .constant_correlation import propagate_constant_correlations
 from .constant_regroup_rules import collapse_constant_regroup
 from .smt_equivalence import SmtEquivalenceResult, SmtStatus, prove_equivalent_smt
@@ -753,8 +756,15 @@ def _prune_union_all(union: exp.Union, used: set[str]) -> bool:
     keep.sort(key=lambda i: names[i])  # the enclosing query reads by name, so the order is free
     if keep == list(range(width)):
         return False
-    for branch in branches:
-        branch.set("expressions", [branch.expressions[i].copy() for i in keep])
+    pruned = [[branch.expressions[i].copy() for i in keep] for branch in branches]
+    for branch, items in zip(branches, pruned):
+        if _global_aggregate(branch):
+            kept = branch.copy()
+            kept.set("expressions", [item.copy() for item in items])
+            if not _global_aggregate(kept):
+                return False  # its only aggregate would go, and its one row would become a row per input row
+    for branch, items in zip(branches, pruned):
+        branch.set("expressions", items)
     return True
 
 
@@ -1016,7 +1026,7 @@ def _merge_spj_source(select: exp.Select) -> exp.Expression | None:
                 conditions.append(join.args["on"].copy())
         if select.args.get("where") is not None:
             conditions.append(select.args["where"].this.copy())
-        select.set("from_", exp.From(this=all_items[0]))
+        select.set(FROM_KEY, exp.From(this=all_items[0]))
         select.set("joins", [exp.Join(this=i) for i in all_items[1:]] or None)
         where = _and_all([part for condition in conditions for part in _conjuncts(condition)])
         select.set("where", exp.Where(this=where) if where is not None else None)
@@ -1224,7 +1234,7 @@ def _decorrelated(inner: exp.Select, table_columns, outer_resolves):
     derived = exp.Select(
         expressions=[exp.alias_(inner_key.copy(), f"kqk{i}") for i, (inner_key, _) in enumerate(keys)] + [exp.alias_(value.copy(), "kqv")]
     )
-    derived.set("from_", exp.From(this=sources[0].copy()))
+    derived.set(FROM_KEY, exp.From(this=sources[0].copy()))
     derived.set("joins", [exp.Join(this=s.copy()) for s in sources[1:]] or None)
     if local:
         derived.set("where", exp.Where(this=_and_all([c.copy() for c in local])))
@@ -1435,7 +1445,7 @@ def _flatten_join_source(select: exp.Select) -> exp.Expression | None:
             return None
         column.replace(origin.copy() if not isinstance(origin, exp.Alias) else origin.this.copy())
     new_inner = inner.copy()
-    copy.set("from_" if "from_" in copy.args else "from", new_inner.args.get("from_") or new_inner.args.get("from"))
+    copy.set(FROM_KEY, new_inner.args.get("from_") or new_inner.args.get("from"))
     copy.set("joins", new_inner.args.get("joins"))
     return copy
 
@@ -1481,6 +1491,20 @@ def _qualify_outer_join_columns(tree: exp.Expression, schema: dict[str, list[str
                 continue
             column.set("table", exp.to_identifier(owners[name][0]))
     return tree
+
+
+def _checked_qualification(tree: exp.Expression, apply, schema: dict[str, list[str]], dialect: str, site: str) -> exp.Expression:
+    """Run a pass that writes ``a.x`` for a bare ``x`` and have ``proof_columns`` re-derive each qualifier it added.
+
+    The pass picks the owner from the columns of the sources it can see; the independent reader works from the
+    statement's text and the same supplied columns. A qualifier that names a different owner (or a bare name with
+    no single owner) declines the query, as an unmodeled construct does.
+    """
+
+    try:
+        return proof_columns.guarded_qualification(tree, apply, schema, dialect, site)
+    except proof_columns.ColumnResolutionRefused as refusal:
+        raise UnmodeledConstruct(f"independent check of column resolution: {refusal}") from None
 
 
 def _column_owners(select: exp.Select, schema: dict[str, list[str]]) -> dict[str, list[str]] | None:
@@ -2060,7 +2084,7 @@ def _wrap_outer_join_aggregate(select: exp.Select) -> exp.Expression | None:
             exp.alias_(exp.column(name, table=spelled[table]), f"c{index}") for (table, name), index in positions.items()
         ]
     )
-    inner.set("from_" if "from_" in select.args else "from", from_.copy())
+    inner.set(FROM_KEY, from_.copy())
     inner.set("joins", [j.copy() for j in joins])
     # An output that is a bare column keeps its name once the column is renamed to kqj.cN.
     select.set(
@@ -2071,7 +2095,7 @@ def _wrap_outer_join_aggregate(select: exp.Select) -> exp.Expression | None:
         column.set("table", exp.to_identifier("kqj"))
         column.set("this", exp.to_identifier(f"c{positions[key]}"))
     select.set("joins", None)
-    select.set("from_" if "from_" in select.args else "from", exp.From(this=exp.Subquery(this=inner, alias=exp.TableAlias(this=exp.to_identifier("kqj")))))
+    select.set(FROM_KEY, exp.From(this=exp.Subquery(this=inner, alias=exp.TableAlias(this=exp.to_identifier("kqj")))))
     return select
 
 
@@ -2773,7 +2797,7 @@ def _grouped_in_to_derived(tree: exp.Expression) -> exp.Expression:
             expressions=[exp.alias_(k.copy(), key_names[k.sql()]) for k in group.expressions]
             + [exp.alias_(calls[sql].copy(), name) for sql, name in aggregates.items()]
         )
-        derived.set("from_", (inner.args.get("from_") or inner.args.get("from")).copy())
+        derived.set(FROM_KEY, (inner.args.get("from_") or inner.args.get("from")).copy())
         if inner.args.get("joins"):
             derived.set("joins", [j.copy() for j in inner.args["joins"]])
         if inner.args.get("where") is not None:
@@ -2811,7 +2835,7 @@ def _wrap_window_select(select: exp.Select) -> exp.Select | None:
         return None
     alias = f"kqw{next(_WINDOW_COUNTER)}"
     outer = exp.Select(expressions=[exp.alias_(exp.column(n, table=alias), n) for n in names])
-    outer.set("from_", exp.From(this=exp.Subquery(this=select.copy(), alias=exp.TableAlias(this=exp.to_identifier(alias)))))
+    outer.set(FROM_KEY, exp.From(this=exp.Subquery(this=select.copy(), alias=exp.TableAlias(this=exp.to_identifier(alias)))))
     return outer
 
 
@@ -2880,7 +2904,7 @@ def _isolate_windows(tree: exp.Expression) -> exp.Expression:
             expressions=[exp.alias_(columns[sql].copy(), name) for sql, name in sorted(column_names.items())]
             + [exp.alias_(calls[sql].copy(), name) for sql, name in sorted(window_names.items())]
         )
-        inner.set("from_", from_.copy())
+        inner.set(FROM_KEY, from_.copy())
         if select.args.get("joins"):
             inner.set("joins", [j.copy() for j in select.args["joins"]])
         if select.args.get("where") is not None:
@@ -2891,7 +2915,7 @@ def _isolate_windows(tree: exp.Expression) -> exp.Expression:
             if isinstance(old, exp.Column) and not isinstance(new, exp.Alias):
                 outer_items[outer_items.index(new)] = exp.alias_(new, old.name)
         outer = exp.Select(expressions=outer_items)
-        outer.set("from_", exp.From(this=exp.Subquery(this=inner, alias=exp.TableAlias(this=exp.to_identifier(alias)))))
+        outer.set(FROM_KEY, exp.From(this=exp.Subquery(this=inner, alias=exp.TableAlias(this=exp.to_identifier(alias)))))
         if qualify is not None:
             named = {
                 i.alias.lower(): outer_items[n].this.copy()
@@ -2940,6 +2964,8 @@ def _peel_star_wrappers(tree: exp.Expression) -> exp.Expression:
         alias = source.alias_or_name.lower()
         if not (isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star) and item.table.lower() == alias and alias)):
             return tree
+        if star_modified(item):
+            return tree  # ``* EXCEPT / REPLACE ..`` lists other columns than ``q``
         tree = source.this.copy()
     return tree
 
@@ -3000,7 +3026,14 @@ def _inline_ctes(tree: exp.Expression) -> exp.Expression:
                     for t in owner.find_all(exp.Table)
                     if not t.db and not t.catalog and t.name.lower() == name and _declaring_cte(t, name, owner) is cte
                 ]
+                # The body's own name is the real table there (``WITH t AS (SELECT * FROM t)``); copies placed now
+                # are not revisited for it. Earlier tables of this WITH are already replaced inside the body.
+                reads = free_reads(body) - {name} if uses else set()
                 for table in uses:
+                    if reads & visible_ctes(table, owner):
+                        # A WITH nested around the use (or a later table of this WITH) defines a name the body
+                        # reads as something else, which inlining would capture.
+                        raise UnmodeledConstruct(f"WITH table {name} reads a name that a WITH around its use redefines")
                     derived = exp.Subquery(this=body.copy(), alias=exp.TableAlias(this=exp.to_identifier(table.alias or table.name)))
                     table.replace(derived)
             owner.set("with_", None)
@@ -3042,7 +3075,7 @@ def _using_to_on(tree: exp.Expression, schema: dict[str, list[str]] | None) -> e
         if from_ is None or any(k is None for k in known) or "" in aliases or len(set(aliases)) != len(aliases):
             continue
         stars = [i for i in select.expressions if isinstance(i, exp.Star) or (isinstance(i, exp.Column) and isinstance(i.this, exp.Star))]
-        if stars and (len(stars) > 1 or not isinstance(stars[0], exp.Star) or stars[0].args.get("except_") or stars[0].args.get("replace") or stars[0].args.get("rename")):
+        if stars and (len(stars) > 1 or not isinstance(stars[0], exp.Star) or star_modified(stars[0])):
             continue
         # The columns of the running result, as (name, expression) pairs, to expand a bare star.
         running = [(c, exp.column(c, table=exp.to_identifier(aliases[0]))) for c in known[0]]
@@ -4008,6 +4041,8 @@ def _select_list_in_to_exists(tree: exp.Expression, not_null: dict[str, frozense
             walker = walker.parent
         if not in_list or walker is None or not all(isinstance(left, exp.Column) for left in lefts):
             continue
+        if _global_aggregate(walker):
+            continue  # a bare column of an aggregate without GROUP BY reads NULL over no rows (SQLite, MySQL)
         outer_known = _declared_not_null(node, declared)
         inner_known = _declared_not_null(inner.expressions[0], declared)
         values = [(item.this if isinstance(item, exp.Alias) else item) for item in inner.expressions]
@@ -4138,11 +4173,11 @@ def _inline_constant_source(select: exp.Select) -> exp.Expression | None:
             extra = [on] if on is not None else []
         elif new_joins:
             first = new_joins.pop(0)
-            copy.set("from_", exp.From(this=first.this))
+            copy.set(FROM_KEY, exp.From(this=first.this))
             on = first.args.get("on")
             extra = [on] if on is not None else []
         else:
-            copy.set("from_", None)
+            copy.set(FROM_KEY, None)
             extra = []
         copy.set("joins", new_joins or None)
         if extra:
@@ -4287,7 +4322,7 @@ def _drop_empty_null_extended_side(select: exp.Select) -> exp.Expression | None:
             column.replace(exp.alias_(exp.Null(), column.name) if column.parent is copy else exp.Null())
     if not isinstance(kept, (exp.Table, exp.Subquery)):
         return None
-    copy.set("from_", exp.From(this=copy.args.get("from_", copy.args.get("from")).this if side == "LEFT" else copy.args["joins"][0].this))
+    copy.set(FROM_KEY, exp.From(this=copy.args.get("from_", copy.args.get("from")).this if side == "LEFT" else copy.args["joins"][0].this))
     copy.set("joins", None)
     return copy
 
@@ -4840,7 +4875,9 @@ def normalize(
     if schema:
         # name each bare column's source before any rewrite reads a derived table as its base table, whose
         # other columns would otherwise capture (or make ambiguous) a bare column of another source
-        tree = _qualify_correlated_columns(_qualify_outer_join_columns(tree, schema), schema)
+        tree = _checked_qualification(
+            tree, lambda t: _qualify_correlated_columns(_qualify_outer_join_columns(t, schema), schema), schema, dialect, "algebraic_qualification"
+        )
 
     types_map = {k.lower(): {c.lower(): t for c, t in v.items()} for k, v in (types or {}).items()}
 
@@ -4848,7 +4885,7 @@ def normalize(
         if not schema:
             return None
         copy = select.copy()
-        _qualify_outer_join_columns(copy, schema)
+        _checked_qualification(copy, lambda t: _qualify_outer_join_columns(t, schema), schema, dialect, "algebraic_select_qualification")
         return copy if copy.sql() != select.sql() else None
 
     def step(node: exp.Expression) -> exp.Expression:
@@ -4912,8 +4949,22 @@ def normalize(
     return faithful_sql(parenthesize_is_operands(_parenthesize_boolean(_parenthesize_set_operations(_constant_keys(canonical_empty(tree))))), dialect)
 
 
+@refuse_misread_proofs
 @serialized
 def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
+    """Normalize both queries algebraically, then run the SMT prover on the result.
+
+    On MySQL a proof that needs different strings compared with an untyped column to differ must also hold with the strings
+    read as the numbers they convert to (``kumosql.numeric_column_reading``).
+    See ``_prove_equivalent_algebraic_checked`` for the rest.
+    """
+
+    return numeric_column_reading.checked(
+        _prove_equivalent_algebraic_checked, left_sql, right_sql, kwargs, lambda reason: SmtEquivalenceResult(SmtStatus.NOT_PROVEN, reason)
+    )
+
+
+def _prove_equivalent_algebraic_checked(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Normalize both queries algebraically, then run the SMT prover on the result.
 
     With ``search_counterexample=True`` an unproven pair the solver cannot refute is
@@ -4930,8 +4981,12 @@ def prove_equivalent_algebraic(left_sql: str, right_sql: str, **kwargs) -> SmtEq
 
     dialect = kwargs.get("dialect", "bigquery")
     try:
+        left_sql, right_sql = (string_number_literals.normalize(sql, dialect, kwargs.get("types")) for sql in (left_sql, right_sql))
         if dialect == "bigquery" and (invalid_literal(left_sql) or invalid_literal(right_sql)):
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a single-quoted literal holds a line break (not valid GoogleSQL)")
+        unknown_type = dialect == "bigquery" and (invalid_type_name(left_sql) or invalid_type_name(right_sql))
+        if unknown_type:
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BigQuery would reject the query: {unknown_type}")
         masked = masked_template_problem(left_sql, right_sql, dialect=dialect or "bigquery")
         if masked:
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, masked)
