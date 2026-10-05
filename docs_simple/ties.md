@@ -23,6 +23,8 @@ for site in report.sites:
 
 Each place that can depend on ties (a window function, `LIMIT`, `ANY_VALUE`, `ARRAY_AGG` and similar) is called `deterministic` or `unknown`. `unknown` means no reason was found that the result is stable. It does not prove the result changes.
 
+Names can be confusing: in `SELECT value AS ts FROM events ORDER BY ts`, `ts` might mean the new name or the table's own `ts` column. When the answer matters and the query does not say, KumoSQL reports `unknown` instead of guessing.
+
 ## How the check is itself checked
 
 A tool, `tools/tie_fuzz.py`, writes thousands of random queries with windows, `LIMIT`, `ANY_VALUE` and similar, asks KumoSQL which ones are safe, then runs each "safe" query on tiny tables with the rows stored in every possible order. If any "safe" query ever returns different rows, the safety check was wrong and the tool prints it. On 7,500 queries none did; adding queries where a `SELECT` rename reuses a column's name found real mistakes (13 in 1,000 queries), which were fixed. Full numbers and limits are in the [reference](../docs/ties.md#fuzzing-the-verdicts).
