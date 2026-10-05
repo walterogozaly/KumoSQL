@@ -4,6 +4,17 @@
 
 Every test run in this repository is recorded, so a report can show which tests break most often and which of them break changes that otherwise work.
 
+## Merge testing procedure
+
+Walter requested recording this procedure on `master`; SQLGlot remains pinned to 30.21.0 with one matching compiled configuration.
+
+1. **Before queueing a code PR:** run the change's targeted regressions and affected evals, including an eval a PR is intended to improve. Run `python tools/run_tests.py --quick --label "<task>"` as the broad, cheaper screen. Documentation-only changes can use `tests/test_docs.py` instead. Passing quick checks alone does not cover all benchmark floors.
+2. **Choose eval coverage from the change:** shared prover, parsing, normalization, translation or execution changes need broader comparisons against the base. Compare case outcomes, not just a net score: gains in one suite do not justify losses in another. For a change intended to preserve all scores, use `tools/eval_diff.py` as described in `CLAUDE.md`. Maintain each suite's floors and zero wrong proofs; a soundness correction that removes invalid proofs must explicitly document corrected scores and update the affected results and guards rather than hide the loss.
+3. **Before merging a code batch:** run `python tools/run_tests.py --label "merge candidate <sha>"` on the exact combined candidate. This full default run includes eval floors and excludes tests marked `slow`; explicitly select affected slow checks when needed. One full candidate run can validate several PRs together. A changed candidate needs new validation. If non-eval tests and evals run separately, both passing reports must refer to the same candidate SHA. A failure or worker crash must be investigated before claiming the batch passes.
+4. **Use fresh evidence appropriately:** the optional SQLSolver [sample-execution cache](evals/sqlsolver.md#reusing-sample-execution-checks) skips unchanged finite execution checks, never the current prover or targeted counterexample search. Changed inputs invalidate it and entries expire after seven days. Use `--eval-cache off` for an explicitly fresh run; CI remains uncached by default. Cache timing on a small sample is not a measurement of the entire suite.
+
+**Current enforcement:** the Dell presently watches `master` and publishes post-merge results on `dell-runner/results`. That provides monitoring, not the pre-merge candidate gate above. Its candidate handoff is not connected, and `master` currently has no GitHub branch-protection requirement enforcing these tests. Until connected, the merge operator must obtain and check the exact candidate's validation through the existing train or a manual candidate run. Do not describe a post-merge Dell result as pre-merge validation or auto-merge code PRs solely because GitHub permits it.
+
 ## What is recorded
 
 `tests/conftest.py` installs the recorder from `tools/test_history.py`. After any `python tools/run_tests.py` or `python -m pytest` run it writes one JSON line to its own file under `runs/` in the history folder, so runs on different threads never collide. The folder is `$KUMOSQL_TEST_HISTORY`, or `/mnt/project-files/test-history` when `/mnt/project-files` exists; `KUMOSQL_TEST_HISTORY=off` turns recording off. Without a shared folder (a laptop checkout) nothing is written.
