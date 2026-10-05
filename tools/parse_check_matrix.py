@@ -1,10 +1,10 @@
-"""Read the same queries under several sqlglot releases and report where the readings differ.
+"""Compare pure and compiled SQLGlot 30.21.0 readings for focused diagnostics.
 
-    python tools/parse_check_matrix.py                       # 26.0.0, 30.20.0, 30.21.0 and 30.21.0 compiled
-    python tools/parse_check_matrix.py --versions 26.0.0 30.21.0 --limit 200
+    python tools/parse_check_matrix.py                       # 30.21.0 pure and compiled (optional diagnostic)
+    python tools/parse_check_matrix.py --versions 30.21.0 30.21.0+compiled --limit 200
 
 Each release gets a temporary virtual environment (as in ``tools/test_sqlglot_matrix.py``); the compiled run
-installs ``sqlglotc`` of the newest release too. Every query of the dev splits under ``tests/fixtures`` (held-out
+installs the matching ``sqlglotc`` build too. Every query of the dev splits under ``tests/fixtures`` (held-out
 files and rows are skipped, see ``tools/parse_check_sweep.py``) is read under its dialect and reduced to
 
 * what ``kumosql.parse_check`` says (agree, disagree, unchecked), and
@@ -28,7 +28,7 @@ import tempfile
 import venv
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_VERSIONS = ["26.0.0", "30.20.0", "30.21.0", "30.21.0+compiled"]
+DEFAULT_VERSIONS = ["30.21.0", "30.21.0+compiled"]
 # fixture directory -> the dialects its queries are read under
 CORPORA = {
     "googlesql": ["bigquery"], "spider2": ["bigquery"], "bq_syntax": ["bigquery"], "bq_edge": ["bigquery"],
@@ -94,7 +94,7 @@ def worker(cases_file: str, out_file: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--versions", nargs="+", default=DEFAULT_VERSIONS, help="sqlglot releases; X.Y.Z+compiled adds sqlglotc")
+    parser.add_argument("--versions", nargs="+", default=DEFAULT_VERSIONS, choices=DEFAULT_VERSIONS, help="sqlglot releases; X.Y.Z+compiled adds sqlglotc")
     parser.add_argument("--limit", type=int, default=250, help="queries per fixture directory (default 250)")
     parser.add_argument("--show", type=int, default=10, help="differing queries to print")
     parser.add_argument("--worker", nargs=2, metavar=("CASES", "OUT"), help=argparse.SUPPRESS)

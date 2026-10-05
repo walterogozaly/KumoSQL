@@ -12,6 +12,8 @@ An unknown answer is allowed. A false proof or a rewrite accepted despite changi
 
 **Held-out** cases were kept out of development. **Tuned on test** means developers used those cases while building the feature. **Adapted** SQL was changed to fit a dialect or test harness; it is reported separately from original SQL.
 
+For comparing slow evals between code versions, see [Eval diff](eval-diff.md).
+
 ## Query equivalence and safety
 
 | Guide | Question it tests |
