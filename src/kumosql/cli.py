@@ -70,6 +70,11 @@ def prove_main(argv: list[str] | None = None) -> int:
         help="When the pair is not proven, look for facts (NOT NULL, unique keys, foreign keys) that would make it equivalent; exit 3",
     )
     parser.add_argument("--schema", type=Path, help="JSON file mapping table names to column lists (for --conditional)")
+    parser.add_argument(
+        "--explain-difference",
+        action="store_true",
+        help="When the pair is not proven, print a verified predicate P such that the queries are equivalent except when P holds",
+    )
     args = parser.parse_args(argv)
 
     left_sql = args.left.read_text(encoding="utf-8")
@@ -94,6 +99,13 @@ def prove_main(argv: list[str] | None = None) -> int:
     print(result.reason)
     for diagnostic in result.diagnostics:
         print(f"diagnostic: {diagnostic}")
+    if args.explain_difference and not result.proven and not args.respect_row_order:
+        from .difference_surface import describe, except_when
+
+        found = except_when(left_sql, right_sql)
+        if found is not None:
+            for line in describe(found):
+                print(line)
     if args.verifier_sql and result.verifier_sql:
         args.verifier_sql.write_text(result.verifier_sql + "\n", encoding="utf-8")
     return 0 if result.proven else 2

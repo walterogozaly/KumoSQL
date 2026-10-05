@@ -707,7 +707,7 @@ class UIHandler(BaseHTTPRequestHandler):
                 elif self.path == "/api/equivalences/remove":
                     result = {"removed": equivalences.remove(payload.get("right"))}
                 elif self.path == "/api/prove-queries":
-                    result = pipeline_equivalence.prove_queries(payload.get("left"), payload.get("right"))
+                    result = pipeline_equivalence.prove_queries(payload.get("left"), payload.get("right"), payload.get("explain") is True)
                 else:
                     result = pipeline_equivalence.prove_loaded(payload.get("left"), payload.get("right"))
             elif self.path == "/api/storage":
