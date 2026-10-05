@@ -7,6 +7,10 @@
   ``SUM`` or ``a + b`` is read as the width of its operands, and an integer cast
   to ``INT`` or wider is taken to fit (a cast to ``TINYINT`` or ``SMALLINT``
   folds only when the input is declared that narrow).
+* A VARCHAR or TEXT expression cast to a VARCHAR at least as long (no length
+  means unbounded), and a TIMESTAMP or DATETIME cast to the same type with the
+  same precision, is the expression itself (QED's Calcite pairs cast every
+  column to its own type).
 * ``CAST(CAST(x AS T) AS T)`` is ``CAST(x AS T)``.
 * A numeric literal cast to ``DECIMAL(p, s)`` that it fits exactly is that
   decimal literal (``CAST(5 AS DECIMAL(11, 1))`` is ``5.0``), and an integer
@@ -76,7 +80,25 @@ def _target(datatype: exp.DataType, dialect: str) -> tuple[str, int] | None:
         return "date", 0
     if name == "BOOLEAN":
         return "bool", 0
+    if name in _TIMESTAMPS:
+        return name.lower(), _params(datatype)[0] if _params(datatype) else 0
+    if name in _STRINGS:
+        return "string", _params(datatype)[0] if _params(datatype) else _UNBOUNDED
     return None
+
+
+_TIMESTAMPS = {"TIMESTAMP", "TIMESTAMPTZ", "DATETIME"}
+_TIMESTAMPS_LOWER = {n.lower() for n in _TIMESTAMPS}
+_STRINGS = {"VARCHAR", "TEXT"}
+_UNBOUNDED = 10**9
+
+
+def _params(datatype: exp.DataType) -> list[int] | None:
+    sizes = [e.this.this for e in datatype.expressions if isinstance(e, exp.DataTypeParam) and isinstance(e.this, exp.Literal)]
+    try:
+        return [int(x) for x in sizes] or None
+    except ValueError:
+        return None
 
 
 _PREDICATES = (exp.EQ, exp.NEQ, exp.LT, exp.LTE, exp.GT, exp.GTE, exp.And, exp.Or, exp.Not, exp.Is, exp.In, exp.Exists, exp.Like, exp.ILike, exp.Between, exp.NullSafeEQ, exp.NullSafeNEQ)
@@ -281,6 +303,10 @@ def _fold_cast(cast: exp.Cast, select: exp.Select, types: dict, dialect: str) ->
         return None
     if target[0] == "int" and have[1] > target[1] and target[1] < _INTEGER_DIGITS["INT"]:
         return None  # narrowing to TINYINT or SMALLINT is a real range check
+    if target[0] == "string" and have[1] > target[1]:
+        return None  # a cast to a shorter VARCHAR truncates
+    if target[0] in _TIMESTAMPS_LOWER and have[1] != target[1]:
+        return None  # a different fractional-second precision rounds
     return cast.this.copy()
 
 

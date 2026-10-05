@@ -18,6 +18,20 @@ Conventions of the generated SQL
     correlate) QED ordinals count the *enclosing* relation's columns first and
     the subquery's own input columns after them; the converter keeps that
     context as a list of qualified names and emits correlated references;
+  * QED's IR drops the OVER clause of a window function (a window is a bare
+    ``COUNT`` / ``SUM`` / ``RANK`` operator in a project), but the ``help`` plan
+    dump keeps it, so the partition and order of a window are read from there
+    and the function and its arguments from the IR; anything else about a
+    window (frames, several windows, a nullable ORDER BY key) is a skip;
+  * QED's IR also drops the grouping sets of an aggregate (``groups=[[{0, 1}, {0}, {}]]``
+    in the help dump); they are read from there and written as
+    ``GROUP BY GROUPING SETS``, so a pair is never scored as its plain
+    GROUP BY reading;
+  * a projection with no columns is a bag of empty rows, equal exactly when
+    the row counts are; where only that count can matter (the root of a query,
+    the right side of a SEMI / ANTI correlate) it becomes ``SELECT 1 AS c0``;
+  * ``ROW(a, b, ..)`` in the root projection is its fields as separate columns
+    (the same injective rewrite on both sides of a pair);
   * ``union`` is UNION ALL; a ``distinct`` node is SELECT DISTINCT; ``intersect``
     and ``except`` are the set (DISTINCT) forms (the help dumps say all=false).
 """
@@ -66,6 +80,7 @@ FAMILY = {
 }
 ARITH = {"+": "+", "-": "-", "*": "*"}
 FUNCS = {"UPPER": "UPPER", "LOWER": "LOWER", "MOD": "MOD", "POWER": "POWER"}
+WINDOW_FUNCS = {"COUNT", "SUM", "MIN", "MAX", "AVG", "RANK"}
 AGGS = {
     "SUM": "SUM", "MIN": "MIN", "MAX": "MAX", "AVG": "AVG",
     "STDDEV_POP": "STDDEV_POP", "STDDEV_SAMP": "STDDEV_SAMP",
@@ -110,9 +125,17 @@ def split_top(s: str, sep: str) -> list[str]:
 
 
 class Converter:
-    def __init__(self, schemas: list[dict]):
+    def __init__(self, schemas: list[dict], windows: list[dict] | None = None):
         self.schemas = schemas
         self.n = 0
+        self.windows = windows or []  # OVER specs read from the help dump, in plan order
+        self.windows_used = 0
+        self.dummy_ok: set[int] = set()  # zero-column projections whose only use is their row count
+        self.root_project: int | None = None
+        self.cur_source: dict | None = None
+        self.cur_outer: list[str] = []
+        self.group_sets: list[tuple[list[int], list[list[int]]] | None] = []  # per LogicalAggregate of the dump, plan order
+        self.group_idx = 0
 
     def alias(self) -> str:
         self.n += 1
@@ -195,6 +218,8 @@ class Converter:
             lit = self.literal(op, typ)
             if lit is not None:
                 return lit
+            if op == "CURRENT_TIMESTAMP":
+                return "CURRENT_TIMESTAMP"  # constant within a statement, so equal on both sides of a pair
         if op == "SEARCH":
             if len(ops) != 2 or "column" in ops[1]:
                 raise Skip("SEARCH shape")
@@ -250,9 +275,61 @@ class Converter:
             if side not in ("BOTH", "LEADING", "TRAILING"):
                 raise Skip(f"TRIM side {side}")
             return f"TRIM({side} {self.expr(ops[1], ctx)} FROM {self.expr(ops[2], ctx)})"
+        if op in WINDOW_FUNCS:
+            return self.window(op, a, ctx)
         if op in AGGS or op in ("ANY_VALUE", "COUNT", "$SUM0", "RANK", "FIRST_VALUE", "LAST_VALUE"):
             raise Skip("window function in scalar position")
         raise Skip(f"unsupported operator {op}")
+
+    def window(self, op: str, args: list[str], ctx: list[str]) -> str:
+        if self.windows_used >= len(self.windows):
+            raise Skip("window function without a readable OVER clause in the plan dump")
+        spec = self.windows[self.windows_used]
+        self.windows_used += 1
+        if spec["func"] != op:
+            raise Skip(f"window function {op} does not match the plan dump ({spec['func']})")
+        if self.cur_outer:
+            raise Skip("window function inside a correlated subquery")
+        if (op == "RANK") != bool(spec["order"]) or (op == "RANK" and args):
+            raise Skip("RANK without ORDER BY or with arguments")
+        parts = []
+        if spec["partition"]:
+            parts.append("PARTITION BY " + ", ".join(self.ordinal(i, ctx) for i in spec["partition"]))
+        if spec["order"]:
+            for i, _desc in spec["order"]:
+                if not self.not_null(self.cur_source, i):
+                    raise Skip("window ORDER BY key that may be NULL (Calcite and SQL engines disagree on NULL order)")
+            parts.append("ORDER BY " + ", ".join(self.ordinal(i, ctx) + (" DESC" if d else "") for i, d in spec["order"]))
+        if op == "COUNT":
+            call = f"COUNT({args[0] if args else '*'})"
+        elif op == "RANK":
+            call = "RANK()"
+        else:
+            if len(args) != 1:
+                raise Skip(f"window {op} arity")
+            call = f"{op}({args[0]})"
+        return f"{call} OVER ({' '.join(parts)})"
+
+    @staticmethod
+    def ordinal(i: int, ctx: list[str]) -> str:
+        if not 0 <= i < len(ctx):
+            raise Skip("window ordinal out of range")
+        return ctx[i]
+
+    def not_null(self, node: dict | None, i: int) -> bool:
+        """The column ``i`` of ``node`` is declared NOT NULL (followed through scans, filters and column projections)."""
+
+        if node is None or len(node) != 1:
+            return False
+        kind, body = next(iter(node.items()))
+        if kind == "scan":
+            nullable = self.schemas[body]["nullable"]
+            return 0 <= i < len(nullable) and not nullable[i]
+        if kind in ("filter", "sort"):
+            return self.not_null(body["source"], i)
+        if kind == "project" and 0 <= i < len(body["target"]) and "column" in body["target"][i]:
+            return self.not_null(body["source"], body["target"][i]["column"])
+        return False
 
     def subquery_expr(self, e: dict, ctx: list[str]) -> str:
         op = e["operator"]
@@ -286,7 +363,8 @@ class Converter:
                 return "COUNT(*)"
             if len(a) != 1:
                 if dis:
-                    raise Skip("multi-column COUNT(DISTINCT)")
+                    # MySQL's COUNT(DISTINCT a, b): distinct tuples with no NULL member (sqlglot spells it for DuckDB)
+                    return f"COUNT(DISTINCT {', '.join(a)})"
                 # COUNT(a, b) counts rows where every argument is non-null
                 nn = " AND ".join(f"{x} IS NOT NULL" for x in a)
                 return f"COUNT(CASE WHEN {nn} THEN 1 END)"
@@ -331,12 +409,24 @@ class Converter:
         return f"SELECT {sel} FROM {qident(table_name(s))}", len(s["fields"])
 
     def rel_project(self, b, outer):
-        src, n = self.rel(b["source"], outer)
+        node = b["source"]
+        src, n = self.rel(node, outer)
         if not b["target"]:
-            raise Skip("projection with no columns")
+            if id(b) not in self.dummy_ok:
+                raise Skip("projection with no columns whose row count can matter beyond the query's own result")
+            a = self.alias()
+            return f"SELECT 1 AS c0 FROM ({src}) AS {a}", 1
         a = self.alias()
         ctx = outer + self.cols(a, n)
-        exprs = [self.expr(t, ctx) for t in b["target"]]
+        saved = self.cur_source, self.cur_outer
+        self.cur_source, self.cur_outer = node, outer
+        try:
+            targets = b["target"]
+            if id(b) == self.root_project:
+                targets = [f for t in targets for f in (t["operand"] if t.get("operator") == "ROW" and "query" not in t else [t])]
+            exprs = [self.expr(t, ctx) for t in targets]
+        finally:
+            self.cur_source, self.cur_outer = saved
         return f"SELECT {self.select_list(exprs)} FROM ({src}) AS {a}", len(exprs)
 
     def rel_filter(self, b, outer):
@@ -353,6 +443,8 @@ class Converter:
         return f"SELECT DISTINCT {self.select_list(self.cols(a, n))} FROM ({src}) AS {a}", n
 
     def rel_join(self, b, outer):
+        if b["kind"] in ("SEMI", "ANTI"):
+            self.allow_empty(b["right"])
         left, ln = self.rel(b["left"], outer)
         right, rn = self.rel(b["right"], outer)
         la, ra = self.alias(), self.alias()
@@ -370,10 +462,18 @@ class Converter:
         sel = self.select_list(self.cols(la, ln) + self.cols(ra, rn))
         return f"SELECT {sel} FROM ({left}) AS {la} {jk} JOIN ({right}) AS {ra} ON {cond}", ln + rn
 
+    def allow_empty(self, node: dict) -> None:
+        """Mark ``node`` (if a project) as one whose columns nobody reads: only whether it has rows."""
+
+        if len(node) == 1 and "project" in node:
+            self.dummy_ok.add(id(node["project"]))
+
     def rel_correlate(self, b, outer):
         left, ln = self.rel(b["left"], outer)
         la = self.alias()
         lctx = outer + self.cols(la, ln)
+        if b["kind"] in ("SEMI", "ANTI"):
+            self.allow_empty(b["right"])
         right, rn = self.rel(b["right"], lctx)
         ra = self.alias()
         kind = b["kind"]
@@ -389,6 +489,8 @@ class Converter:
         raise Skip(f"correlate kind {kind}")
 
     def rel_group(self, b, outer):
+        idx = self.group_idx  # the help dump prints aggregates outermost first
+        self.group_idx += 1
         src, n = self.rel(b["source"], outer)
         a = self.alias()
         ctx = outer + self.cols(a, n)
@@ -398,6 +500,13 @@ class Converter:
             raise Skip("aggregate with no keys and no functions")
         sel = self.select_list(keys + aggs)
         gb = f" GROUP BY {', '.join(keys)}" if keys else ""
+        sets = self.group_sets[idx] if idx < len(self.group_sets) else None
+        if sets is not None:
+            ordinals, groups = sets
+            if [k.get("column") for k in b["keys"]] != ordinals:
+                raise Skip("grouping sets that do not line up with the aggregate's keys")
+            rendered = ", ".join("(" + ", ".join(keys[ordinals.index(o)] for o in g) + ")" for g in groups)
+            gb = f" GROUP BY GROUPING SETS ({rendered})"
         return f"SELECT {sel} FROM ({src}) AS {a}{gb}", len(keys) + len(aggs)
 
     def rel_sort(self, b, outer):
@@ -502,11 +611,64 @@ def schemas_struct(schemas: list[dict]) -> list[dict]:
 
 
 HELP_SKIPS = [
+    (re.compile(r"(?s)groups=\[\[.*\) FILTER \$|\) FILTER \$.*groups=\[\["), "aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query)"),
     (re.compile(r"\) FILTER \$"), "aggregate FILTER clause (not represented in QED's IR)"),
     (re.compile(r"WITHIN DISTINCT"), "aggregate WITHIN DISTINCT (not represented in QED's IR)"),
     (re.compile(r"WITHIN GROUP"), "aggregate WITHIN GROUP (not represented in QED's IR)"),
-    (re.compile(r"\bOVER\b"), "window function"),
 ]
+
+_AGG_LINE = re.compile(r"LogicalAggregate\(group=\[\{([\d, ]*)\}\](?:, groups=\[\[(.*?)\]\])?[,)]")
+
+
+def parse_group_sets(help_text: str) -> list[tuple[list[int], list[list[int]]] | None]:
+    """For each LogicalAggregate of a plan dump, outermost first: ``(group ordinals, grouping sets)`` or ``None``."""
+
+    out = []
+    for m in _AGG_LINE.finditer(help_text):
+        if m.group(2) is None:
+            out.append(None)
+            continue
+        ordinals = [int(x) for x in m.group(1).split(",") if x.strip()]
+        sets = [[int(x) for x in g.split(",") if x.strip()] for g in re.findall(r"\{([\d, ]*)\}", m.group(2))]
+        out.append((ordinals, sets))
+    return out
+
+
+_SPEC = re.compile(r"(?:PARTITION BY (?P<part>\$\d+(?:, \$\d+)*))?(?: ?ORDER BY (?P<order>\$\d+(?: DESC)?(?:, \$\d+(?: DESC)?)*))?")
+
+
+def parse_windows(help_text: str) -> list[dict]:
+    """The ``f(args) OVER (PARTITION BY .. ORDER BY ..)`` calls of one plan dump, in the order they print.
+
+    The function name and arguments are read back from QED's IR; only the partition and order ordinals
+    are taken from here. Frames (``ROWS``/``RANGE``) and null ordering are not read: they make the call a skip.
+    """
+
+    out, pos = [], 0
+    while (i := help_text.find(" OVER (", pos)) >= 0:
+        close = help_text.find(")", i + 7)
+        spec_text = help_text[i + 7:close]
+        # the function name sits before the argument list that closes just before " OVER"
+        depth, j = 0, i - 1
+        while j >= 0:
+            if help_text[j] == ")":
+                depth += 1
+            elif help_text[j] == "(":
+                depth -= 1
+                if depth == 0:
+                    break
+            j -= 1
+        name = re.search(r"([A-Z_$0-9]+)$", help_text[:j])
+        m = _SPEC.fullmatch(spec_text)
+        if m is None or name is None:
+            raise Skip("window function with a frame or an OVER clause this converter does not read")
+        out.append({
+            "func": name.group(1),
+            "partition": [int(x[1:]) for x in (m.group("part") or "").split(", ") if x],
+            "order": [(int(x.split()[0][1:]), x.endswith("DESC")) for x in (m.group("order") or "").split(", ") if x],
+        })
+        pos = close
+    return out
 
 
 def convert_case(doc: dict) -> dict:
@@ -527,8 +689,20 @@ def convert_case(doc: dict) -> dict:
         raise Skip("not exactly two queries")
     ddl = "\n".join(schema_ddl(s) for s in schemas)
     out = []
-    for q in doc["queries"]:
-        sql, _ = Converter(schemas).rel(q, [])
+    plans = doc.get("help", [])
+    for i, q in enumerate(doc["queries"]):
+        windows = parse_windows(plans[i]) if len(plans) == 2 else []
+        conv = Converter(schemas, windows)
+        conv.group_sets = parse_group_sets(plans[i]) if len(plans) == 2 else []
+        body = next(iter(q.values())) if len(q) == 1 else None
+        if "project" in q:
+            conv.root_project = id(body)
+            conv.dummy_ok.add(id(body))
+        sql, _ = conv.rel(q, [])
+        if any(g is not None for g in conv.group_sets) and conv.group_idx != len(conv.group_sets):
+            raise Skip("grouping sets whose aggregates do not line up with the plan dump")
+        if conv.windows_used != len(windows):
+            raise Skip("window functions in the plan dump that the IR does not show as windows")
         out.append(sql)
     return {"sql_a": out[0], "sql_b": out[1], "ddl": ddl, "schemas": schemas_struct(schemas)}
 
