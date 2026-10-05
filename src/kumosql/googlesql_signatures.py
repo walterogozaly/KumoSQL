@@ -347,13 +347,14 @@ def type_call(typer, node: exp.Expression, scope, ctes) -> T:
             _visit_children(typer, node, scope, ctes)
             return UNKNOWN
         return _named(typer, inner, "NET." + name, scope, ctes)
-    if isinstance(node, exp.Dot) and isinstance(node.this, exp.Identifier) and isinstance(node.expression, exp.Func):
+    if isinstance(node, exp.Dot) and isinstance(node.expression, exp.Func) and _namespace(node.this):
         name = function_name(node.expression)
         if name is None:
             return UNKNOWN
-        if node.this.name.upper() == "SAFE":  # SAFE.fn(..) has the type of fn(..); only the error becomes NULL
-            return _named(typer, node.expression, name, scope, ctes)
-        return _named(typer, node.expression, f"{node.this.name.upper()}.{name}", scope, ctes)
+        path = _namespace(node.this)
+        if path[0] == "SAFE":  # SAFE.fn(..) has the type of fn(..); only the error becomes NULL
+            path = path[1:]
+        return _named(typer, node.expression, ".".join(path + [name]), scope, ctes)
     if isinstance(node, exp.Extract):
         return extract(typer, node, scope, ctes)
     if isinstance(node, exp.Identifier):
@@ -368,6 +369,16 @@ def type_call(typer, node: exp.Expression, scope, ctes) -> T:
         _visit_children(typer, node, scope, ctes)
         return UNKNOWN
     return _named(typer, node, name, scope, ctes)
+
+
+def _namespace(node) -> list[str] | None:
+    """The upper-case names of a function's namespace written as ``A`` or ``A.B``; None for anything else."""
+
+    if isinstance(node, exp.Identifier):
+        return [node.name.upper()]
+    if isinstance(node, exp.Dot) and isinstance(node.this, exp.Identifier) and isinstance(node.expression, exp.Identifier):
+        return [node.this.name.upper(), node.expression.name.upper()]
+    return None
 
 
 def _lambda_parameter(typer, node: exp.Identifier, scope) -> T:
