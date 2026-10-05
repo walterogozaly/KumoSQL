@@ -73,7 +73,7 @@ branch lost its only aggregate and went from one row to a row per input row) and
 About 8,000 template cases over the aggregate, distinct and set, outer-join, grouping and window, and scalar
 generators fired about 70 rules and found nothing else.
 
-The set-operation sweep ([#518](https://github.com/walterogozaly/KumoSQL/issues/518)) found five more, all fixed with
+The set-operation sweep ([#518](https://github.com/walterogozaly/KumoSQL/issues/518)) found seven more, all fixed with
 regression tests:
 
 - `merge_same_source` and `set_operation_to_exists` unwrapped the parentheses of an operand and lost an `ORDER BY` /
@@ -83,3 +83,13 @@ regression tests:
 - `split_distinct_select` found the `x IN (SELECT CASE ...)` it had judged by comparing SQL text in its copy, so a
   look-alike test in a nested select was split instead, where only TRUE counting no longer holds. The same
   text lookup was replaced in the other `set_split_rules` splits (`tests/test_set_split_scope.py`).
+- `drop_dedup_read_as_set` dropped the `DISTINCT` of a `UNION ALL` branch because an outer `DISTINCT` reads the union as
+  a set, but a `LIMIT` or `OFFSET` on the union counts the branch's repeats: `SELECT DISTINCT d.x FROM ((SELECT DISTINCT
+  x FROM t) UNION ALL (SELECT k FROM u) ORDER BY 1 LIMIT 3) AS d` kept three different values and lost all but one
+  (`tests/test_distinct_read_as_set_cut.py`).
+- `positionalize` (the rewrite of `BY NAME` / `CORRESPONDING` to a positional operation, run before every prover) cut
+  a dropped column from a branch's select list in place, so `LEFT UNION ALL BY NAME SELECT DISTINCT y AS x, id AS z`
+  became `SELECT DISTINCT y AS x`, which keeps fewer rows, and an `ORDER BY z` or `QUALIFY` on the dropped alias
+  pointed at nothing. A branch that loses a column and has a `DISTINCT`, grouping, ordering or cut is now selected
+  from by name instead (`tests/test_by_name_dropped_column.py`). This rewrite runs outside `normalize`, so
+  `tools/rule_fuzz.py` does not trace it; it was found by reading.
