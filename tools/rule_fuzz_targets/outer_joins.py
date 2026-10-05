@@ -240,6 +240,46 @@ MORE = [
 TEMPLATES += MORE
 
 
+# Second review round (#518): the filters of a derived outer join that the flattening rule leaves alone (an ORDER BY
+# or a subquery in the reading select), the other join kinds under a derived table, and a derived table that is
+# itself padded by a later outer join.
+DERIVED_FILTER = "{d.pn > 0|d.pn IS NOT NULL|d.i IS NOT NULL|d.pid IS NOT NULL|d.pn IS NULL|d.pn > 0 OR d.i > 0|d.i > 0 AND d.pn IS NOT NULL|d.pn = d.i|NOT d.pn IS NULL|d.pid IS NOT NULL OR d.i IS NOT NULL|d.pn <> d.i|COALESCE(d.pn, 0) = 0}"
+MORE_DERIVED = [
+    f"SELECT d.i, d.pn FROM (SELECT t.id AS i, p.id AS pid, p.n AS pn FROM t {SIDE} p ON {ON2}) AS d WHERE {DERIVED_FILTER} ORDER BY d.i, d.pn",
+    f"SELECT d.i, d.pn FROM (SELECT t.id AS i, p.id AS pid, p.n AS pn FROM t {SIDE} p ON {ON2}) AS d WHERE {DERIVED_FILTER} AND {{EXISTS (SELECT 1 FROM u WHERE u.k = d.i)|d.i IN (SELECT k FROM u)|NOT EXISTS (SELECT 1 FROM u WHERE u.k = d.i)}}",
+    f"SELECT d.i, COUNT(d.pid) AS c FROM (SELECT t.id AS i, p.id AS pid, p.n AS pn FROM t {SIDE} p ON {ON2}) AS d WHERE {DERIVED_FILTER} GROUP BY d.i",
+    f"SELECT d.i, u.v FROM (SELECT t.id AS i, p.id AS pid, p.n AS pn FROM t {SIDE} p ON {ON2}) AS d {SIDE} u ON {{u.k = d.i|u.k = d.pid|u.w = d.pn|d.pn > 0|d.pid IS NOT NULL AND u.k = d.i}} WHERE {DERIVED_FILTER}",
+    f"SELECT x.i, x.pn FROM (SELECT d.i, d.pn FROM (SELECT t.id AS i, p.n AS pn FROM t {SIDE} p ON {ON2}) AS d WHERE {{d.pn > 0|d.pn IS NOT NULL|d.i > 0|d.pn IS NULL}}) AS x WHERE {{x.pn IS NOT NULL|x.i > 0|x.pn > 1|TRUE}}",
+    f"SELECT t.id, d.pn FROM t {SIDE} (SELECT p.tid AS k, p.n AS pn, q.v AS qv FROM p {LR} u AS q ON {{q.k = p.tid|q.w = p.n}}) AS d ON {{d.k = t.id|d.pn > 0|d.k = t.id AND d.qv IS NOT NULL|d.qv = t.s|d.k = t.id OR d.qv IS NULL}}",
+    f"SELECT t.id, d.k FROM t LEFT JOIN (SELECT p.tid AS k FROM p {LR} u AS q ON q.k = p.tid) AS d ON d.k = t.id WHERE {{d.k IS NULL|d.k IS NOT NULL|d.k > 0|COALESCE(d.k, 0) = 0}}",
+    f"SELECT t.id, p.n, u.v FROM t {SIDE} p ON {ON2} {SIDE} u ON {{u.k = p.tid|u.k = t.id|u.w = p.n|p.n IS NULL|u.k = COALESCE(p.tid, t.id)}} WHERE {{u.w > 0|u.v IS NULL|p.n > 0|t.id > 0|u.w IS NOT NULL AND t.id > 0|p.n IS NULL OR u.w > 0}}",
+    f"SELECT t.id, p.n, u.v FROM t {SIDE} p ON {ON2} {SIDE} u ON {{u.k = p.tid|u.k = t.id|u.w = p.n|p.n IS NULL|u.k = COALESCE(p.tid, t.id)}} {SIDE} t AS t2 ON {{t2.id = u.k|t2.id = p.tid|t2.id = t.id}} WHERE {{u.w > 0|t2.x > 0|p.n > 0|t2.id IS NULL|u.w IS NOT NULL AND t2.id IS NOT NULL}}",
+    f"SELECT t.id, SUM(p.n) AS s, COUNT(p.n) AS c FROM t {SIDE} p ON {ON2} GROUP BY t.id HAVING {{SUM(p.n) > 0|COUNT(p.n) > 0|COUNT(p.n) = 0|SUM(p.n) IS NULL|SUM(p.n) > 0 OR t.id = 1|COUNT(p.n) > 0 AND t.id > 0|COUNT(*) > 0|MAX(p.n) > 0|MIN(p.n) IS NOT NULL}}",
+    f"SELECT t.id, SUM(p.n) AS s FROM t LEFT JOIN p ON {ON2} LEFT JOIN u ON {{u.k = p.tid|u.k = t.id}} GROUP BY t.id HAVING {{SUM(p.n) > 0|SUM(p.n + u.w) > 0|COUNT(u.w) > 0|COUNT(u.w) > 0 AND SUM(p.n) > 0}}",
+    f"SELECT t.id, SUM(p.n) AS s FROM t LEFT JOIN p ON {ON2} GROUP BY {{ROLLUP(t.id)|CUBE(t.id)|GROUPING SETS ((t.id), ())|t.id, p.n}} HAVING {{SUM(p.n) > 0|COUNT(p.n) > 0|COUNT(p.n) = 0}}",
+    f"SELECT t.id FROM t {SIDE} p ON {ON2} WHERE t.id = {{1|2}} AND {{p.tid = t.id|p.n > 0|p.n IS NULL|TRUE}}",
+    f"SELECT t.id, p.n FROM t LEFT JOIN p ON p.tid = t.id WHERE t.id {{> 0|IN (1, 2)|BETWEEN 1 AND 2|<> 1|IS NULL|IS NOT NULL|= 1 OR t.id IS NULL}}",
+    f"SELECT t.id, p.n FROM t LEFT JOIN p ON p.tid = t.id AND p.n {{> 0|IS NULL|= t.x}} WHERE t.x {{= 1|> 0|IN (1, 2)|IS NULL}}",
+    f"SELECT t.id, u.v FROM t LEFT JOIN u ON u.k = t.id WHERE t.id {{= 1|IN (1, 2)|> 0|IS NULL}}",
+    f"SELECT t.id, u.v FROM t LEFT JOIN u ON u.k = t.x AND u.k = t.id WHERE t.id {{= 1|IN (1, 2)|> 0}}",
+    f"SELECT DISTINCT t.id FROM t {LR} p ON {ON2} {{|WHERE t.id > 0|WHERE p.n > 0}}",
+    f"SELECT DISTINCT t.id, {{MAX|MIN}}(t.x) AS m FROM t {LR} p ON {ON2} GROUP BY t.id",
+    f"SELECT t.id, {{MAX|MIN}}(t.x) AS m, COUNT(DISTINCT t.y) AS cd FROM t {LR} p ON {ON2} GROUP BY t.id",
+    f"SELECT DISTINCT d.i FROM (SELECT t.id AS i FROM t {LR} p ON {ON2}) AS d",
+    f"SELECT DISTINCT d.i FROM (SELECT DISTINCT t.id AS i, t.x AS x FROM t) AS d {LR} p ON {{p.tid = d.i|p.n > d.x}}",
+    f"SELECT COUNT(DISTINCT t.id) AS c, SUM(DISTINCT t.x) AS s FROM t {LR} p ON {ON2}",
+    f"SELECT d.k, e.k AS k2 FROM (SELECT DISTINCT p.tid AS k FROM p) AS d {LR} (SELECT DISTINCT u.k AS k FROM u) AS e ON {{d.k = e.k|d.k < e.k|d.k IS NOT DISTINCT FROM e.k|TRUE}} {{|WHERE d.k > 0|WHERE e.k IS NULL}}",
+    f"SELECT d.k, e.k AS k2 FROM (SELECT p.tid AS k FROM p GROUP BY p.tid) AS d {LR} (SELECT u.k AS k FROM u GROUP BY u.k) AS e ON {{d.k = e.k|d.k < e.k|d.k IS NOT DISTINCT FROM e.k}}",
+    f"SELECT d.k, d.m, e.k AS k2 FROM (SELECT p.tid AS k, MAX(p.n) AS m FROM p GROUP BY p.tid) AS d {LR} (SELECT u.k AS k FROM u GROUP BY u.k) AS e ON d.k = e.k",
+    f"SELECT t.id, o.id AS oid FROM t LEFT JOIN p AS o ON {{o.tid = t.id|o.tid = t.id AND o.n > 0|o.tid = t.id AND o.n > t.x}} WHERE NOT EXISTS (SELECT 1 FROM p AS s WHERE {{s.tid = t.id|s.tid = t.id AND s.n > 0|s.tid = t.id AND s.n > t.x|s.tid = t.id AND s.id = 1}})",
+    f"SELECT t.id, COUNT(o.id) AS c FROM t LEFT JOIN p AS o ON o.tid = t.id WHERE NOT EXISTS (SELECT 1 FROM p AS s WHERE s.tid = t.id) AND {{t.x > 0|t.x IS NULL|TRUE|o.id IS NULL}} GROUP BY t.id",
+    f"SELECT t.id, o.n FROM t {LR} p AS o ON o.tid = t.id WHERE NOT EXISTS (SELECT 1 FROM p AS s WHERE s.tid = t.id)",
+    f"SELECT t.id FROM t LEFT JOIN p ON p.tid = t.id AND {{EXISTS (SELECT 1 FROM u WHERE u.w IS NULL)|NOT EXISTS (SELECT 1 FROM u WHERE u.k = 1)|EXISTS (SELECT 1 FROM u WHERE k = 1)|EXISTS (SELECT 1 FROM u WHERE w = p.n)|EXISTS (SELECT 1 FROM u WHERE v = 'a')}} {{|WHERE p.id IS NULL|WHERE p.id IS NOT NULL}}",
+    f"SELECT t.id, p.n FROM t LEFT JOIN p ON {{p.tid = t.id|p.n > 0}} AND {{EXISTS (SELECT 1 FROM u WHERE u.k = 1)|NOT EXISTS (SELECT 1 FROM u)}} AND {{p.b|p.n IS NOT NULL}}",
+]
+TEMPLATES += MORE_DERIVED
+
+
 # Templates that need p.tid to be a NOT NULL foreign key to t.id (the schema draws that only now and then, so these
 # cases force it): the foreign-key joins, with the child null-extended by an earlier or later outer join and ON
 # clauses that say more than the key.
