@@ -28,7 +28,7 @@ rewrites, run just before that, give equal windows equal text. Each one keeps ev
   ``kqw*`` that computes, per group, its group keys, aggregates and windows (named by their sorted text),
   which the prover keeps whole like ``_isolate_windows`` does for an ungrouped select.
 * ``prune_unread_windows``: a derived table's window column that the query around it never reads is
-  dropped; a window adds a value to each row and never adds, removes or repeats one. Not when that
+  dropped (a ``COUNT(*)`` reads no column); a window adds a value to each row and never adds, removes or repeats one. Not when that
   column holds the derived table's only aggregate outside a window (the table would stop being one row).
 """
 
@@ -404,7 +404,7 @@ def prune_unread_windows(select: exp.Select) -> exp.Select | None:
     if any(j.args.get("using") or j.args.get("method") for j in select.args.get("joins") or []):
         return None  # USING and NATURAL read columns by name without a column reference
     reads = {c.name.lower() for c in select.find_all(exp.Column) if not _inside(c, source)}
-    if (source.alias or "").lower() in reads or any(isinstance(n, exp.Star) for n in select.walk() if not _inside(n, source)):
+    if (source.alias or "").lower() in reads or any(isinstance(n, exp.Star) and not isinstance(n.parent, exp.Count) for n in select.walk() if not _inside(n, source)):
         return None  # the whole row read as a value, or every column
     own = {c.name.lower() for part in (inner.args.get("group"), inner.args.get("having")) if part is not None for c in part.find_all(exp.Column)}
     names = [item.alias_or_name.lower() for item in inner.expressions]

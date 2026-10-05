@@ -54,6 +54,8 @@ from .named_windows import inline_named_windows
 from .having_rules import key_having_to_where
 from .window_canonical import canonical_windows
 from .unread_windows import drop_unread_windows
+from .qualify_filter import qualify_to_filter
+from .window_pushdown import push_filter_through_windows
 from .window_rules import window_rules
 from .intersection_rules import collapse_counted_intersection, collapse_named_counted_intersection
 from .count_case_rules import fold_grouped_count_cases
@@ -4871,7 +4873,7 @@ def normalize(
     tree = _name_derived_columns(_lateral_joins(tree))
     if schema:
         tree = _expand_stars(tree, schema)
-    tree = _isolate_windows(canonical_windows(drop_unread_windows(tree), types))
+    tree = _isolate_windows(canonical_windows(drop_unread_windows(push_filter_through_windows(qualify_to_filter(tree))), types))
     if schema:
         # name each bare column's source before any rewrite reads a derived table as its base table, whose
         # other columns would otherwise capture (or make ambiguous) a bare column of another source

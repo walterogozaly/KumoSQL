@@ -19,6 +19,12 @@ TEMPLATES = [
     f"SELECT q.id, q.w FROM (SELECT t.id, {WIN} AS w FROM t) AS q WHERE {{q.w > 1|q.w IS NULL|q.id > 1}}",
     f"SELECT t.id FROM t WHERE TRUE QUALIFY {{ROW_NUMBER() OVER (PARTITION BY t.y ORDER BY t.id) = 1|RANK() OVER (ORDER BY t.x) <= 2|COUNT(*) OVER (PARTITION BY t.y) > 1}}",
     f"SELECT t.y, {WIN} AS w FROM t GROUP BY t.y {{|HAVING COUNT(*) > 1}}".replace("COUNT(t.x) OVER (PARTITION BY t.id)", "COUNT(*) OVER ()"),
+    # qualify_filter: QUALIFY of a grouped select
+    "SELECT t.y, COUNT(*) AS c FROM t GROUP BY t.y {|HAVING COUNT(*) > 1} QUALIFY {RANK() OVER (ORDER BY COUNT(*) DESC) = 1|DENSE_RANK() OVER (ORDER BY SUM(t.x)) <= 2|COUNT(*) OVER () > 1} {|AND t.y IS NOT NULL}",
+    "SELECT {|DISTINCT} COUNT(*) AS c, {|RANK() OVER (ORDER BY COUNT(*)) AS r,} MAX(t.x) AS m FROM t {|WHERE t.x > 0} GROUP BY t.y QUALIFY RANK() OVER (ORDER BY COUNT(*)) {<= 2|= 1}",
+    # window_pushdown: a filter on PARTITION BY columns above and below the window
+    "SELECT q.y, q.w FROM (SELECT t.y, t.id, {ROW_NUMBER() OVER (PARTITION BY t.y ORDER BY t.id)|SUM(t.x) OVER (PARTITION BY t.y)|COUNT(*) OVER (PARTITION BY t.y, t.x)|RANK() OVER (PARTITION BY t.y ORDER BY t.x)} AS w FROM t {|WHERE t.id > 1}) AS q WHERE {q.y = 1|q.y IS NULL|q.y IS NOT NULL|q.y IN (0, 1)|q.y > 0 OR q.y IS NULL|q.w > 1|q.id > 1|q.y = 1 AND q.id > 1|q.y = q.w}",
+    "SELECT q.y FROM (SELECT t.y, t.x, SUM(t.id) OVER (PARTITION BY t.y, t.x) AS a, COUNT(*) OVER (PARTITION BY {t.y, t.x|t.y|t.x}) AS b FROM t QUALIFY {a > 1|b > 1|TRUE}) AS q WHERE {q.y = 1|q.x = 1|q.x IS NULL|q.y = q.x}",
     f"SELECT DISTINCT t.y, {{ROW_NUMBER() OVER (ORDER BY t.y)|SUM(t.x) OVER (PARTITION BY t.y)}} AS w FROM t",
     f"SELECT t.x FROM t ORDER BY t.x {{|LIMIT 0|LIMIT 1|LIMIT 2 OFFSET 1}}",
     f"SELECT q.x FROM (SELECT t.x FROM t ORDER BY t.x {{|LIMIT 2|LIMIT 1}}) AS q {{|ORDER BY q.x|ORDER BY q.x DESC LIMIT 1}}",

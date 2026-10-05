@@ -39,6 +39,23 @@ It only adds a table name when it is sure. It leaves a column alone when:
 
 Limits: it needs to know each table's columns, which come from the loaded project or the saved BigQuery catalog, so on the command line only queries built from `WITH` queries and subqueries are qualified. Without those columns the checker may call the result `unproven`. The final `ORDER BY` keeps its bare names, because the checker only accepts a rewrite that leaves the ordering text alone. See the [full reference](../docs/rewrite-rules.md) for the complete list of cases that are skipped.
 
+## Window queries and the prover
+
+Two spellings of the same window query can look very different: `QUALIFY` keeps rows by a window result, and a nested query with a `WHERE` on the window column does the same. KumoSQL's prover rewrites both sides into one shape before comparing them (see the [full reference](../docs/rewrite-rules.md#window-rules-of-the-provers-normal-form)). This does not change your SQL; it only lets the prover see that two queries match.
+
+Example: these two give the same rows, and now the prover can say so even though the first one groups.
+
+```sql
+SELECT user_id, COUNT(*) AS c FROM events GROUP BY user_id
+QUALIFY RANK() OVER (ORDER BY COUNT(*) DESC) = 1
+
+SELECT user_id, c FROM (
+  SELECT user_id, COUNT(*) AS c, RANK() OVER (ORDER BY COUNT(*) DESC) AS r
+  FROM events GROUP BY user_id) WHERE r = 1
+```
+
+A second rule moves a filter below a window when it only looks at the columns the window splits rows by (`PARTITION BY`). A window only ever looks at the rows of its own group, so dropping whole groups first changes nothing for the groups that stay. A filter on any other column, or on the window result itself, is never moved. Both rules were checked on small DuckDB databases that include ties and NULL groups; that shows no counterexample in those databases, not a proof for every query, and the prover still says "unknown" for shapes the rules decline.
+
 ## Understand the label
 
 | Label | What to do with it |
