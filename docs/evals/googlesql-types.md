@@ -21,10 +21,19 @@ Development split, measured 2026-10-05:
 
 | Columns | Labelled | Exact | Unknown | Wrong |
 | --- | ---: | ---: | ---: | ---: |
-| BigQuery types only (the headline) | 16,404 | 13,473 | 2,931 | 0 |
-| All labelled columns | 18,072 | 14,190 | 3,882 | 0 |
+| BigQuery types only (the headline) | 16,404 | 14,755 | 1,649 | 0 |
+| All labelled columns | 18,072 | 15,564 | 2,508 | 0 |
 
-No query crashed the checker. Held-out split: **not measured yet**.
+No query crashed the checker.
+
+Held-out split, measured once on 2026-10-05 after the development work was frozen:
+
+| Columns | Labelled | Exact | Unknown | Wrong |
+| --- | ---: | ---: | ---: | ---: |
+| BigQuery types only (the headline) | 4,647 | 3,299 (71.0%) | 1,348 | 0 |
+| All labelled columns | 5,256 | 3,732 | 1,524 | 0 |
+
+The held-out score is lower than the development score (89.9%) because several rules (ALIGN, multiway UNNEST naming, MATCH_RECOGNIZE and differential-privacy rewrites, the least-evidenced operators) were written from development cases only. Zero wrong held-out is the property that matters. Any further change made after looking at held-out results must be recorded as "tuned on test".
 
 <!-- dev-score:end -->
 
@@ -101,10 +110,10 @@ The held-out split exists to tell whether the checker works on SQL it was not bu
 
 1. **Develop on the dev split only.** `--heldout` is the only way to score the held-out file, and nothing else in the repository reads its cases (the test reads its length).
 2. **Do not read the held-out cases** to see what kinds of query are there, to explain a miss, or to choose the next rule.
-3. **Measure it once the dev work is frozen**, and record the result in `benchmarks/results/googlesql-types.json` as it is (replace `not measured yet`) with the date and the commit. That first number is the honest unseen estimate.
+3. **Measure it once the dev work is frozen.** This was done on 2026-10-05 (the result is above and in `benchmarks/results/googlesql-types.json`). That first number is the honest unseen estimate.
 4. **A held-out miss counts as dev afterwards.** If a held-out failure is looked at and fixed, say so in `held_out`, as the [schema-change eval](schema-change-bench.md) and the [expected-results eval](googlesql-expected-results.md) do, and call the split *tuned on test* from then on. A wrong answer in the held-out split is reported even if it is fixed.
 
-The held-out fixture is checked in, so the discipline rests on people (and agents) following these rules, not on the file being hidden. Until the first measurement, the README and the results file say `not measured yet`.
+The held-out fixture is checked in, so the discipline rests on people (and agents) following these rules, not on the file being hidden. The one measurement has been made, so any later look at held-out results makes it *tuned on test*.
 
 ## Caveats and limits
 

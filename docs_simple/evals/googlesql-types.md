@@ -20,7 +20,7 @@ A test selects `[1, 2.5]` and expects an `ARRAY<FLOAT64>`: the list holds an int
 ## Limits of the evidence
 
 - The tests are Google's, not yours, and they show agreement with Google's reference implementation, not with BigQuery in every case.
-- The checker is developed against most of the test files, so that score is optimistic. A quarter of the files, chosen by a fixed rule on the file name, are held out to be scored once, at the end. At the time of writing that has not been done, and the full page and the results file say `not measured yet` until it is.
+- The checker is developed against most of the test files, so that score is optimistic. A quarter of the files, chosen by a fixed rule on the file name, were held out and scored once, at the end. That score is clearly lower than the one on the files the checker was built against, which is the honest picture of how it does on queries it has not seen. In both, the checker never gave a wrong type. The numbers are on the full page.
 - Even then, the held-out part comes from the same suite, so it measures new queries of the same kind, not new kinds of query.
 - A second, separate check runs the checker over real BigQuery projects whose queries are known to run; there it must report no mistakes at all.
 

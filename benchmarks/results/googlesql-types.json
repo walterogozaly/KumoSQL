@@ -2,19 +2,19 @@
   "suite": "GoogleSQL type inference",
   "order": 66,
   "size": 16404,
-  "score": "13,473/16,404 BigQuery output columns typed exactly, 0 wrong (2,931 unknown, development files)",
+  "score": "14,755/16,404 BigQuery output columns typed exactly, 0 wrong (1,649 unknown, development files)",
   "metric": "The output column types of a BigQuery query, STRUCT and ARRAY included, inferred without running it and compared with the types the GoogleSQL compliance tests print for each query's result. A type is given only when GoogleSQL's rules fix it; anything else is unknown, and a different type is wrong.",
   "evidence": "executed",
   "correctness": "0 columns given a type other than the one the compliance tests print (and 0 of the wrong width), checked against the reference implementation's printed result types",
   "coverage": {
-    "proven": 13473,
-    "unknown": 2931,
+    "proven": 14755,
+    "unknown": 1649,
     "error": 0
   },
-  "held_out": "not measured yet",
+  "held_out": "3,299/4,647 BigQuery output columns typed exactly, 0 wrong (1,348 unknown), measured once on 2026-10-05",
   "docs": "docs/evals/googlesql-types.md",
   "command": "python tools/googlesql_types_eval.py",
   "date": "2026-10-05",
-  "caveats": "Source google/googlesql @ d82db99 (Apache-2.0), original queries, none adapted. Development files only: 7,878 cases in 222 files (63 files, 2,602 cases are held out by file name and not yet scored). The headline counts the 16,404 labelled columns whose type uses only BigQuery types (18,072 labelled columns in all; the 1,668 others use INT32, UINT32, UINT64, FLOAT32, PROTO, ENUM, MAP or graph types). Tables come from each file's prepare blocks (tables loaded from protos and value tables are left out), and the typer was developed against these files. The baseline sqlglot annotate_types types 7,147 of the same columns exactly with 834 wrong and crashes on 1,310 queries. exact = the type text equals the label; unknown = no type; coverage 'error' counts typer crashes (0). The score depends on the sqlglot version (the test floor on 26.0.0, the oldest allowed, is 10,732 exact).",
-  "performance": "7,878 queries in 8 s"
+  "caveats": "Source google/googlesql @ d82db99 (Apache-2.0), original queries, none adapted. Development files only: 7,878 cases in 222 files (63 files, 2,602 cases are held out by file name and were scored once, at the end of the development work). The headline counts the 16,404 labelled columns whose type uses only BigQuery types (18,072 labelled columns in all; the 1,668 others use INT32, UINT32, UINT64, FLOAT32, PROTO, ENUM, MAP or graph types). Tables come from each file's prepare blocks (tables loaded from protos and value tables are left out), and the typer was developed against these files. The baseline sqlglot annotate_types types 7,147 of the same columns exactly with 834 wrong and crashes on 1,310 queries. exact = the type text equals the label; unknown = no type; coverage 'error' counts typer crashes (0). The score depends on the sqlglot version (the test floor on 26.0.0, the oldest allowed, is 13,364 exact). Several rules (ALIGN and multiway UNNEST naming, the MATCH_RECOGNIZE and differential-privacy rewrites) rest on development cases only, which is why the held-out score is lower than the development score; the typer was not tuned on the held-out files.",
+  "performance": "7,878 queries in 11 s"
 }
