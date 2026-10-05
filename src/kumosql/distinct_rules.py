@@ -451,6 +451,7 @@ def distinct_join_to_exists(select: exp.Select) -> exp.Select | None:
             moved += kept_on.pop(0)
             result.set(FROM_KEY, exp.From(this=head.this))
         else:
+            moved += kept_on[position - 1]  # conditions of the removed join that do not read the derived table
             del new_joins[position - 1]
             del kept_on[position - 1]
         for new_join, parts in zip(new_joins, kept_on):
