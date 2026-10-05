@@ -24,6 +24,8 @@ The first two can give an unbounded proof: the database's row count has no fixed
 
 The structural prover compares normalized query trees. The SMT prover uses Z3, a solver that reasons about constraints. The algebraic prover treats duplicate row counts as arithmetic, helping it reason about joins, unions, and aggregates. The optional Java SQLSolver backend is a separate setup; ordinary Python proofs do not require Java.
 
+When the app asks for a proof and every earlier prover gives up, it tries one more pure-Python method that treats each query as arithmetic over how many times every row appears. Some aggregate and `UNION ALL` rewrites that the other provers cannot settle can be shown equal this way. It only runs after the others have failed, so it can add proofs but never take one away, and if it hits something it does not understand or runs out of time the answer stays "not proven". See [the full reference](../docs/provers.md) for the details and for the recorded scores.
+
 From a checkout, install solver and execution support with:
 
 ```sh

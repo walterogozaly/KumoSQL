@@ -148,16 +148,19 @@ def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: 
             used = [*used_old, *(i for i in used_new if i not in used_old)]
         except Exception:  # noqa: BLE001 - an unreadable query is the prover's to report
             used = []
+    limit = timeout_ms if timeout_ms is not None else settings()["timeout_ms"]
     result = prove_equivalent_algebraic(
         old_sql,
         new_sql,
         schema=facts.columns or None,
         constraints=facts.constraints or None,
         types=facts.types or None,
-        timeout_ms=timeout_ms if timeout_ms is not None else settings()["timeout_ms"],
+        timeout_ms=limit,
         search_counterexample=search_counterexample,
         conditional=conditional,
     )
+    if result.status is SmtStatus.NOT_PROVEN:
+        result = _bag_backend(old_sql, new_sql, result, facts, limit)
     if (facts.notes or used) and result.status in (SmtStatus.PROVEN_EQUIVALENT, SmtStatus.PROVEN_CONDITIONALLY):
         wanted = [*facts.notes]
         if used:
@@ -168,6 +171,29 @@ def prove(old_sql: str, new_sql: str, *, timeout_ms: int | None = None, schema: 
 
             result = dataclasses.replace(result, assumptions=tuple(result.assumptions) + extra)
     return result
+
+
+def _bag_backend(old_sql: str, new_sql: str, result: SmtEquivalenceResult, facts: ProverSchema, timeout_ms: int) -> SmtEquivalenceResult:
+    """The last resort: the bag-equivalence backend, tried only on a pair the provers above left unproven.
+
+    It can only turn "not proven" into a proof. Any error or timeout inside it keeps ``result``.
+    """
+
+    try:
+        from .uexpr.hook import prove_last_resort
+
+        proof = prove_last_resort(
+            old_sql,
+            new_sql,
+            schema=facts.columns or None,
+            constraints=facts.constraints or None,
+            types=facts.types or None,
+            dialect="bigquery",
+            timeout_ms=timeout_ms,
+        )
+    except Exception:  # noqa: BLE001 - the backend only ever adds proofs
+        return result
+    return proof if proof is not None else result
 
 
 _BOUNDED: dict = {}

@@ -47,6 +47,7 @@ def prove_bag_equivalent(
     group_by_constants: bool = False,
     timeout_ms: int = 5000,
     use_foreign_keys: bool = True,
+    budget_s: float | None = None,
 ):
     """Prove that two queries return the same bag of rows on every database, or say not proven."""
 
@@ -98,7 +99,7 @@ def prove_bag_equivalent(
             return unknown("the queries return different numbers of columns")
         if compare_names and [n.lower() for n in left_q.names] != [n.lower() for n in right_q.names]:
             return unknown("the queries name their columns differently")
-        proven = _decide(left_q, right_q, catalog, exact_arithmetic, timeout_ms)
+        proven = _decide(left_q, right_q, catalog, exact_arithmetic, timeout_ms, budget_s)
     except Unsupported as error:
         return unknown(f"unsupported: {error}")
     except (sqlglot.errors.SqlglotError, RecursionError) as error:
@@ -120,7 +121,7 @@ def prove_bag_equivalent(
     return SmtEquivalenceResult(SmtStatus.PROVEN_EQUIVALENT, "proved by the bag procedure (multiplicity algebra)", assumptions=tuple(dict.fromkeys(assumptions)))
 
 
-def _decide(left_q, right_q, catalog, exact: bool, timeout_ms: int):
+def _decide(left_q, right_q, catalog, exact: bool, timeout_ms: int, budget_s: float | None = None):
     """``True`` proven, ``False`` not proven, ``None`` out of time."""
 
     from .decide import Prover, Timeout
@@ -132,7 +133,7 @@ def _decide(left_q, right_q, catalog, exact: bool, timeout_ms: int):
     try:
         a_terms = normalize(left_q.body, ctx)
         b_terms = normalize(right_body, ctx)
-        prover = Prover(ctx, timeout_ms=timeout_ms)
+        prover = Prover(ctx, timeout_ms=timeout_ms, budget_s=budget_s)
         return prover.bag_equal(a_terms, b_terms)
     except Timeout:
         return None
