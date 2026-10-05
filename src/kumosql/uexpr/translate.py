@@ -696,9 +696,14 @@ class Translator:
         def member(rows, cond, keys):
             return nmul(rows.body, ind(cond), ind(conj(*[Same(Ref(g), k) for g, k in zip(gvars, keys)])))
 
-        def make_agg(call) -> object:
+        def make_agg(call, filter_where=None) -> object:
             func = _AGG_TYPES[type(call)]
             rows, scope, cond, keys = copy_rows()
+            if filter_where is not None:
+                # ``agg(..) FILTER (WHERE c)`` aggregates only the rows where c is TRUE.
+                if _has_aggregate(filter_where) or any(isinstance(x, exp.Subquery) for x in filter_where.walk()):
+                    raise Unsupported("aggregate FILTER with an aggregate or subquery")
+                cond = conj(cond, self.pred(filter_where, scope)[0])
             arg = call.this
             distinct = False
             if isinstance(arg, exp.Distinct):
@@ -711,8 +716,6 @@ class Translator:
             for k in ("order", "limit", "ignore_nulls", "respect_nulls", "having_max"):
                 if call.args.get(k):
                     raise Unsupported(f"{func} modifiers")
-            if isinstance(call.parent, (exp.Filter,)):
-                raise Unsupported("aggregate FILTER")
             if func == "COUNT" and (arg is None or isinstance(arg, exp.Star)):
                 if distinct:
                     raise Unsupported("COUNT(DISTINCT *)")
@@ -867,6 +870,10 @@ class Translator:
             if scope.group is None:
                 raise Unsupported("aggregate outside a grouped select")
             return scope.group.make_agg(e)
+        if isinstance(e, exp.Filter) and isinstance(e.this, tuple(_AGG_TYPES)) and isinstance(e.expression, exp.Where):
+            if scope.group is None:
+                raise Unsupported("aggregate outside a grouped select")
+            return scope.group.make_agg(e.this, e.expression.this)
         if isinstance(e, (exp.Add, exp.Sub, exp.Mul, exp.Div)):
             return self._binary(e, scope)
         if isinstance(e, exp.IntDiv):
