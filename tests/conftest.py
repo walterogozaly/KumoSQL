@@ -186,6 +186,7 @@ EVAL_FILES = {
     "test_minimization_bench.py",
     "test_numeric_traps_bench.py",
     "test_model_reuse_evals.py",
+    "test_outer_union_mv_cases.py",
     "test_mv_workload_bench.py",
     "test_optimizer_bugs_bench.py",
     "test_output_properties.py",

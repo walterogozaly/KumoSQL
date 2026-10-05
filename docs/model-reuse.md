@@ -6,7 +6,7 @@ Three deterministic Python engines (no LLM at run time) and their evals. All ans
 
 | Eval | Engine | Command | Results file |
 | --- | --- | --- | --- |
-| Materialized-view and shared-model reuse | `kumosql.model_reuse` | `python tools/mv_reuse_bench.py --all` | `benchmarks/results/mv-reuse-calcite.json` |
+| Materialized-view and shared-model reuse | `kumosql.model_reuse` | `python tools/mv_reuse_bench.py --all` (`--source calcite`, `adapted`, `doris` or `outer-union` for one source) | `benchmarks/results/mv-reuse-calcite.json` |
 | Query containment (set and bag) | `kumosql.containment` | `python tools/containment_bench.py --all` | `benchmarks/results/containment.json` |
 | Aggregate decomposition | `kumosql.model_reuse` (rollup identities) | `python tools/decomposition_bench.py --all` | `benchmarks/results/aggregate-decomposition.json` |
 
@@ -18,6 +18,11 @@ Every runner takes `--baseline` (the existing prover alone, before these engines
 
 * Source: Apache Calcite 1.37.0 (tag `calcite-1.37.0`, Apache-2.0), `MaterializedViewRelOptRulesTest` and `MaterializedViewSubstitutionVisitorTest`. `tools/extract_calcite_mv.py` downloads the pinned files and writes `tests/fixtures/mv_reuse/calcite_mv_cases.json` (196 cases, SQL unchanged, Calcite's own `ok`/`noMat` verdict kept). A test that calls `ok()` but asserts a plan that never scans `MV0` (Calcite answers from the base table or from empty `VALUES`) is labelled `ok-without-mv` and scored as a cannot-case: `testAggregateMaterializationAggregateFuncs17` and `Funcs20`.
 * Original and adapted are separate. Original: the extracted cases above. Adapted: `tests/fixtures/mv_reuse/adapted_cases.json` (29 shared-model cases in Dataform style, written by `tools/make_adapted_mv_cases.py`, scored as source `adapted`).
+* Doris: `tools/extract_doris_mv.py` copies the outer-join materialized-view regression tests of Apache Doris 3.0.6 (`regression-test/suites/nereids_rules_p0/mv/`, Apache-2.0) into `tests/fixtures/mv_reuse/doris_mv_cases.json` (456 cases in four groups: `outer_join`, and the `dim_left`, `dim_right` and `dim_full` matrices that put a filtered derived table on the null-supplying side). Doris's `success` is scored as a reusable case and its `fail` as a cannot-case; like Calcite's `noMat`, `fail` is not a proof that no rewrite exists, so a rewrite there is checked, not penalised. Run it with `--source doris`.
+* Outer-join, key-aware, union and set-operation cases: `tools/make_outer_union_mv_cases.py` writes `tests/fixtures/mv_reuse/outer_union_cases.json` (64 cases in groups `outer`, `keys`, `union` and `setop`, over its own `shop` schema, a StarRocks-style schema `sr` and the HR schemas; some adapted from StarRocks 3.3.0 tests, with the licence kept in the case's `source`). Every label is checked: a `rewrite` case carries a witness replacement over the model (`mv0`) that agrees with the query on random databases, and every `none` case carries counterexamples (tempting replacements that differ on some database). `tests/test_outer_union_mv_cases.py` re-runs both, so a wrong label cannot reward or punish the engine. Run it with `--source outer-union`.
+* Schemas: the Calcite cases run on the HR schema as Calcite's own materialized-view tests declare it (`HrFKUKSchema`: `depts(deptno)` unique and `emps.deptno` referencing it). The adapted cases and the set-operation cases use `hr_plain`, the same tables with no keys, because a declared foreign key would change their labels. The Doris and outer-union fixtures carry their schemas (keys and foreign keys included) in the fixture file.
+* Foreign keys in the random check: `random_check` generates parents first and copies each child's key values from a parent row (or leaves them NULL when the column is nullable), so a rewrite that is valid only under a declared foreign key is not refuted by an orphan row. A schema with no foreign key draws exactly the databases it drew before.
+* Keys and the prover: declared keys let the prover drop a join or a `DISTINCT`, sometimes on one side only. `_prove` retries a candidate with only NOT NULL declared when the first proof fails with one of the prover's two shape-mismatch reasons ("no row-preserving mapping" or "a derived table is not joined on all of its columns"). A proof under fewer assumptions holds on every database the declared constraints allow, so the retry is sound. It is not made after a counterexample, a timeout or a column-count difference. `fk_rules` also drops an FK join when the child is a derived table that only filters and renames one table's columns (each of its rows is a row of the table, so the key, NOT NULL and reference hold for it).
 * Overlap with the other evals: `python tools/mv_overlap.py` finds no case whose query or materialization appears in the SQLSolver, Cosette, QED, R-Bot or SPES fixtures (`tests/fixtures/mv_reuse/overlap.json`). SQLSolver's Calcite pairs come from `RelOptRulesTest`, a different test class.
 * A Calcite `noMat` verdict is not proof that no rewrite exists. A rewrite where Calcite says `noMat` is checked, not penalised; none occurred.
 * Held out: a quarter of the cases by case-id hash.
@@ -25,11 +30,17 @@ Every runner takes `--baseline` (the existing prover alone, before these engines
 | | Reusable cases rewritten | Cannot-cases not rewritten | Unsupported | Wrong |
 | --- | --- | --- | --- | --- |
 | Baseline, development (existing prover alone) | 8/108 | 32/32 | 0 | 0 |
-| Development | 87/108 | 32/32 | 14 | 0 |
+| Development | 89/108 | 32/32 | 14 | 0 |
 | Held out | 28/39 | 9/9 | 3 | 0 |
 | All (196 cases, 8 disabled) | 115/147 (supported subset 115/139) | 41/41 | 17 | 0 |
 
+The development row was measured with the declared HR keys (it was 87/108 on the key-free schema; the keys gain `testJoinMaterializationUKFK1` and `UKFK4`, and the retry above recovers the four cases the keys had broken). The held-out and all-cases rows were measured before that change and are re-measured when the outer-join work lands.
+
 118 of 196 queries were changed; all 118 were verified on random databases (`FLOOR(x TO unit)` is run as `DATE_TRUNC`). Adapted cases: 20/20 reusable rewritten, 9/9 cannot-cases left alone, 0 wrong (baseline 1/12 on development).
+
+The two newer sources, development split only (no held-out run yet), before any outer-join rule: Doris 55/159 reusable cases rewritten, 192/192 cannot-cases left alone, 0 wrong (351 cases; `dim_full` 18/54, `dim_left` 16/47, `dim_right` 16/45, `outer_join` 5/13); outer-union 5/37 reusable cases rewritten, 12/12 cannot-cases left alone, 0 wrong (49 cases). Nearly every miss is `unsupported`: the proposer does not yet read an outer join or a filtered derived table on the null-supplying side. The Doris `outer_join` cases `mv1_2` and `mv2_0` (the view preserves the other side) and `mv2_2` (the view lacks the residual's column) must stay unrewritten, and so must every trap in the outer-union set.
+
+Floors (`tests/test_model_reuse_evals.py`): outer-union 5 of 37 on the development split (fast), Doris 55 of 159 on the development split (slow) and a Doris sample (the `outer_join` group plus every tenth case, 8 reusable cases rewritten) in the fast tier; all with 0 wrong and no cannot-case rewritten.
 
 What the proposer reads beyond select-project-join and rollups:
 
@@ -42,7 +53,7 @@ What the proposer reads beyond select-project-join and rollups:
 
 The `COALESCE` fix matters for correctness: the prover currently proves `COUNT(*)` equal to a `SUM` of grouped counts even over an empty table, so before it five CUBE/ROLLUP rewrites were accepted and failed the random-database check (reported to the prover's soundness owners).
 
-Not read yet: unique/foreign-key joins, outer-join models, branchwise set-operation compensation from base tables (a projection that is not a column reordering is not pushed through `INTERSECT ALL`, as `salary * 2` could merge two values), union compensation from base tables, correlated subqueries, injective group keys.
+Not read yet: outer-join models and outer-join queries (the `outer-union` and Doris misses), lossless extra joins beyond the FK case above, branchwise set-operation compensation from base tables (a projection that is not a column reordering is not pushed through `INTERSECT ALL`, as `salary * 2` could merge two values), union compensation from base tables, correlated subqueries, injective group keys.
 
 ## Query containment
 
