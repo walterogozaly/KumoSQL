@@ -216,6 +216,7 @@ class _Setup:
     checked: frozenset[str] = frozenset()
     keep_columns: dict[str, frozenset[str]] = field(default_factory=dict)  # never pruned
     factor: bool = False
+    drop_only: bool = False
     new_tables: dict = field(default_factory=dict)  # body fingerprint -> internal key of a factored table
     new_names: dict = field(default_factory=dict)  # internal key of a factored table -> the name it is given
 
@@ -849,6 +850,8 @@ def _moves(setup: _Setup, state: Mapping[str, str], columns: Mapping[str, Sequen
         if not users:
             yield f"drop {key}", {k: v for k, v in state.items() if k != key}
             continue
+        if setup.drop_only:
+            continue
         if key in setup.fixed or any(u in setup.fixed for u in users):
             continue
         try:
@@ -869,7 +872,7 @@ def _moves(setup: _Setup, state: Mapping[str, str], columns: Mapping[str, Sequen
         names = tuple(columns.get(key, ()))
         if names and key not in setup.fixed:
             groups.setdefault((names, setup.reads(state[key])), []).append(key)
-    for members in groups.values():
+    for members in (groups.values() if not setup.drop_only else ()):
         for key in members:
             if key in protected:
                 continue
@@ -904,17 +907,21 @@ def _moves(setup: _Setup, state: Mapping[str, str], columns: Mapping[str, Sequen
         used |= setup.keep_columns.get(key, frozenset())
         pruned = _prune(state[key], used)
         if pruned is not None:
-            forms = _best(setup, pruned, columns)
-            yield f"prune unused columns of {key}", {**state, key: forms[0]}
+            if setup.drop_only:
+                yield f"prune unused columns of {key}", {**state, key: pruned}
+            else:
+                forms = _best(setup, pruned, columns)
+                yield f"prune unused columns of {key}", {**state, key: forms[0]}
 
     # simpler SQL for one table
-    for key in sorted(state):
-        if key in setup.fixed:
-            continue
-        for form in _simplified(setup, state[key], columns)[:2]:
-            yield f"simplify {key}", {**state, key: form}
+    if not setup.drop_only:
+        for key in sorted(state):
+            if key in setup.fixed:
+                continue
+            for form in _simplified(setup, state[key], columns)[:2]:
+                yield f"simplify {key}", {**state, key: form}
 
-    if setup.factor:
+    if setup.factor and not setup.drop_only:
         yield from _factor_moves(setup, state, columns)
 
 
@@ -1208,6 +1215,7 @@ def minimize_tables(
     checked: Iterable[str] = (),
     keep_columns: Mapping[str, Iterable[str]] | None = None,
     factor: bool = False,
+    drop_only: bool = False,
     lower_score_only: bool = False,
 ) -> TableMinimization:
     """The lowest-complexity set of tables found that keeps every protected table, with its proofs.
@@ -1221,7 +1229,8 @@ def minimize_tables(
     read is kept and proved unchanged (a mapping gives their columns). ``incremental`` names tables whose
     rows depend on earlier runs (a SELECT alone cannot say so, nor give a ``uniqueKey``, an
     ``updatePartitionFilter`` or a schedule): they are fixed, so they are never folded, merged, pruned or
-    rewritten. A ``checked`` table may be dropped
+    rewritten. With ``drop_only``, the search may drop unused tables and prune safely unused output columns;
+    it will not fold, merge, simplify or factor retained queries. A ``checked`` table may be dropped
     or folded away, but while it exists it must stay proved equal to the original on the columns it
     keeps. ``keep_columns`` are columns of a table that are never pruned. With ``factor``, a query
     repeated as a derived table or WITH table in several tables may be moved into a table of its own
@@ -1234,6 +1243,7 @@ def minimize_tables(
     fixed = _with_incremental(fixed, incremental)
     setup, names, mapping, back = _prepare(tables, protected, sources, dialect, timeout_ms, fixed, checked, keep_columns)
     setup.factor = factor
+    setup.drop_only = drop_only
     start = dict(setup.original)
     result_state = start
     tried = rejected = steps = 0
@@ -1292,7 +1302,7 @@ def minimize_tables(
                 return state, path
 
     best_state, best_path = descend(start, [])
-    if not stop:
+    if not stop and not setup.drop_only:
         folded = _fold_all(setup, start)
         if folded is not None and attempt(folded[0], folded[1]):
             other_state, other_path = descend(folded[1], [folded[0]])

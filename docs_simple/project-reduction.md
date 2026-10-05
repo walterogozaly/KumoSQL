@@ -21,7 +21,7 @@ From a project checkout:
 python -m kumosql reduce-project path/to/project --keep orders --keep customers --patch reduce.diff
 ```
 
-Replace the path and names. The JSON output lists what was removed, changed, added and kept as written, with a verdict per kept output. `--drop-only` only deletes what the kept outputs do not need and rewrites nothing.
+Replace the path and names. The JSON output lists what was removed, changed, added and kept as written, with a verdict per kept output and a `policy` section showing which transformations were allowed. `--drop-only` removes actions nobody needs and output columns no reader uses. It keeps the remaining model boundaries and expressions intact, and disables factoring. `--no-factor` leaves other reductions enabled but prevents repeated queries from being moved into a new shared table. You can pass both; that uses the `--drop-only` policy.
 
 ## What stays as written
 

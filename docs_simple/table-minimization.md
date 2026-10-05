@@ -6,6 +6,8 @@ Give KumoSQL several table-defining queries and choose protected outputs. It sea
 
 Unprotected tables may be dropped, folded into readers, merged with equal tables, pruned of unused columns, or simplified. With factoring on, a query repeated in several tables can move into one new table. A change is kept only when the pipeline prover accepts the protected outputs against the original definitions.
 
+The Python option `drop_only=True` allows just dropping unused tables and pruning output columns no reader needs. It keeps the other queries and their model boundaries intact. Project reduction exposes this as `--drop-only`; its report lists the allowed and disabled transformations. `--no-factor` disables shared-query extraction while leaving other reductions available. In project reduction, `--drop-only` also disables factoring, so combining both flags has the same effect as `--drop-only` alone.
+
 ## A small input file
 
 Save this as `case.json`:

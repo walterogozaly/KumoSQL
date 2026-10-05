@@ -134,6 +134,9 @@ class ProjectReduction:
     stopped: str = ""
     seconds: float = 0.0
     notes: list[str] = field(default_factory=list)
+    rewrite: bool = True
+    drop_only: bool = False
+    factor: bool = True
 
     @property
     def improved(self) -> bool:
@@ -176,8 +179,24 @@ class ProjectReduction:
         assumptions: list[str] = []
         for check in checks:
             assumptions.extend(a for a in check["assumptions"] if a not in assumptions)
+        allowed = ["drop_actions"]
+        disabled = []
+        if self.drop_only:
+            allowed.append("drop_columns")
+            disabled.extend(["fold", "merge", "simplify", "factor"])
+        elif self.rewrite:
+            allowed.append("drop_columns")
+            allowed.extend(["fold", "merge", "simplify"])
+            if self.factor:
+                allowed.append("factor")
+            else:
+                disabled.append("factor")
+        else:
+            disabled.extend(["drop_columns", "fold", "merge", "simplify", "factor"])
         return {
             "keep": self.keep,
+            "policy": {"rewrite": self.rewrite, "drop_only": self.drop_only, "no_factor": not self.factor,
+                       "allowed_transformations": allowed, "disabled_transformations": disabled},
             "verified": self.verified,
             "verdict": self.verdict(),
             "checks": checks,
@@ -795,6 +814,7 @@ def reduce_project(
     strict: bool = False,
     rewrite: bool = True,
     factor: bool = True,
+    drop_only: bool = False,
     new_table_type: str = "view",
     source_columns: Mapping[str, object] | None = None,
     timeout_ms: int = 5000,
@@ -805,8 +825,10 @@ def reduce_project(
 
     ``keep`` names actions by key (``project.dataset.name``), ``dataset.name``, name or file path. With
     ``strict``, every table that survives (not only those with assertions) must stay proved equal to the
-    original on the columns it keeps. With ``rewrite=False`` only what the kept outputs do not need is
-    deleted; no query is changed. ``source_columns`` adds columns (and keys) of declared sources, in the
+    original on the columns it keeps. With ``rewrite=False`` and ``drop_only=False`` only unneeded actions
+    are deleted. ``drop_only=True`` also prunes safely unused output columns, keeping retained model
+    boundaries and SQL expressions intact; it implies ``factor=False``. Otherwise, ``factor=False`` disables
+    only extraction of shared computations. ``source_columns`` adds columns (and keys) of declared sources, in the
     format :func:`kumosql.table_minimizer.minimize_tables` takes. Raises :class:`ReductionError` on a kept
     output that is unknown, ambiguous or a declaration.
     """
@@ -894,23 +916,24 @@ def reduce_project(
 
     minimized = None
     notes: list[str] = []
-    if rewrite:
+    if rewrite or drop_only:
         try:
             minimized = minimize_tables(
                 tables, protected, sources=sources, fixed=fixed, checked=checked, keep_columns=keep_columns,
-                factor=factor, timeout_ms=timeout_ms, max_seconds=max(1.0, max_seconds - (time.time() - started)),
-                progress=progress, lower_score_only=True,
+                factor=factor and not drop_only, drop_only=drop_only,
+                timeout_ms=timeout_ms, max_seconds=max(1.0, max_seconds - (time.time() - started)),
+                progress=progress, lower_score_only=not drop_only,
             )
         except MinimizationError as error:
             notes.append(f"queries were not rewritten: {error}")
 
     result = _build(project, kept, needed, protected, fixed_why, operation_why, dropped_assertions, minimized,
-                    new_table_type, notes)
+                    new_table_type, notes, rewrite=rewrite, drop_only=drop_only, factor=factor)
     _verify(project, result, tables, protected, fixed, checked, sources, timeout_ms)
     if not result.verified and minimized is not None and minimized.moves:
         notes.append("the rewritten queries did not re-prove after writing them back; only unneeded actions were removed")
         result = _build(project, kept, needed, protected, fixed_why, operation_why, dropped_assertions, None,
-                        new_table_type, notes)
+                        new_table_type, notes, rewrite=rewrite, drop_only=drop_only, factor=factor)
         _verify(project, result, tables, protected, fixed, checked, sources, timeout_ms)
     result.seconds = time.time() - started
     return result
@@ -935,7 +958,8 @@ def _removal_reasons(moves: Sequence[str]) -> dict[str, str]:
 
 
 def _build(project: _Project, kept, needed, protected, fixed_why, operation_why, dropped_assertions,
-           minimized, table_type: str, notes: list[str]) -> ProjectReduction:
+           minimized, table_type: str, notes: list[str], *, rewrite: bool = True, drop_only: bool = False,
+           factor: bool = True) -> ProjectReduction:
     models = project.pipeline.models
     final: dict[str, str] = {k: project.sql[k] for k in needed}
     added: dict[str, str] = {}
@@ -1033,6 +1057,7 @@ def _build(project: _Project, kept, needed, protected, fixed_why, operation_why,
         removed=sorted(removed, key=lambda r: r["model"]), changed=sorted(changed), added=added_out, fixed=fixed,
         dropped_assertions=dropped_assertions, moves=moves, rejected_moves=rejected, tried=tried, rejected=rejected_count,
         score_before=project_score(project.pipeline), actions_before=len(models), stopped=stopped, notes=list(notes),
+        rewrite=rewrite or drop_only, drop_only=drop_only, factor=factor and not drop_only and rewrite,
     )
 
 
@@ -1128,8 +1153,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--keep", action="append", default=[], help="an output to keep: name, dataset.name or file path")
     parser.add_argument("--keep-assertions", action="store_true", help="keep every assertion over needed tables, proved unchanged")
     parser.add_argument("--strict", action="store_true", help="every surviving table must stay proved equal")
-    parser.add_argument("--drop-only", action="store_true", help="only delete what the kept outputs do not need")
-    parser.add_argument("--no-factor", action="store_true", help="never move repeated queries into a shared table")
+    parser.add_argument("--drop-only", action="store_true",
+                        help="only drop unused actions and safely unused output columns; retain model boundaries")
+    parser.add_argument("--no-factor", action="store_true",
+                        help="disable shared-computation extraction while leaving other reductions enabled")
     parser.add_argument("--table-type", default="view", choices=("view", "table"), help="type of a new shared table")
     parser.add_argument("--max-seconds", type=float, default=300.0)
     parser.add_argument("--timeout-ms", type=int, default=5000)
@@ -1138,8 +1165,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         result = reduce_project(
-            args.project, args.keep, keep_assertions=args.keep_assertions, strict=args.strict, rewrite=not args.drop_only,
-            factor=not args.no_factor,
+            args.project, args.keep, keep_assertions=args.keep_assertions, strict=args.strict,
+            drop_only=args.drop_only, factor=not args.no_factor,
             new_table_type=args.table_type, max_seconds=args.max_seconds, timeout_ms=args.timeout_ms,
             progress=lambda line: print(line, file=sys.stderr),
         )
