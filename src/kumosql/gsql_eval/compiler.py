@@ -20,7 +20,7 @@ from sqlglot import exp
 from . import types as T
 from . import values as V
 from .errors import AnalysisError, EvalError, Unsupported
-from .runtime import NULL, E, Env, const
+from .runtime import NULL, E, Env, const, is_constant
 
 # ---------------------------------------------------------------------------------------------
 # scopes
@@ -90,7 +90,7 @@ class FromScope(Scope):
                 if source.value_slot is not None and source.value_type.kind == "STRUCT":
                     index = source.value_type.field_index(first)
                     if index is not None:
-                        hits.append(Ref(source.value_slot, source.value_type.fields[index][1], (index,)))
+                        hits.append(Ref(source.value_slot, source.value_type, (index,)))
         aliases = [s for s in self.sources if s.name is not None and s.name.lower() == first]
         if hits and aliases:
             if len(parts) == 1 and len(aliases) == 1 and aliases[0].value_slot is not None and not aliases[0].cols:
@@ -124,7 +124,7 @@ def source_star(source: Source) -> list:
     if source.value_slot is not None:
         typ = source.value_type
         if typ.kind == "STRUCT":
-            return [(name, source.value_slot, ftype, (i,)) for i, (name, ftype) in enumerate(typ.fields)]
+            return [(name, source.value_slot, typ, (i,)) for i, (name, _) in enumerate(typ.fields)]  # typ: the slot's type
         return [(source.name, source.value_slot, typ, ())] + [(n, s, t, ()) for n, s, t in source.cols]
     return [(n, s, t, ()) for n, s, t in source.cols]
 
@@ -203,6 +203,7 @@ class Plan:
     run: Callable[[Env], list]
     ordered: bool = False
     value_table: bool = False
+    col_exprs: list | None = None  # the SELECT-list expressions (literal and NULL columns keep their literal-ness in set operations)
 
     @property
     def types(self) -> list[T.Type]:
@@ -258,7 +259,8 @@ def is_query(node: exp.Expression) -> bool:
 
 
 class Compiler:
-    def __init__(self, database, tz, params: dict, mode: str, literals_decoded: bool):
+    def __init__(self, database, tz, params: dict, mode: str, literals_decoded: bool, strict_certain: bool = False):
+        self.strict_certain = strict_certain  # the text has STRICT CORRESPONDING and no BY NAME: a kindless by-name set operation is STRICT
         self.database = database
         self.tz = tz
         self.params = params
@@ -268,18 +270,18 @@ class Compiler:
 
     # --- names -------------------------------------------------------------------------------
 
-    def resolve(self, parts: list[str], scope: Scope) -> E | None:
+    def resolve(self, parts: list[str], scope: Scope, flatten: bool = False) -> E | None:
         depth = 0
         current = scope
         while current is not None:
             ref = current.lookup(parts)
             if ref is not None:
-                return self._ref_expr(ref, depth, parts)
+                return self._ref_expr(ref, depth, parts, flatten)
             current = current.parent
             depth += 1
         return None
 
-    def _ref_expr(self, ref: Ref, depth: int, parts: list[str]) -> E:
+    def _ref_expr(self, ref: Ref, depth: int, parts: list[str], flatten: bool = False) -> E:
         if ref.row_slots is not None:
             slots = ref.row_slots
             getter = _row_getter(depth)
@@ -293,18 +295,65 @@ class Compiler:
         for index in ref.fields:
             result = _field(result, index)
         for name in parts[ref.consumed:]:
-            result = self.field_access(result, name)
+            result = self.field_access(result, name, flatten)
         return result
 
-    def field_access(self, value: E, name: str) -> E:
-        if value.type.kind != "STRUCT":
-            if value.type.kind == "ARRAY":
+    def field_access(self, value: E, name: str, flatten: bool = False) -> E:
+        """``value.name``. Through an array of structs (``flatten``: only where GoogleSQL allows it, in an UNNEST or
+        FLATTEN argument) the field is read from every element and the results form one array: an array-valued field
+        contributes its elements (nothing when NULL), a NULL element gives a NULL."""
+
+        if value.type.kind == "ARRAY":
+            if not flatten:
                 raise Unsupported("field access through an array")
+            elem = value.type.elem
+            if elem.kind != "STRUCT":
+                raise AnalysisError(f"Cannot access field {name} on a value with type {value.type}")
+            index = elem.field_index(name)
+            if index is None:
+                raise AnalysisError(f"Field name {name} does not exist in {elem}")
+            ftype = elem.fields[index][1]
+            spread = ftype.kind == "ARRAY"
+            result_type = ftype if spread else T.array(ftype)
+            fn = value.fn
+
+            def run(env):
+                items = fn(env)
+                if items is None:
+                    return None
+                out = []
+                for item in items:
+                    field = None if item is None else item[index]
+                    if spread:
+                        if field is not None:
+                            out.extend(field)
+                    else:
+                        out.append(field)
+                unordered = isinstance(items, V.UnorderedArray) or any(isinstance(f, V.UnorderedArray) for f in out if spread)
+                return V.UnorderedArray(out) if unordered else tuple(out)
+
+            return E(result_type, run)
+        if value.type.kind != "STRUCT":
             raise AnalysisError(f"Cannot access field {name} on a value with type {value.type}")
         index = value.type.field_index(name)
         if index is None:
             raise AnalysisError(f"Field name {name} does not exist in {value.type}")
         return _field(value, index)
+
+    def path_expr(self, node: exp.Expression, cx: Cx) -> E:
+        """Compile the argument of UNNEST or FLATTEN: a path ``a.b.c`` may step through arrays of structs there."""
+
+        if isinstance(node, exp.Paren):
+            return self.path_expr(node.this, cx)
+        parts = path_parts(node)
+        if parts is not None and len(parts) > 1:
+            value = self.resolve(parts, cx.scope, True)
+            if value is None:
+                raise AnalysisError(f"Unrecognized name: {parts[0]}")
+            return self._checked(value)
+        if isinstance(node, exp.Dot) and isinstance(node.expression, exp.Identifier):
+            return self._checked(self.field_access(self.path_expr(node.this, cx), node.expression.name, True))
+        return self.expr(node, cx)
 
     # --- signatures for GROUP BY matching ---------------------------------------------------
 
@@ -371,14 +420,19 @@ class Compiler:
                 return found
         handler = _HANDLERS.get(type(node))
         if handler is not None:
-            return handler(self, node, cx)
+            return self._checked(handler(self, node, cx))
         from . import aggregates, functions
 
         if aggregates.is_aggregate(node) or isinstance(node, exp.Window):
             if cx.in_agg:
                 raise AnalysisError("Aggregations of aggregations are not allowed")
             raise AnalysisError(f"Aggregate function not allowed in {cx.no_agg or 'this context'}")
-        return functions.compile_call(self, node, cx)
+        return self._checked(functions.compile_call(self, node, cx))
+
+    def _checked(self, value: E) -> E:
+        if self.mode == "bigquery" and value.type.nested_array:
+            raise AnalysisError("Arrays of arrays are not supported")
+        return value
 
     def exprs(self, nodes, cx: Cx) -> list[E]:
         return [self.expr(n, cx) for n in nodes]
@@ -390,8 +444,17 @@ class Compiler:
             return value
         if value.lit == "null":
             return E(target, value.fn, "null", None)
+        if value.lit == "literal" and value.type.kind == "ARRAY" and value.value == () and target.kind == "ARRAY":
+            return const(target, ())  # the literal []
         if value.lit == "literal" and value.value is not None:
             source = value.type
+            if source.kind == "FLOAT64" and target.kind in ("NUMERIC", "BIGNUMERIC"):
+                try:
+                    if value.exact is not None:
+                        return const(target, V.decimal_of(target.kind)(value.exact))
+                    return const(target, V.caster(source, target)(value.value, self.tz))
+                except EvalError:
+                    raise Unsupported(f"FLOAT64 literal that does not convert to {target}") from None
             if source.kind == "STRING" and target.kind in ("DATE", "DATETIME", "TIME", "TIMESTAMP", "BYTES") or (
                 T.implicitly_coercible(source, target)
             ):
@@ -402,6 +465,10 @@ class Compiler:
                 except EvalError as error:
                     raise AnalysisError(f"Could not cast literal to {target}: {error}") from None
                 return const(target, converted)
+        if value.sub is not None and value.type.kind == "STRUCT" and T.coercible_with_info(value.type, target, value.info):
+            convert = _struct_converter(value.type, target, value.info)
+            fn = value.fn
+            return E(target, lambda env: (lambda v: None if v is None else convert(v, env.ctx.tz))(fn(env)))
         if not T.implicitly_coercible(value.type, target):
             raise AnalysisError(f"{what or 'Value'} of type {value.type} does not coerce to {target}")
         convert = V.caster(value.type, target)
@@ -409,7 +476,7 @@ class Compiler:
         return E(target, lambda env: (lambda v: None if v is None else convert(v, env.ctx.tz))(fn(env)), value.lit if value.lit == "literal" and value.value is None else None)
 
     def unify(self, values: list[E], what: str = "") -> tuple[T.Type, list[E]]:
-        target = T.supertype([(v.type, v.lit) for v in values])
+        target = T.supertype([(v.type, v.info) for v in values])
         return target, [self.coerce(v, target, what) for v in values]
 
     # --- queries -------------------------------------------------------------------------------
@@ -454,7 +521,10 @@ class Compiler:
         recursive = bool(with_.args.get("recursive"))
         ctes = dict(ctes)
         entries = []
-        for cte in with_.expressions:
+        definitions = list(with_.expressions)
+        if recursive:
+            definitions = _dependency_order(definitions)
+        for cte in definitions:
             _only(cte, "this", "alias")
             alias = cte.args.get("alias")
             if alias is None or alias.args.get("columns"):
@@ -483,7 +553,7 @@ class Compiler:
                 local[entry_id] = cte_plan.run(inner)
             return body(inner)
 
-        return Plan(plan.columns, run, plan.ordered, plan.value_table)
+        return Plan(plan.columns, run, plan.ordered, plan.value_table, plan.col_exprs)
 
     def _recursive_cte(self, node: exp.Expression, name: str, entry_id: int, scope: Scope, ctes: dict) -> Plan:
         if not isinstance(node, exp.Union) or node.args.get("by_name") or node.args.get("side") or node.args.get("kind"):
@@ -526,7 +596,9 @@ class Compiler:
             iterations = 0
             local = dict(env.ctes)
             inner = Env(env.row, env.outer, env.ctx, local)
-            while working:
+            first = True
+            while working or first:  # the recursive term runs at least once, even over an empty non-recursive term
+                first = False
                 iterations += 1
                 if iterations > env.ctx.max_recursion:
                     raise EvalError("Recursive query exceeded the maximum number of iterations")
@@ -580,7 +652,7 @@ class Compiler:
                 return limit_fn(rows, env, None)
             return rows
 
-        return Plan(plan.columns, run, bool(keys), plan.value_table)
+        return Plan(plan.columns, run, bool(keys), plan.value_table, plan.col_exprs)
 
     def _order_key(self, item: exp.Expression, cx: Cx, columns: list, select_items) -> tuple:
         if not isinstance(item, exp.Ordered):
@@ -649,72 +721,171 @@ class Compiler:
 
     def set_operation(self, node: exp.Expression, scope: Scope, ctes: dict) -> Plan:
         _only(node, "this", "expression", "distinct", "by_name", "side", "kind", "on", "with_", "order", "limit", "offset")
-        left = self.query(node.this, scope, ctes)
-        right = self.query(node.expression, scope, ctes)
+        operation = type(node).__name__.upper()
         distinct = node.args.get("distinct")
         if distinct is None:
             raise AnalysisError("Set operation needs ALL or DISTINCT")
-        operation = type(node).__name__.upper()
+        # a chain `a UNION ALL b UNION ALL c` is one operation over three inputs: their column types unify together
+        chain = [node]
+        current = node.this
+        while type(current) is type(node) and _same_set_mode(current, node):
+            chain.insert(0, current)
+            current = current.this
+        operands = [current] + [link.expression for link in chain]
+        plans = [self.query(operand, scope, ctes) for operand in operands]
+        if any(p.value_table for p in plans):
+            if not all(p.value_table for p in plans) or node.args.get("by_name"):
+                raise Unsupported("set operation over value tables")
         if node.args.get("by_name"):
-            return self._set_by_name(node, left, right, operation, bool(distinct))
-        if node.args.get("side") or node.args.get("kind") or node.args.get("on"):
-            raise Unsupported("set operation mode")
-        if len(left.columns) != len(right.columns):
-            raise AnalysisError(f"Queries in {operation} have mismatched column count")
+            outputs, positions = self._by_name_layout(node, plans, operation)
+        else:
+            if node.args.get("side") or node.args.get("kind") or node.args.get("on"):
+                raise Unsupported("set operation mode")
+            width = len(plans[0].columns)
+            for p in plans[1:]:
+                if len(p.columns) != width:
+                    raise AnalysisError(f"Queries in {operation} have mismatched column count")
+            outputs = [plans[0].columns[i][0] for i in range(width)]
+            positions = [list(range(width)) for _ in plans]
         types = []
-        for (_, a), (_, b) in zip(left.columns, right.columns):
-            types.append(T.supertype([(a, None), (b, None)]))
+        for j in range(len(outputs)):
+            members = [(p.columns[pos[j]][1], _column_info(p, pos[j])) for p, pos in zip(plans, positions) if pos[j] is not None]
+            types.append(T.supertype(members))
         for t in types:
             if (distinct or operation != "UNION") and not T.groupable(t):
                 raise AnalysisError(f"Column of type {t} cannot be used in {operation} DISTINCT")
-        names = [n for n, _ in left.columns]
-        return self._set_plan(left, right, list(zip(names, types)), operation, bool(distinct),
-                              list(range(len(types))), list(range(len(types))))
+        aligned = [self._align(p, pos, types) for p, pos in zip(plans, positions)]
+        plan = self._set_plan(aligned, list(zip(outputs, types)), operation, bool(distinct))
+        if plans[0].value_table:
+            plan.value_table = True
+        else:
+            plan.col_exprs = [_merged_column(plans, positions, j) for j in range(len(outputs))]
+        return plan
 
-    def _set_by_name(self, node, left: Plan, right: Plan, operation: str, distinct: bool) -> Plan:
+    def _by_name_layout(self, node, plans: list[Plan], operation: str):
+        """The output column names of ``... BY NAME`` / ``CORRESPONDING`` and, per input, where each one sits (or ``None``)."""
+
         side = node.args.get("side")
         kind = node.args.get("kind")
         side = side.upper() if isinstance(side, str) else None
         kind = kind.upper() if isinstance(kind, str) else None
+        if kind == "OUTER" and side is None:
+            raise Unsupported("OUTER set operation without a side")
+        if side is not None and kind not in (None, "OUTER"):
+            raise Unsupported("set operation mode")
+        mode = side or kind or "STRICT"
+        by_list = None
         if node.args.get("on"):
-            raise Unsupported("CORRESPONDING BY")
-        lnames = [n for n, _ in left.columns]
-        rnames = [n for n, _ in right.columns]
-        if any(n is None for n in lnames + rnames):
-            raise AnalysisError("Set operation BY NAME needs named columns")
-        lower_l = [n.lower() for n in lnames]
-        lower_r = [n.lower() for n in rnames]
-        if len(set(lower_l)) != len(lower_l) or len(set(lower_r)) != len(lower_r):
-            raise AnalysisError("Duplicate column names in set operation BY NAME")
-        if side is None and kind in (None, "INNER") and kind is None:
-            # BY NAME: both sides must have the same names
-            if set(lower_l) != set(lower_r):
-                raise AnalysisError("BY NAME requires the same column names on both sides")
-            order = lower_l
-        elif side is None and kind == "INNER":
-            order = [n for n in lower_l if n in lower_r]
-            if not order:
-                raise AnalysisError("CORRESPONDING found no common columns")
-        else:
-            raise Unsupported(f"set operation {side or ''} {kind or ''} by name")
-        lpos = [lower_l.index(n) for n in order]
-        rpos = [lower_r.index(n) for n in order]
-        types = [T.supertype([(left.columns[i][1], None), (right.columns[j][1], None)]) for i, j in zip(lpos, rpos)]
-        names = [lnames[i] for i in lpos]
-        return self._set_plan(left, right, list(zip(names, types)), operation, distinct, lpos, rpos)
+            by_list = []
+            for item in node.args["on"]:
+                parts = path_parts(item)
+                if parts is None or len(parts) != 1:
+                    raise Unsupported("CORRESPONDING BY item that is not a column name")
+                by_list.append(parts[0])
+            if len({n.lower() for n in by_list}) != len(by_list):
+                raise Unsupported("CORRESPONDING BY with a repeated column")
+        lowered = []  # per input: name -> positions
+        for p in plans:
+            index: dict = {}
+            for i, (name, _) in enumerate(p.columns):
+                if name is not None:
+                    index.setdefault(name.lower(), []).append(i)
+            lowered.append(index)
 
-    def _set_plan(self, left: Plan, right: Plan, columns: list, operation: str, distinct: bool, lpos, rpos) -> Plan:
-        types = [t for _, t in columns]
-        lconv = _converters([left.columns[i][1] for i in lpos], types)
-        rconv = _converters([right.columns[j][1] for j in rpos], types)
+        def unique(k: int, name: str):
+            hits = lowered[k].get(name.lower())
+            if hits is None:
+                return None
+            if len(hits) > 1:
+                raise Unsupported(f"column {name} repeated in a set operation by name")
+            return hits[0]
 
-        def project(rows, positions, converters, tz):
-            return [_convert_row(converters, tuple(row[p] for p in positions), tz) for row in rows]
+        def uncertain(why: str):
+            if mode == "STRICT" and self.strict_certain:
+                raise AnalysisError(f"STRICT set operation: {why}")
+            raise Unsupported(f"set operation by name: {why}")
 
-        def run(env: Env) -> list:
+        if by_list is None and any(n is None for p in plans for n, _ in p.columns):
+            raise Unsupported("set operation by name over unnamed columns")
+        if mode == "STRICT":
+            if by_list is None:
+                names = [n for n, _ in plans[0].columns]
+                for p in plans[1:]:
+                    if {n.lower() for n, _ in p.columns} != {n.lower() for n in names}:
+                        uncertain("the inputs have different column names")
+            else:
+                names = by_list
+                for k, p in enumerate(plans):
+                    if {n.lower() for n, _ in p.columns if n is not None} != {n.lower() for n in names} or len(p.columns) != len(names):
+                        uncertain("the inputs' columns differ from the BY list")
+        elif by_list is not None:
+            names = by_list
+            for k in range(len(plans)):
+                missing = [n for n in names if n.lower() not in lowered[k]]
+                if mode == "INNER" and missing:
+                    raise Unsupported("CORRESPONDING BY column missing from an input")
+                if mode == "LEFT" and k == 0 and missing:
+                    raise Unsupported("CORRESPONDING BY column missing from the left input")
+            if mode == "FULL" and any(all(n.lower() not in lowered[k] for k in range(len(plans))) for n in names):
+                raise Unsupported("CORRESPONDING BY column missing from every input")
+        elif mode == "INNER":
+            names = [n for n, _ in plans[0].columns if all(n.lower() in lowered[k] for k in range(1, len(plans)))]
+        elif mode == "LEFT":
+            names = [n for n, _ in plans[0].columns]
+        else:  # FULL
+            names = []
+            seen: set = set()
+            for p in plans:
+                for n, _ in p.columns:
+                    if n.lower() not in seen:
+                        seen.add(n.lower())
+                        names.append(n)
+        if not names:
+            raise Unsupported("set operation by name with no output columns")
+        positions = [[unique(k, n) for n in names] for k in range(len(plans))]
+        return names, positions
+
+    def _align(self, plan: Plan, positions: list, types: list[T.Type]):
+        """A function giving the plan's rows in the output's column order and types."""
+
+        converters = []
+        for pos, target in zip(positions, types):
+            if pos is None:
+                converters.append(None)
+                continue
+            source = plan.columns[pos][1]
+            item = plan.col_exprs[pos] if plan.col_exprs is not None else None
+            if source == target or (item is not None and item.lit == "null"):
+                converters.append(None)
+            elif item is not None and item.lit == "literal" and item.value is not None:
+                folded = self.coerce(item, target).value
+                converters.append(lambda v, tz, folded=folded: folded)
+            elif item is not None and item.sub is not None and source.kind == "STRUCT":
+                if not T.coercible_with_info(source, target, item.info):
+                    raise AnalysisError(f"Value of type {source} does not coerce to {target}")
+                converters.append(_struct_converter(source, target, item.info))
+            else:
+                if not T.implicitly_coercible(source, target):
+                    raise AnalysisError(f"Value of type {source} does not coerce to {target}")
+                converters.append(V.caster(source, target))
+        run = plan.run
+        identity = all(p == i for i, p in enumerate(positions)) and len(positions) == len(plan.columns)
+
+        def rows(env: Env) -> list:
             tz = env.ctx.tz
-            a = project(left.run(env), lpos, lconv, tz)
-            b = project(right.run(env), rpos, rconv, tz)
+            out = []
+            for row in run(env):
+                if not identity:
+                    row = tuple(None if p is None else row[p] for p in positions)
+                out.append(_convert_row(converters, row, tz))
+            return out
+
+        return rows
+
+    def _set_plan(self, aligned: list, columns: list, operation: str, distinct: bool) -> Plan:
+        types = [t for _, t in columns]
+
+        def combine(a: list, b: list) -> list:
             if operation == "UNION":
                 rows = a + b
                 return _dedupe(rows, types) if distinct else rows
@@ -746,6 +917,12 @@ class Compiler:
                     if k >= counts_b.get(key, 0):
                         out.append(row)
             return out
+
+        def run(env: Env) -> list:
+            rows = aligned[0](env)
+            for part in aligned[1:]:
+                rows = combine(rows, part(env))
+            return rows
 
         return Plan(columns, run)
 
@@ -857,6 +1034,8 @@ class Compiler:
             out_exprs.append(value)
             out_columns.append((name, value.type))
         value_table = False
+        item_columns = out_columns  # ORDER BY an output name or position means a SELECT-list item, also under AS STRUCT
+        as_struct = kind is not None and str(kind).upper() == "STRUCT"
         if kind is not None and str(kind).upper() == "STRUCT":
             struct_type = T.struct([(n, t) for n, t in out_columns])
             parts = list(out_exprs)
@@ -885,7 +1064,10 @@ class Compiler:
                     nulls_first = (not desc) if nulls_first is None else bool(nulls_first)
                     _only(ordered, "this", "desc", "nulls_first")
                     position = substituted
-                    key = E(out_columns[position][1], _out_getter(position))
+                    if as_struct:
+                        key = E(item_columns[position][1], (lambda p: lambda env: env.row[0][p])(position))
+                    else:
+                        key = E(out_columns[position][1], _out_getter(position))
                     if not T.comparable(key.type):
                         raise AnalysisError(f"ORDER BY does not support expressions of type {key.type}")
                     order_keys.append((key, desc, nulls_first, True))
@@ -944,7 +1126,7 @@ class Compiler:
                 return limit_fn(rows_out, env, [k for _, k in out] if order_keys else None)
             return [v for v, _ in out]
 
-        plan = Plan(out_columns, run, bool(order_keys), value_table)
+        plan = Plan(out_columns, run, bool(order_keys), value_table, None if value_table else out_exprs)
         return plan
 
     def _bool(self, value: E, clause: str) -> E:
@@ -987,6 +1169,8 @@ class Compiler:
                 parts = path_parts(item)
                 if parts is not None:
                     name = parts[-1]
+                elif isinstance(item, exp.Dot) and isinstance(item.expression, exp.Identifier):
+                    name = item.expression.name  # (expr).field is named field
             items.append((name, node, None))
         return items
 
@@ -1005,18 +1189,27 @@ class Compiler:
         if ref is None:
             raise Unsupported(f"{'.'.join(parts)}.* outside this query")
         fields, typ = list(ref.fields), ref.type
+        for index in ref.fields:
+            typ = typ.fields[index][1]
         for name in parts[ref.consumed:]:
             index = typ.field_index(name) if typ.kind == "STRUCT" else None
             if index is None:
                 raise AnalysisError(f"Field {name} not found")
             fields.append(index)
             typ = typ.fields[index][1]
-        return self._struct_star(Ref(ref.slot, typ, tuple(fields)))
+        return self._struct_star(Ref(ref.slot, ref.type, tuple(fields)))
 
     def _struct_star(self, ref: Ref) -> list:
-        if ref.type.kind != "STRUCT" or ref.row_slots is not None:
+        """The fields of the struct a Ref reads (``ref.type`` is the slot's type, ``ref.fields`` the path into it)."""
+
+        if ref.row_slots is not None:
             raise AnalysisError("Dot-star is only supported for STRUCT values")
-        return [(name, ref.slot, ftype, tuple(ref.fields) + (i,)) for i, (name, ftype) in enumerate(ref.type.fields)]
+        typ = ref.type
+        for index in ref.fields:
+            typ = typ.fields[index][1]
+        if typ.kind != "STRUCT":
+            raise AnalysisError("Dot-star is only supported for STRUCT values")
+        return [(name, ref.slot, ref.type, tuple(ref.fields) + (i,)) for i, (name, _) in enumerate(typ.fields)]
 
     def _star_items(self, columns, star: exp.Expression, from_scope: FromScope):
         except_ = star.args.get("except_") or star.args.get("except") or []
@@ -1114,13 +1307,7 @@ class Compiler:
                 if len(positions) > 1:
                     # several SELECT items share the name: fine only if they all read the same column
                     raise Unsupported(f"ORDER BY {target.name} names several SELECT items")
-                if column is not None:
-                    name, node, star = items[positions[0]]
-                    same = (node is not None and path_parts(node) == [target.name]) or (
-                        star is not None and node is None and star[2] == () and column.slot == star[0] and not column.fields
-                    )
-                    if not same:
-                        raise Unsupported(f"{target.name} is both a SELECT alias and a column")
+                # a SELECT-list name takes precedence over a FROM column of the same name in ORDER BY
                 return positions[0]
         return self._substitute_aliases(target, alias_nodes, from_scope)
 
@@ -1162,7 +1349,7 @@ class Compiler:
         for i, agg_node in enumerate(aggs):
             spec = aggregates.compile_aggregate(self, agg_node, Cx(from_scope, no_agg=None, in_agg=True))
             specs.append(spec)
-            replace[id(agg_node)] = E(spec.type, _slot_getter(0, n_items + 1 + i))
+            replace[id(agg_node)] = E(spec.type, _raising(_slot_getter(0, n_items + 1 + i)))
         replace["__grouping__"] = (signatures, mask_slot)
         stage = GroupStage(item_exprs, grouping_sets, specs, n_items)
         return stage, group_scope, group_info
@@ -1380,7 +1567,7 @@ class Compiler:
         if len(node.expressions) != 1:
             raise Unsupported("UNNEST of several arrays")
         argument = node.expressions[0]
-        value, correlated = self._array_expr(lambda s: self.expr(argument, Cx(s, no_agg="UNNEST")), scope, left)
+        value, correlated = self._array_expr(lambda s: self.path_expr(argument, Cx(s, no_agg="UNNEST")), scope, left)
         alias = node.args.get("alias")
         alias_name = None
         if alias is not None:
@@ -1399,7 +1586,7 @@ class Compiler:
 
     def _unnest_path(self, parts: list[str], alias_name: str | None, scope: Scope, left: FromScope):
         def compile_in(s):
-            value = self.resolve(parts, s)
+            value = self.resolve(parts, s, True)
             if value is None:
                 raise AnalysisError(f"Unrecognized name: {parts[0]}")
             return value
@@ -1456,7 +1643,8 @@ class Compiler:
             raise AnalysisError(f"{side} JOIN with a correlated array")
         if kind == "CROSS" and (on is not None or using):
             raise AnalysisError("CROSS JOIN with a condition")
-        if side in ("LEFT", "RIGHT", "FULL") and on is None and not using:
+        array_item = isinstance(join.this, exp.Unnest) or correlated  # an array scan joins without a condition
+        if side in ("LEFT", "RIGHT", "FULL") and on is None and not using and not array_item:
             raise AnalysisError("An outer join needs a join condition")
         if kind == "INNER" and on is None and not using:
             raise AnalysisError("INNER JOIN needs a join condition")
@@ -1597,7 +1785,7 @@ class GroupStage:
             for key in order:
                 values, members = groups[key]
                 group_values = tuple(values[i] if i in active else None for i in range(self.n_items))
-                agg_values = tuple(spec.compute(members, env) for spec in self.aggs)
+                agg_values = tuple(_deferred(spec.compute, members, env) for spec in self.aggs)
                 out.append(group_values + (frozenset(active),) + agg_values)
         return out
 
@@ -1605,6 +1793,32 @@ class GroupStage:
 # ---------------------------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------------------------
+
+
+class _Failed:
+    """An aggregate that raised: GoogleSQL evaluates only the branches a conditional takes, so the error surfaces only if read."""
+
+    __slots__ = ("error",)
+
+    def __init__(self, error: EvalError):
+        self.error = error
+
+
+def _deferred(compute, members, env):
+    try:
+        return compute(members, env)
+    except EvalError as error:
+        return _Failed(error)
+
+
+def _raising(getter):
+    def read(env):
+        value = getter(env)
+        if isinstance(value, _Failed):
+            raise value.error
+        return value
+
+    return read
 
 
 def _slot_getter(depth: int, slot: int):
@@ -1649,6 +1863,46 @@ def _shift(source: Source, offset: int) -> Source:
         None if source.value_slot is None else source.value_slot + offset,
         source.value_type,
     )
+
+
+def _same_set_mode(a: exp.Expression, b: exp.Expression) -> bool:
+    """Whether two set-operation nodes are the same operation with the same mode (so a chain of them is one n-ary operation)."""
+
+    keys = ("distinct", "by_name", "side", "kind")
+    if any(bool(a.args.get(k)) != bool(b.args.get(k)) or (isinstance(a.args.get(k), str) and a.args.get(k) != b.args.get(k)) for k in keys):
+        return False
+    on_a = [x.sql("bigquery").lower() for x in a.args.get("on") or []]
+    on_b = [x.sql("bigquery").lower() for x in b.args.get("on") or []]
+    return on_a == on_b
+
+
+def _column_info(plan: Plan, i: int):
+    if plan.col_exprs is None or plan.col_exprs[i] is None:
+        return None
+    return plan.col_exprs[i].info
+
+
+def _merged_column(plans: list, positions: list, j: int):
+    """The expression standing for output column ``j`` when every input's column there is the NULL literal, else ``None``."""
+
+    items = [p.col_exprs[pos[j]] if p.col_exprs is not None and pos[j] is not None else None for p, pos in zip(plans, positions)]
+    if all(i is not None and i.lit == "null" for i in items):
+        return items[0]
+    return None
+
+
+def _struct_converter(source: T.Type, target: T.Type, info):
+    """Convert a STRUCT value whose NULL-literal fields may have any type (they only ever hold NULL)."""
+
+    parts = []
+    for (_, s), (_, t), i in zip(source.fields, target.fields, info[1]):
+        if i == "null" or s == t:
+            parts.append(None)
+        elif isinstance(i, tuple) and s.kind == "STRUCT":
+            parts.append(_struct_converter(s, t, i))
+        else:
+            parts.append(V.caster(s, t))
+    return lambda v, tz: tuple(x if p is None or x is None else p(x, tz) for p, x in zip(parts, v))
 
 
 def _converters(source_types: list[T.Type], target_types: list[T.Type]):
@@ -1739,6 +1993,39 @@ def _cut_is_determined(rows: list, start: int, end: int, sort_keys) -> bool:
         if len(set(tied)) > 1:
             return False
     return True
+
+
+def _dependency_order(definitions: list) -> list:
+    """The CTEs of a WITH RECURSIVE with each one after those it reads (a CTE may read one defined later); a cycle between
+    different CTEs is refused."""
+
+    names = {}
+    for cte in definitions:
+        alias = cte.args.get("alias")
+        if alias is None:
+            return definitions
+        names.setdefault(alias.name.lower(), cte)
+    reads = {n: {m for m in names if m != n and _references(cte.this, m)} for n, cte in names.items()}
+    ordered: list = []
+    done: set = set()
+    visiting: set = set()
+
+    def visit(name: str) -> None:
+        if name in done:
+            return
+        if name in visiting:
+            raise Unsupported("mutually recursive CTEs")
+        visiting.add(name)
+        for dep in sorted(reads[name], key=lambda m: list(names).index(m)):
+            visit(dep)
+        visiting.discard(name)
+        done.add(name)
+        ordered.append(name)
+
+    for name in names:
+        visit(name)
+    seen = {id(names[n]) for n in ordered}
+    return [names[n] for n in ordered] + [c for c in definitions if id(c) not in seen]
 
 
 def _references(node: exp.Expression, name: str) -> bool:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import re
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from sqlglot import exp
 
@@ -12,7 +12,7 @@ from . import types as T
 from . import values as V
 from .compiler import Compiler, Cx, E, EmptyScope, _only, handles, is_query, path_parts
 from .errors import AnalysisError, EvalError, Unsupported
-from .runtime import NULL, Env, const
+from .runtime import NULL, Env, const, is_constant
 
 # --- literals ------------------------------------------------------------------------------------
 
@@ -38,7 +38,12 @@ def literal(c: Compiler, node: exp.Literal, cx: Cx) -> E:
         raise Unsupported(f"number literal {text}") from None
     if math.isinf(value):
         raise AnalysisError(f"Invalid floating point literal: {text}")
-    return const(T.FLOAT64, value)
+    result = const(T.FLOAT64, value)
+    try:
+        result.exact = Decimal(text)
+    except InvalidOperation:
+        pass
+    return result
 
 
 @handles(exp.Boolean)
@@ -220,16 +225,29 @@ def _temporal_plus(value_type: T.Type, interval_first: bool, a: E, b: E, sign: i
     from . import datetimes as D
 
     if value_type.kind == "TIMESTAMP":
-        fn = lambda v, i: D.timestamp_add_interval(v, i if sign > 0 else -i)  # noqa: E731
         result_type = T.TIMESTAMP
+
+        def step(v, i, tz):
+            return D.timestamp_add_interval(v, i if sign > 0 else -i, tz)
     elif value_type.kind in ("DATE", "DATETIME"):
         result_type = T.DATETIME
-        fn = lambda v, i: D.datetime_add_interval(v, i if sign > 0 else -i)  # noqa: E731
+
+        def step(v, i, tz):
+            return D.datetime_add_interval(v, i if sign > 0 else -i)
     else:
         raise AnalysisError(f"No matching signature for INTERVAL arithmetic with {value_type}")
-    if interval_first:
-        return E(result_type, strict2(lambda i, v: fn(v, i), a, b))
-    return E(result_type, strict2(fn, a, b))
+    fa, fb = a.fn, b.fn
+
+    def run(env):
+        x = fa(env)
+        if x is None:
+            return None
+        y = fb(env)
+        if y is None:
+            return None
+        return step(y, x, env.ctx.tz) if interval_first else step(x, y, env.ctx.tz)
+
+    return E(result_type, run)
 
 
 def _plus_minus(c: Compiler, node, cx: Cx, op: str) -> E:
@@ -237,7 +255,7 @@ def _plus_minus(c: Compiler, node, cx: Cx, op: str) -> E:
     a = c.expr(node.this, cx)
     b = c.expr(node.expression, cx)
     ka, kb = a.type.kind, b.type.kind
-    if a.lit == "null" and b.lit == "null":
+    if (a.lit == "null" and b.lit == "null") or ((a.lit == "null" or b.lit == "null") and c.mode == "googlesql"):
         raise AnalysisError(f"Operands of {op} cannot be literal NULL")
     if ka == "INTERVAL" and kb == "INTERVAL" and a.lit != "null" and b.lit != "null":
         sign = 1 if op == "+" else -1
@@ -271,11 +289,29 @@ def sub(c, node, cx):
     return _plus_minus(c, node, cx, "-")
 
 
+def _interval_times_double(value: V.Interval, factor: float) -> V.Interval:
+    """INTERVAL * FLOAT64: a fraction of a month is 30 days, a fraction of a day 24 hours; the microseconds round half away."""
+
+    if math.isnan(factor) or math.isinf(factor):
+        raise EvalError("Interval multiplication by a non-finite number")
+    mul, add, sub = V.DEC.multiply, V.DEC.add, V.DEC.subtract
+    f = Decimal(factor)
+    months = mul(value.months, f)
+    whole_months = int(months)  # truncates toward zero
+    days = add(mul(value.days, f), mul(sub(months, whole_months), 30))
+    whole_days = int(days)
+    micros = add(mul(value.micros, f), mul(sub(days, whole_days), V.MICROS_PER_DAY))
+    rounded = micros.to_integral_value(rounding=ROUND_HALF_UP, context=V.DEC)
+    if abs(sub(micros, rounded)) == Decimal("0.5"):
+        raise Unsupported("INTERVAL * FLOAT64 landing exactly between two microseconds")
+    return V.Interval(V.int64(whole_months), V.int64(whole_days), V.int64(int(rounded))).check()
+
+
 @handles(exp.Mul)
 def mul(c: Compiler, node, cx):
     _only(node, "this", "expression")
     a, b = c.expr(node.this, cx), c.expr(node.expression, cx)
-    if a.lit == "null" and b.lit == "null":
+    if (a.lit == "null" and b.lit == "null") or ((a.lit == "null" or b.lit == "null") and c.mode == "googlesql"):
         raise AnalysisError("Operands of * cannot be literal NULL")
     if a.type.kind == "INTERVAL" and b.type.kind == "INT64" or a.type.kind == "INT64" and b.type.kind == "INTERVAL":
         interval, count = (a, b) if a.type.kind == "INTERVAL" else (b, a)
@@ -286,6 +322,9 @@ def mul(c: Compiler, node, cx):
                 return V.Interval(V.int64(i.months * n), V.int64(i.days * n), V.int64(i.micros * n)).check()
 
             return E(T.INTERVAL, strict2(scale, interval, count))
+    if {a.type.kind, b.type.kind} == {"INTERVAL", "FLOAT64"} and a.lit != "null" and b.lit != "null" and c.mode == "googlesql":
+        interval, factor = (a, b) if a.type.kind == "INTERVAL" else (b, a)  # GoogleSQL only: BigQuery has INTERVAL * INT64
+        return E(T.INTERVAL, strict2(lambda i, f: _interval_times_double(i, f), interval, factor))
     if a.lit == "null":
         a = c.coerce(a, b.type)
     if b.lit == "null":
@@ -325,7 +364,9 @@ def neg(c: Compiler, node, cx):
     kind = value.type.kind
     fn = value.fn
     if value.lit == "literal" and value.value is not None and kind in ("FLOAT64",):
-        return const(T.FLOAT64, -value.value)
+        negated = const(T.FLOAT64, -value.value)
+        negated.exact = None if value.exact is None else -value.exact
+        return negated
     if kind == "INT64":
         return E(T.INT64, lambda env: (lambda v: None if v is None else V.int64(-v))(fn(env)), "literal" if value.lit == "null" else None)
     if kind in ("NUMERIC", "BIGNUMERIC", "FLOAT64"):
@@ -343,6 +384,14 @@ def dpipe(c: Compiler, node, cx):
         from .functions import array_concat
 
         return array_concat(c, [a, b])
+    if c.mode == "googlesql" and a.lit != "null" and b.lit != "null":
+        # GoogleSQL with mixed-type concatenation: a non-STRING operand is cast to STRING (BigQuery has no such overload)
+        printable = ("INT64", "NUMERIC", "BIGNUMERIC", "FLOAT64", "BOOL", "DATE", "DATETIME", "TIME", "TIMESTAMP")
+        kinds = {a.type.kind, b.type.kind}
+        if "STRING" in kinds and len(kinds) == 2 and kinds - {"STRING"} <= set(printable):
+            a, b = (x if x.type.kind == "STRING" else cast_value(c, x, T.STRING, False) for x in (a, b))
+        elif "STRING" not in kinds and kinds <= set(printable):
+            raise Unsupported("|| over operands that are neither STRING nor BYTES")
     target = T.supertype([(a.type, a.lit), (b.type, b.lit)])
     if target.kind not in ("STRING", "BYTES"):
         raise AnalysisError(f"No matching signature for operator || for argument types: {a.type}, {b.type}")
@@ -542,7 +591,10 @@ def as_bool(c: Compiler, value: E, what: str) -> E:
 @handles(exp.Not)
 def not_(c, node, cx):
     _only(node, "this")
-    value = as_bool(c, c.expr(node.this, cx), "NOT")
+    operand = c.expr(node.this, cx)
+    if operand.lit == "null" and c.mode == "googlesql":
+        raise AnalysisError("Operands of NOT cannot be literal NULL")
+    value = as_bool(c, operand, "NOT")
     fn = value.fn
     return E(T.BOOL, lambda env: (lambda v: None if v is None else not v)(fn(env)))
 
@@ -651,7 +703,7 @@ def in_(c: Compiler, node: exp.In, cx: Cx) -> E:
         _only(unnest, "expressions", "offset", "alias")
         if len(unnest.expressions) != 1 or unnest.args.get("alias") is not None or unnest.args.get("offset"):
             raise Unsupported("IN UNNEST form")
-        array = c.expr(unnest.expressions[0], cx)
+        array = _typed_empty(c, c.path_expr(unnest.expressions[0], cx), left)
         if array.lit == "null":
             raise AnalysisError("IN UNNEST of an untyped NULL")
         if array.type.kind != "ARRAY":
@@ -755,6 +807,14 @@ def like(c: Compiler, node: exp.Like, cx: Cx) -> E:
     return E(T.BOOL, fn)
 
 
+def _typed_empty(c: Compiler, array: E, other: E) -> E:
+    """The untyped literal ``[]`` searched against ``other`` takes ``other``'s type."""
+
+    if array.lit == "literal" and array.type.kind == "ARRAY" and array.value == ():
+        return c.coerce(array, T.array(other.type))
+    return array
+
+
 def _quantified_like(c: Compiler, value: E, node, negate: bool, cx: Cx) -> E:
     is_any = isinstance(node, exp.Any)
     inner = node.this
@@ -773,7 +833,7 @@ def _quantified_like(c: Compiler, value: E, node, negate: bool, cx: Cx) -> E:
     elif isinstance(inner, exp.Unnest):
         if len(inner.expressions) != 1:
             raise Unsupported("LIKE ANY UNNEST form")
-        array = c.expr(inner.expressions[0], cx)
+        array = _typed_empty(c, c.expr(inner.expressions[0], cx), value)
         if array.type.kind != "ARRAY":
             raise AnalysisError("LIKE ANY UNNEST needs an array")
         target = T.supertype([(value.type, value.lit), (array.type.elem, None)])
@@ -793,21 +853,17 @@ def _quantified_like(c: Compiler, value: E, node, negate: bool, cx: Cx) -> E:
         x = vf(env)
         patterns = source(env)
         if not patterns:
-            result = False if is_any else True
-            return (not result) if negate else result
+            return not is_any  # ANY over nothing is FALSE, ALL over nothing TRUE
         results = []
         for p in patterns:
             if x is None or p is None:
                 results.append(None)
             else:
-                results.append(match(x, p))
+                matched = match(x, p)
+                results.append((not matched) if negate else matched)  # x NOT LIKE ANY (p...) is ANY (x NOT LIKE p)
         if is_any:
-            result = True if True in results else (None if None in results else False)
-        else:
-            result = False if False in results else (None if None in results else True)
-        if negate:
-            return None if result is None else not result
-        return result
+            return True if True in results else (None if None in results else False)
+        return False if False in results else (None if None in results else True)
 
     return E(T.BOOL, run)
 
@@ -974,12 +1030,10 @@ def array_literal(c: Compiler, values: list[E], declared: T.Type | None) -> E:
         values = [c.coerce(v, elem, "Array element") for v in values]
     elif values:
         elem, values = c.unify(values, "Array element")
-    else:
-        elem = T.INT64
-    if elem.kind == "ARRAY":
-        raise AnalysisError("Arrays of arrays are not supported")
+    else:  # [] with no declared type: an INT64 array that takes the type of whatever it meets (see Compiler.coerce)
+        return E(T.array(T.INT64), lambda env: (), "literal", ())
     fns = [v.fn for v in values]
-    if all(v.lit == "literal" or v.lit == "null" for v in values):
+    if all(is_constant(v) for v in values):
         payload = tuple(v.value for v in values)
         return E(T.array(elem), lambda env: payload)
     return E(T.array(elem), lambda env: tuple(f(env) for f in fns))
@@ -993,6 +1047,8 @@ def _field_name(item: exp.Expression) -> str | None:
     parts = path_parts(item)
     if parts is not None:
         return parts[-1]
+    if isinstance(item, exp.Dot) and isinstance(item.expression, exp.Identifier):
+        return item.expression.name
     return None
 
 
@@ -1011,7 +1067,7 @@ def struct(c: Compiler, node, cx):
 def struct_value(names, values: list[E]) -> E:
     typ = T.struct(list(zip(names, [v.type for v in values])))
     fns = [v.fn for v in values]
-    return E(typ, lambda env: tuple(f(env) for f in fns))
+    return E(typ, lambda env: tuple(f(env) for f in fns), None, None, tuple(v.info for v in values))
 
 
 @handles(exp.Tuple)
@@ -1106,6 +1162,13 @@ def cast(c: Compiler, node, cx):
                 raise Unsupported("ARRAY<T>[...] versus CAST of an array (sqlglot reads both the same)")
         return array_literal(c, values, target.elem)
     value = c.expr(inner, cx)
+    if value.exact is not None and target.kind in ("NUMERIC", "BIGNUMERIC"):
+        try:
+            folded = V.decimal_of(target.kind)(value.exact)
+        except EvalError:
+            pass  # out of range: fails (or gives NULL under SAFE_CAST) when run, like any cast
+        else:
+            return E(target, lambda env: folded, None, folded)
     if value.lit == "literal" and value.value is not None and not safe:
         # a typed literal (DATE '2020-01-01') or a cast of one: fold it, failing at analysis as BigQuery does
         if not V.castable(value.type, target):

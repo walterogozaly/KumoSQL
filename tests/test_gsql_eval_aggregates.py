@@ -364,6 +364,9 @@ def test_string_agg_separators_and_order():
     assert one("SELECT STRING_AGG(g, '' ORDER BY g DESC) FROM t") == "zyyxx"
     assert one("SELECT STRING_AGG(DISTINCT g, ';' ORDER BY g) FROM t") == "x;y;z"
     assert one("SELECT STRING_AGG(g, ', ' ORDER BY g LIMIT 2) FROM t") == "x, x"
+    assert one("SELECT STRING_AGG(DISTINCT t.g, ',' ORDER BY g) FROM t") == "x,y,z"
+    with pytest.raises(AnalysisError):
+        evaluate("SELECT STRING_AGG(DISTINCT g, ',' ORDER BY a) FROM t", DB)
 
 
 def test_string_agg_skips_nulls_and_returns_null_when_nothing_is_left():
@@ -405,19 +408,32 @@ def test_string_agg_ties_make_the_result_nondeterministic():
 # --- ARRAY_CONCAT_AGG ---------------------------------------------------------------------------
 
 
+ARRAYS = Database(
+    {
+        "arr": table(
+            ("k", T.INT64), ("x", T.array(T.INT64)),
+            rows=[(2, (1, 2)), (1, (3,)), (0, None), (5, ())],
+        ),
+    }
+)
+
+
 def test_array_concat_agg():
-    sql = "SELECT ARRAY_CONCAT_AGG(r.x ORDER BY r.k) FROM UNNEST([STRUCT([1, 2] AS x, 2 AS k), STRUCT([3], 1), STRUCT(CAST(NULL AS ARRAY<INT64>), 0)]) AS r"
-    assert one(sql) == (3, 1, 2)
-    value = one("SELECT ARRAY_CONCAT_AGG(x) FROM UNNEST([[1, 2], [3]]) x")
+    assert one("SELECT ARRAY_CONCAT_AGG(x ORDER BY k) FROM arr", ARRAYS) == (3, 1, 2)
+    assert one("SELECT ARRAY_CONCAT_AGG(x ORDER BY k DESC) FROM arr", ARRAYS) == (1, 2, 3)
+    value = one("SELECT ARRAY_CONCAT_AGG(x) FROM arr WHERE k < 5", ARRAYS)
     assert isinstance(value, V.UnorderedArray) and sorted(value) == [1, 2, 3]
-    assert one("SELECT ARRAY_CONCAT_AGG(x) FROM UNNEST([[1, 2]]) x") == (1, 2)
-    assert one("SELECT ARRAY_CONCAT_AGG(x) FROM UNNEST([ARRAY<INT64>[], [4]]) x") == (4,)
-    assert one("SELECT ARRAY_CONCAT_AGG(x) FROM UNNEST([ARRAY<INT64>[], ARRAY<INT64>[]]) x") == ()
-    assert one("SELECT ARRAY_CONCAT_AGG(x) FROM UNNEST([CAST(NULL AS ARRAY<INT64>)]) x") is None
+    assert one("SELECT ARRAY_CONCAT_AGG(x) FROM arr WHERE k = 2", ARRAYS) == (1, 2)
+    assert one("SELECT ARRAY_CONCAT_AGG(x) FROM arr WHERE k IN (2, 5)", ARRAYS) == (1, 2)  # one non-empty array
+    assert one("SELECT ARRAY_CONCAT_AGG(x) FROM arr WHERE k = 5", ARRAYS) == ()
+    assert one("SELECT ARRAY_CONCAT_AGG(x) FROM arr WHERE k = 0", ARRAYS) is None
+    assert evaluate("SELECT ARRAY_CONCAT_AGG(x) FROM arr", ARRAYS).columns[0][1] == T.array(T.INT64)
     with pytest.raises(AnalysisError):
         evaluate("SELECT ARRAY_CONCAT_AGG(a) FROM t", DB)
     with pytest.raises(Unsupported):
-        evaluate("SELECT ARRAY_CONCAT_AGG(x LIMIT 1) FROM UNNEST([[1, 2], [3]]) x")
+        evaluate("SELECT ARRAY_CONCAT_AGG(x LIMIT 1) FROM arr", ARRAYS)
+    with pytest.raises(Unsupported):
+        evaluate("SELECT ARRAY_CONCAT_AGG(DISTINCT x) FROM arr", ARRAYS)
 
 
 # --- LOGICAL_*, BIT_* ----------------------------------------------------------------------------
@@ -500,7 +516,7 @@ def test_correlation_of_a_constant_column_is_unsupported():
 
 def test_aggregates_in_having_order_by_and_expressions():
     assert rows("SELECT g, COUNT(*) AS c FROM t GROUP BY g HAVING SUM(a) >= 2 ORDER BY SUM(a) DESC, g") == [("x", 2), ("y", 2)]
-    assert rows("SELECT g, COUNT(*) + SUM(a) FROM t GROUP BY g ORDER BY g") == [("x", 5), ("y", 3), ("z", None)]
+    assert rows("SELECT g, COUNT(*) + SUM(a) FROM t GROUP BY g ORDER BY g") == [("x", 5), ("y", 4), ("z", None)]
     assert rows("SELECT CASE WHEN COUNT(a) > 2 THEN 'many' ELSE 'few' END FROM t") == [("many",)]
     assert rows("SELECT g, SUM(CASE WHEN a > 1 THEN 1 ELSE 0 END) FROM t GROUP BY g ORDER BY g") == [("x", 1), ("y", 1), ("z", 0)]
 
@@ -538,9 +554,9 @@ def test_grouping_with_rollup():
 def test_grouping_with_cube_and_two_keys():
     sql = "SELECT g, a, GROUPING(g) AS gg, GROUPING(a) AS ga, COUNT(*) FROM t WHERE g <> 'z' GROUP BY CUBE(g, a) ORDER BY gg, ga, g, a"
     assert rows(sql) == [
-        ("x", 1, 0, 0, 1), ("x", 2, 0, 0, 1), ("y", 2, 0, 0, 1), ("y", None, 0, 0, 1),
+        ("x", 1, 0, 0, 1), ("x", 2, 0, 0, 1), ("y", None, 0, 0, 1), ("y", 2, 0, 0, 1),
         ("x", None, 0, 1, 2), ("y", None, 0, 1, 2),
-        (None, 1, 1, 0, 1), (None, 2, 1, 0, 2), (None, None, 1, 0, 1),
+        (None, None, 1, 0, 1), (None, 1, 1, 0, 1), (None, 2, 1, 0, 2),
         (None, None, 1, 1, 4),
     ]
 

@@ -43,15 +43,17 @@ _MAX_OUT_SURE = 1 << 20  # beyond this many characters every reading of "1MB" is
 _MAX_OUT_MAYBE = 1_000_000  # below this many bytes no reading of "1MB" is exceeded
 
 
+def _arg(node: exp.Expression, key: str):
+    """An argument node, ``None`` when absent (sqlglot stores some absent arguments as ``False``)."""
+
+    value = node.args.get(key)
+    return None if value is None or value is False else value
+
+
 def _node_args(node: exp.Expression, *keys: str) -> list:
     """The argument nodes for ``keys`` in order, skipping the absent ones."""
 
-    out = []
-    for key in keys:
-        value = node.args.get(key)
-        if value is not None:
-            out.append(value)
-    return out
+    return [value for value in (_arg(node, key) for key in keys) if value is not None]
 
 
 def _text_args(c, args: list, what: str) -> tuple:
@@ -115,10 +117,6 @@ def _strict(fn, *values: E):
     return run
 
 
-def _chars(value) -> int:
-    return len(value)
-
-
 def _utf8_len(value: str) -> int:
     try:
         return len(value.encode("utf-8"))
@@ -152,11 +150,21 @@ def _concat_node(node):
 def _concat(c, node, args, cx):
     if not args:
         raise AnalysisError("No matching signature for function CONCAT with no arguments")
-    for a in args:
-        if a.lit != "null" and a.type.kind not in _TEXT:
-            # BigQuery's CONCAT takes only STRING or BYTES; the GoogleSQL reference accepts other types under a
-            # language feature BigQuery lacks, so the answer for this call is not the reference's: decline.
-            raise Unsupported("CONCAT of a non-string argument")
+    if any(a.lit != "null" and a.type.kind not in _TEXT for a in args):
+        # BigQuery's CONCAT takes only STRING or BYTES. The GoogleSQL reference, under a language feature BigQuery lacks
+        # (CONCAT_MIXED_TYPES), casts every argument to STRING: that is what mode="googlesql" evaluates.
+        if c.mode != "googlesql" or any(a.lit != "null" and a.type.kind == "BYTES" for a in args):
+            raise AnalysisError("No matching signature for function CONCAT for argument types: " + ", ".join(str(a.type) for a in args))
+        types = [T.STRING if a.lit == "null" else a.type for a in args]
+        fns = [a.fn for a in args]
+
+        def run(env):
+            vals = [f(env) for f in fns]
+            if any(v is None for v in vals):
+                return None
+            return "".join(V.to_string(t, v, env.ctx.tz) for t, v in zip(types, vals))
+
+        return E(T.STRING, run)
     target, args = _text_args(c, args, "CONCAT")
     return E(target, _strict(lambda *vals: vals[0][:0].join(vals), *args))
 
@@ -208,7 +216,24 @@ def _caseless(ch: str) -> bool:
     return ch.lower() == ch and ch.upper() == ch and ch.title() == ch and ch.casefold() == ch
 
 
+def _simple_case_safe(value: str, lower: bool) -> None:
+    """Decline a character whose mapping is not one code point to one code point: engines differ on multi-character and
+    context-dependent mappings (``ß``, ``İ``, a final sigma), and on characters this Unicode version does not assign."""
+
+    if value.isascii():
+        return
+    for ch in value:
+        if ch.isascii():
+            continue
+        if unicodedata.category(ch) == "Cn":
+            raise Unsupported("case mapping of a character unassigned in this Unicode version")
+        if len(ch.lower()) != 1 or len(ch.upper()) != 1 or (lower and ch == "\u03a3"):
+            raise Unsupported("case mapping that is not one code point to one code point")
+
+
 def _case_safe(value: str) -> None:
+    """For INITCAP (title case may differ from upper case): only characters with no case at all."""
+
     if value.isascii():
         return
     for ch in value:
@@ -219,14 +244,14 @@ def _case_safe(value: str) -> None:
 def _lower(value):
     if isinstance(value, bytes):
         return value.lower()
-    _case_safe(value)
+    _simple_case_safe(value, True)
     return value.lower()
 
 
 def _upper(value):
     if isinstance(value, bytes):
         return value.upper()
-    _case_safe(value)
+    _simple_case_safe(value, False)
     return value.upper()
 
 
@@ -269,7 +294,7 @@ _INITCAP_DEFAULT = _sqlglot_default_delimiters()
 @register_node(exp.Initcap)
 def _initcap_node(node):
     _only(node, "this", "expression")
-    delimiters = node.args.get("expression")
+    delimiters = _arg(node, "expression")
     if delimiters is None:
         raise Unsupported("INITCAP without delimiters")
     if isinstance(delimiters, exp.Literal) and delimiters.is_string and delimiters.name == _INITCAP_DEFAULT:
@@ -310,7 +335,7 @@ def _initcap_fn(c, node, args, cx):
 @register_node(exp.Trim)
 def _trim_node(node):
     _only(node, "this", "expression", "position")
-    position = node.args.get("position")
+    position = _arg(node, "position")
     if position is None:
         name = "TRIM"
     elif isinstance(position, str) and position.upper() in ("LEADING", "TRAILING"):
@@ -431,7 +456,7 @@ _pad_handler("RPAD", False)
 @register_node(exp.Replace)
 def _replace_node(node):
     _only(node, "this", "expression", "replacement")
-    if node.args.get("replacement") is None:
+    if _arg(node, "replacement") is None:
         raise Unsupported("REPLACE without a replacement")
     return "REPLACE", _node_args(node, "this", "expression", "replacement")
 
@@ -496,7 +521,7 @@ def _reverse_fn(c, node, args, cx):
 @register_node(exp.Substring)
 def _substr_node(node):
     _only(node, "this", "start", "length")
-    if node.args.get("start") is None:
+    if _arg(node, "start") is None:
         raise Unsupported("SUBSTR without a position")
     return "SUBSTR", _node_args(node, "this", "start", "length")
 
@@ -600,7 +625,7 @@ def _ends_fn(c, node, args, cx):
 @register_node(exp.StrPosition)
 def _strpos_node(node):
     _only(node, "this", "substr", "position", "occurrence")
-    if node.args.get("occurrence") is not None and node.args.get("position") is None:
+    if _arg(node, "occurrence") is not None and _arg(node, "position") is None:
         raise Unsupported("INSTR with an occurrence and no position")
     args = _node_args(node, "this", "substr", "position", "occurrence")
     return ("STRPOS" if len(args) == 2 else "INSTR"), args
@@ -722,7 +747,7 @@ def _ascii(value) -> int:
     first = value[0]
     code = first if isinstance(value, bytes) else ord(first)
     if code > 127:
-        raise Unsupported("ASCII of a non-ASCII first character (error or code, undocumented)")
+        raise EvalError("First char of argument of ASCII is out of range [0, 127]")
     return code
 
 
@@ -745,9 +770,9 @@ def _chr_node(node):
     return "CHR", list(node.expressions)
 
 
-def _chr(code: int) -> str:
-    if code == 0:
-        raise Unsupported("CHR(0) (documented as an empty string, observed as NUL)")
+def _chr(code: int, nul_ok: bool) -> str:
+    if code == 0 and not nul_ok:
+        raise Unsupported("CHR(0) (BigQuery's documentation says an empty string; the GoogleSQL reference returns NUL)")
     if not _valid_code_point(code):
         raise EvalError(f"Invalid Unicode code point {code}")
     return chr(code)
@@ -757,7 +782,8 @@ def _chr(code: int) -> str:
 def _chr_fn(c, node, args, cx):
     _arity(args, 1, 1, "CHR")
     a = _int_arg(c, args[0], "CHR")
-    return E(T.STRING, _strict(_chr, a))
+    nul_ok = c.mode == "googlesql"
+    return E(T.STRING, _strict(lambda code: _chr(code, nul_ok), a))
 
 
 @register_node(exp.Unicode)
@@ -852,7 +878,7 @@ def _translate(value, source, target):
     is_bytes = isinstance(value, bytes)
     src = list(source) if is_bytes else list(source)
     if len(set(src)) != len(src):
-        raise EvalError("Duplicate character in source_characters of TRANSLATE")
+        raise Unsupported("TRANSLATE with a repeated source character (an error in BigQuery's documentation, unverified)")
     mapping = {}
     for i, ch in enumerate(src):
         mapping[ch] = target[i] if i < len(target) else None
@@ -1029,3 +1055,1023 @@ def _from_b32_fn(c, node, args, cx):
 def _safe_convert_fn(c, node, args, cx):
     _arity(args, 1, 1, "SAFE_CONVERT_BYTES_TO_STRING")
     return E(T.STRING, _strict(_safe_convert, _bytes_arg(c, args[0], "SAFE_CONVERT_BYTES_TO_STRING")))
+
+
+# --------------------------------------------------------------------------------------------------------------
+# regular expressions: RE2 syntax translated to Python's ``re``, for the subset both read the same way
+# --------------------------------------------------------------------------------------------------------------
+#
+# Accepted: literals, ``.``, ``[...]`` classes (ranges, negation, ``\d \w \s \D \W`` and single-character escapes),
+# ``^ $ \A \z \b \B``, groups ``(...) (?:...) (?P<name>...)``, alternation, greedy and lazy ``* + ? {n} {n,} {n,m}``
+# (counts up to 1000), and the escapes ``\n \r \t \f \v \a \xHH`` and punctuation. Leading flags ``(?i) (?m) (?s)``
+# are accepted; ``i`` only when pattern and text are ASCII. Everything else (Unicode classes ``\p``, POSIX classes,
+# ``\Q..\E``, backreferences, lookaround, possessive quantifiers, ``{`` that is not a repeat, flags anywhere but at
+# the start...) raises Unsupported: the two engines disagree on some of those and report errors for others.
+#
+# The deliberate translations: ``$`` is ``\Z`` (RE2's ``$`` does not match before a final newline), ``\s`` is
+# ``[\t\n\f\r ]`` (RE2's has no vertical tab), ``\z`` is ``\Z``, and ``re.ASCII`` makes ``\w \d \b`` ASCII-only as in RE2.
+# A pattern that can match the empty string is refused where the engines differ on empty matches (after a non-empty
+# match, at the end of the text).
+
+_MAX_REPEAT = 1000
+_SIMPLE_ESCAPES = {"n": "\n", "r": "\r", "t": "\t", "f": "\f", "v": "\v", "a": "\a"}
+_HEXDIGITS = "0123456789abcdefABCDEF"
+
+
+class _Compiled:
+    __slots__ = ("regex", "groups", "nullable", "context", "ignorecase", "empty", "not_boundary")
+
+    def __init__(self, regex, groups, nullable, context, ignorecase, empty, not_boundary):
+        self.not_boundary = not_boundary
+        self.regex = regex
+        self.groups = groups
+        self.nullable = nullable
+        self.context = context
+        self.ignorecase = ignorecase
+        self.empty = empty
+
+
+def _py_literal(ch: str) -> str:
+    return re.escape(ch)
+
+
+def _py_class_char(ch: str) -> str:
+    code = ord(ch)
+    if code < 0x20 or code == 0x7F:
+        return "\\x%02x" % code
+    if ch.isalnum() or code >= 0x80 or ch == " ":
+        return ch
+    return "\\" + ch
+
+
+class _RegexParser:
+    def __init__(self, pattern: str):
+        self.p = pattern
+        self.i = 0
+        self.groups = 0
+        self.names: set = set()
+        self.multiline = False
+        self.dotall = False
+        self.ignorecase = False
+        self.context = False
+        self.not_boundary = False
+
+    def fail(self, why: str):
+        raise Unsupported(f"regular expression construct outside the RE2/Python common subset: {why}")
+
+    def invalid(self, why: str):
+        """A pattern RE2 certainly rejects (``Cannot parse regular expression``): a runtime error, as in BigQuery."""
+
+        raise EvalError(f"Cannot parse regular expression: {why}")
+
+    def parse(self):
+        p = self.p
+        # leading flag groups
+        while p.startswith("(?", self.i):
+            j = self.i + 2
+            k = j
+            while k < len(p) and p[k] in "ims":
+                k += 1
+            if k > j and k < len(p) and p[k] == ")":
+                for flag in p[j:k]:
+                    if flag == "i":
+                        self.ignorecase = True
+                    elif flag == "m":
+                        self.multiline = True
+                    else:
+                        self.dotall = True
+                self.i = k + 1
+            else:
+                break
+        out, nullable, _ = self.alternation(0)
+        if self.i != len(p):
+            self.invalid("unbalanced parenthesis")
+        return out, nullable
+
+    # alternation -> (python text, nullable, repeat product)
+    def alternation(self, depth: int):
+        branches = []
+        nullable = False
+        product = 1
+        while True:
+            text, null, prod = self.sequence(depth)
+            branches.append(text)
+            nullable = nullable or null
+            product = max(product, prod)
+            if self.i < len(self.p) and self.p[self.i] == "|":
+                self.i += 1
+                continue
+            break
+        return "|".join(branches), nullable, product
+
+    def sequence(self, depth: int):
+        items = []
+        nullable = True
+        product = 1
+        p = self.p
+        while self.i < len(p) and p[self.i] not in "|" and not (p[self.i] == ")" and depth > 0):
+            text, atom_null, zero_width, prod = self.atom(depth)
+            quant = self.quantifier()
+            if quant is not None:
+                qtext, lo, hi = quant
+                if zero_width:
+                    self.fail("repetition of an assertion")
+                if atom_null:
+                    self.fail("repetition of a group that can match the empty string")
+                text += qtext
+                if hi is not None and hi > 1:
+                    prod *= hi
+                elif hi is None and lo > 1:
+                    prod *= lo
+                if prod > _MAX_REPEAT:
+                    self.fail("nested repetition counts beyond 1000")
+                atom_null = lo == 0
+            product = max(product, prod)
+            items.append(text)
+            nullable = nullable and atom_null
+        return "".join(items), nullable, product
+
+    def quantifier(self):
+        p = self.p
+        if self.i >= len(p):
+            return None
+        ch = p[self.i]
+        if ch in "*+?":
+            self.i += 1
+            lo, hi = {"*": (0, None), "+": (1, None), "?": (0, 1)}[ch]
+            text = ch
+        elif ch == "{":
+            m = re.compile(r"\{(\d+)(?:(,)(\d*))?\}").match(p, self.i)
+            if not m:
+                self.fail("a '{' that is not a repeat")
+            lo = int(m.group(1))
+            if m.group(2):
+                hi = int(m.group(3)) if m.group(3) else None
+            else:
+                hi = lo
+            if lo > _MAX_REPEAT or (hi is not None and hi > _MAX_REPEAT) or (hi is not None and hi < lo):
+                self.invalid("bad repetition operator")
+            self.i = m.end()
+            text = m.group(0)
+        else:
+            return None
+        if self.i < len(p) and p[self.i] == "?":
+            self.i += 1
+            text += "?"
+        if self.i < len(p) and (p[self.i] in "*+?" or p[self.i] == "{"):
+            self.fail("stacked repetition operators")
+        return text, lo, hi
+
+    def atom(self, depth: int):
+        p = self.p
+        ch = p[self.i]
+        if ch == "(":
+            return self.group(depth)
+        if ch == "[":
+            return self.char_class(), False, False, 1
+        if ch == ".":
+            self.i += 1
+            return ".", False, False, 1
+        if ch == "^":
+            self.i += 1
+            self.context = True
+            return "^", True, True, 1
+        if ch == "$":
+            self.i += 1
+            return ("$" if self.multiline else r"\Z"), True, True, 1
+        if ch == "\\":
+            return self.escape()
+        if ch in "*+?":
+            self.invalid("missing argument to repetition operator")
+        if ch == "{":
+            self.fail("a '{' that is not a repeat")
+        if ch == ")":
+            self.invalid("unbalanced parenthesis")
+        self.i += 1
+        if self.ignorecase and not ch.isascii():
+            self.fail("case-insensitive match of a non-ASCII pattern")
+        return _py_literal(ch), False, False, 1
+
+    def group(self, depth: int):
+        p = self.p
+        self.i += 1
+        if p.startswith("?", self.i):
+            if p.startswith("?:", self.i):
+                self.i += 2
+                prefix = "(?:"
+            elif p.startswith("?P<", self.i):
+                m = re.compile(r"\?P<([A-Za-z_][A-Za-z0-9_]*)>").match(p, self.i)
+                if not m or m.group(1) in self.names:
+                    self.fail("group name")
+                self.names.add(m.group(1))
+                self.groups += 1
+                self.i = m.end()
+                prefix = "(?P<%s>" % m.group(1)
+            else:
+                self.fail("(? group")
+        else:
+            self.groups += 1
+            prefix = "("
+        text, nullable, product = self.alternation(depth + 1)
+        if self.i >= len(p) or p[self.i] != ")":
+            self.invalid("unbalanced parenthesis")
+        self.i += 1
+        return prefix + text + ")", nullable, False, product
+
+    def escape(self):
+        p = self.p
+        if self.i + 1 >= len(p):
+            self.invalid("trailing backslash")
+        ch = p[self.i + 1]
+        self.i += 2
+        if ch in "dDwW":
+            return "\\" + ch, False, False, 1
+        if ch == "s":
+            return r"[\t\n\f\r ]", False, False, 1
+        if ch == "S":
+            return r"[^\t\n\f\r ]", False, False, 1
+        if ch == "b":
+            self.context = True
+            return r"\b", True, True, 1
+        if ch == "B":
+            # Python's \B never matches the empty string; RE2's does
+            self.context = True
+            self.not_boundary = True
+            return r"(?:(?<=\w)(?=\w)|(?<!\w)(?!\w))", True, True, 1
+        if ch == "A":
+            self.context = True
+            return r"\A", True, True, 1
+        if ch == "z":
+            return r"\Z", True, True, 1
+        if ch in _SIMPLE_ESCAPES:
+            return _py_literal(_SIMPLE_ESCAPES[ch]), False, False, 1
+        if ch == "x":
+            code = self.hex_byte()
+            return _py_literal(chr(code)), False, False, 1
+        if ch.isascii() and not (ch.isalnum()):
+            return _py_literal(ch), False, False, 1
+        self.fail(f"escape \\{ch}")
+
+    def hex_byte(self) -> int:
+        h = self.p[self.i : self.i + 2]
+        if len(h) != 2 or any(c not in _HEXDIGITS for c in h):
+            self.fail("\\x escape")
+        self.i += 2
+        return int(h, 16)
+
+    def class_escape(self):
+        """An escape inside ``[...]``: ``("set", text)`` for a class, ``("char", ch)`` for one character."""
+
+        p = self.p
+        if self.i + 1 >= len(p):
+            self.invalid("trailing backslash")
+        ch = p[self.i + 1]
+        self.i += 2
+        if ch in "dDwW":
+            return "set", "\\" + ch
+        if ch == "s":
+            return "set", r"\t\n\f\r "
+        if ch in _SIMPLE_ESCAPES:
+            return "char", _SIMPLE_ESCAPES[ch]
+        if ch == "x":
+            return "char", chr(self.hex_byte())
+        if ch.isascii() and not ch.isalnum():
+            return "char", ch
+        self.fail(f"escape \\{ch} inside a class")
+
+    def char_class(self) -> str:
+        p = self.p
+        self.i += 1
+        negate = False
+        if p.startswith("^", self.i):
+            negate = True
+            self.i += 1
+        items = []  # ("char", ch) | ("set", text) | ("range", lo, hi)
+        first = True
+        while True:
+            if self.i >= len(p):
+                self.invalid("missing closing ]")
+            ch = p[self.i]
+            if ch == "]" and not first:
+                self.i += 1
+                break
+            first = False
+            if ch == "[":
+                self.fail("'[' inside a class")
+            if ch == "\\":
+                kind, value = self.class_escape()
+            else:
+                self.i += 1
+                kind, value = "char", ch
+            if kind == "char" and self.ignorecase and not value.isascii():
+                self.fail("case-insensitive match of a non-ASCII class")
+            if (
+                kind == "char"
+                and self.i + 1 < len(p)
+                and p[self.i] == "-"
+                and p[self.i + 1] != "]"
+            ):
+                self.i += 1
+                end = p[self.i]
+                if end == "[":
+                    self.fail("'[' inside a class")
+                if end == "\\":
+                    kind2, value2 = self.class_escape()
+                    if kind2 != "char":
+                        self.fail("class as the end of a range")
+                else:
+                    self.i += 1
+                    value2 = end
+                if ord(value2) < ord(value):
+                    self.invalid("invalid character class range")
+                if self.i < len(p) and p[self.i] == "-" and p[self.i + 1 : self.i + 2] != "]":
+                    self.fail("range followed by '-'")
+                items.append(("range", value, value2))
+                continue
+            items.append((kind, value))
+        body = []
+        for item in items:
+            if item[0] == "char":
+                body.append(_py_class_char(item[1]))
+            elif item[0] == "set":
+                body.append(item[1])
+            else:
+                body.append(_py_class_char(item[1]) + "-" + _py_class_char(item[2]))
+        return "[" + ("^" if negate else "") + "".join(body) + "]"
+
+
+@lru_cache(maxsize=512)
+def _compile_re2(pattern: str) -> _Compiled:
+    parser = _RegexParser(pattern)
+    text, nullable = parser.parse()
+    flags = re.ASCII
+    if parser.multiline:
+        flags |= re.MULTILINE
+    if parser.dotall:
+        flags |= re.DOTALL
+    if parser.ignorecase:
+        flags |= re.IGNORECASE
+    try:
+        regex = re.compile(text, flags)
+    except (re.error, RecursionError, OverflowError):
+        raise Unsupported("regular expression Python rejects") from None
+    if regex.groups != parser.groups:
+        raise Unsupported("regular expression group count mismatch")
+    return _Compiled(regex, parser.groups, nullable, parser.context, parser.ignorecase, pattern == "", parser.not_boundary)
+
+
+def _regex_for(pattern, text) -> tuple:
+    """``(compiled, text')``: both as ``str`` (BYTES by their Latin-1 code points, one per byte)."""
+
+    is_bytes = isinstance(pattern, bytes)
+    pat = pattern.decode("latin-1") if is_bytes else pattern
+    value = text.decode("latin-1") if is_bytes else text
+    compiled = _compile_re2(pat)
+    if compiled.ignorecase and not value.isascii():
+        raise Unsupported("case-insensitive regular expression on a non-ASCII value")
+    if compiled.not_boundary and not is_bytes and not value.isascii():
+        # RE2 scans bytes: \B can match in the middle of a multi-byte character, which Python never does
+        raise Unsupported("\\B on a non-ASCII value")
+    return compiled, value
+
+
+def _out(value: str | None, as_bytes: bool):
+    if value is None or not as_bytes:
+        return value
+    return value.encode("latin-1")
+
+
+def _capture_group(compiled: _Compiled) -> int:
+    if compiled.groups > 1:
+        raise EvalError("Regular expressions passed into extraction functions must not have more than 1 capturing group")
+    return 1 if compiled.groups == 1 else 0
+
+
+@register_node(exp.RegexpLike)
+def _regexp_like_node(node):
+    _only(node, "this", "expression")
+    return "REGEXP_CONTAINS", [node.this, node.expression]
+
+
+@register("REGEXP_CONTAINS")
+def _regexp_contains_fn(c, node, args, cx):
+    _arity(args, 2, 2, "REGEXP_CONTAINS")
+    target, args = _text_args(c, args, "REGEXP_CONTAINS")
+
+    def contains(value, pattern):
+        compiled, text = _regex_for(pattern, value)
+        return compiled.regex.search(text) is not None
+
+    return E(T.BOOL, _strict(contains, *args))
+
+
+@register_node(exp.RegexpExtract)
+def _regexp_extract_node(node):
+    _only(node, "this", "expression", "position", "occurrence", "group", "null_if_pos_overflow")
+    group = _arg(node, "group")
+    if group is not None and not (isinstance(group, exp.Literal) and not group.is_string and group.name in ("0", "1")):
+        raise Unsupported("REGEXP_EXTRACT with a group argument")
+    if _arg(node, "occurrence") is not None and _arg(node, "position") is None:
+        raise Unsupported("REGEXP_EXTRACT with an occurrence and no position")
+    return "REGEXP_EXTRACT", _node_args(node, "this", "expression", "position", "occurrence")
+
+
+def _search_from(compiled: _Compiled, text: str, position: int, occurrence: int, what: str):
+    """The ``occurrence``-th match searching from the 1-based ``position``, or None."""
+
+    if position < 1 or occurrence < 1:
+        raise Unsupported(f"{what} with a non-positive position or occurrence")
+    if position > len(text) and not (position == 1 and not text):
+        raise Unsupported(f"{what} with a position beyond the value")
+    if (position > 1 or occurrence > 1) and compiled.context:
+        raise Unsupported(f"{what} resumed in the middle of a value with an anchor or word boundary in the pattern")
+    if occurrence > 1 and compiled.nullable:
+        raise Unsupported(f"{what} occurrence of a pattern that can match the empty string")
+    start = position - 1
+    match = None
+    for _ in range(occurrence):
+        match = compiled.regex.search(text, start)
+        if match is None:
+            return None
+        start = match.end()
+    return match
+
+
+@register("REGEXP_EXTRACT", "REGEXP_SUBSTR")
+def _regexp_extract_fn(c, node, args, cx):
+    _arity(args, 2, 4, "REGEXP_EXTRACT")
+    target, texts = _text_args(c, args[:2], "REGEXP_EXTRACT")
+    ints = [_int_arg(c, a, "REGEXP_EXTRACT") for a in args[2:]]
+    as_bytes = target.kind == "BYTES"
+
+    def extract(value, pattern, position=1, occurrence=1):
+        compiled, text = _regex_for(pattern, value)
+        group = _capture_group(compiled)
+        match = _search_from(compiled, text, position, occurrence, "REGEXP_EXTRACT")
+        if match is None:
+            return None
+        return _out(match.group(group), as_bytes)
+
+    return E(target, _strict(extract, *texts, *ints))
+
+
+@register_node(exp.RegexpExtractAll)
+def _regexp_extract_all_node(node):
+    _only(node, "this", "expression", "group")
+    group = _arg(node, "group")
+    if group is not None and not (isinstance(group, exp.Literal) and not group.is_string and group.name in ("0", "1")):
+        raise Unsupported("REGEXP_EXTRACT_ALL with a group argument")
+    return "REGEXP_EXTRACT_ALL", [node.this, node.expression]
+
+
+@register("REGEXP_EXTRACT_ALL")
+def _regexp_extract_all_fn(c, node, args, cx):
+    _arity(args, 2, 2, "REGEXP_EXTRACT_ALL")
+    target, texts = _text_args(c, args, "REGEXP_EXTRACT_ALL")
+    as_bytes = target.kind == "BYTES"
+
+    def extract_all(value, pattern):
+        compiled, text = _regex_for(pattern, value)
+        group = _capture_group(compiled)
+        if compiled.empty:
+            if not text:
+                raise Unsupported("REGEXP_EXTRACT_ALL of an empty pattern on an empty value")
+            return tuple(_out("", as_bytes) for _ in text)
+        if compiled.nullable:
+            raise Unsupported("REGEXP_EXTRACT_ALL with a pattern that can match the empty string")
+        if compiled.context:
+            raise Unsupported("REGEXP_EXTRACT_ALL with an anchor or word boundary in the pattern")
+        out = []
+        for match in compiled.regex.finditer(text):
+            piece = match.group(group)
+            if piece is None:
+                raise Unsupported("REGEXP_EXTRACT_ALL with a group that did not take part in a match")
+            out.append(_out(piece, as_bytes))
+        return tuple(out)
+
+    return E(T.array(target), _strict(extract_all, *texts))
+
+
+@register_node(exp.RegexpReplace)
+def _regexp_replace_node(node):
+    _only(node, "this", "expression", "replacement")
+    if _arg(node, "replacement") is None:
+        raise Unsupported("REGEXP_REPLACE without a replacement")
+    return "REGEXP_REPLACE", [node.this, node.expression, node.args["replacement"]]
+
+
+def _parse_replacement(template: str, groups: int) -> list:
+    parts: list = []
+    buf = []
+    i = 0
+    while i < len(template):
+        ch = template[i]
+        if ch != "\\":
+            buf.append(ch)
+            i += 1
+            continue
+        nxt = template[i + 1 : i + 2]
+        if nxt == "\\":
+            buf.append("\\")
+        elif nxt.isdigit() and nxt.isascii():
+            if int(nxt) > groups:
+                raise Unsupported("REGEXP_REPLACE referring to a group the pattern lacks")
+            if buf:
+                parts.append("".join(buf))
+                buf = []
+            parts.append(int(nxt))
+        else:
+            raise Unsupported("REGEXP_REPLACE with a backslash that is not \\\\ or \\digit")
+        i += 2
+    if buf:
+        parts.append("".join(buf))
+    return parts
+
+
+@register("REGEXP_REPLACE")
+def _regexp_replace_fn(c, node, args, cx):
+    _arity(args, 3, 3, "REGEXP_REPLACE")
+    target, texts = _text_args(c, args, "REGEXP_REPLACE")
+    as_bytes = target.kind == "BYTES"
+
+    def replace(value, pattern, replacement):
+        compiled, text = _regex_for(pattern, value)
+        template = replacement.decode("latin-1") if as_bytes else replacement
+        parts = _parse_replacement(template, compiled.groups)
+        if compiled.empty:
+            rep = "".join(p if isinstance(p, str) else "" for p in parts) if all(
+                isinstance(p, str) or p == 0 for p in parts
+            ) else None
+            if rep is None:
+                raise Unsupported("REGEXP_REPLACE of an empty pattern referring to a group")
+            result = rep + "".join(ch + rep for ch in text)
+            return _out(result, as_bytes)
+        if compiled.nullable:
+            raise Unsupported("REGEXP_REPLACE with a pattern that can match the empty string")
+        if compiled.context:
+            raise Unsupported("REGEXP_REPLACE with an anchor or word boundary in the pattern")
+        out = []
+        last = 0
+        for match in compiled.regex.finditer(text):
+            out.append(text[last : match.start()])
+            for part in parts:
+                out.append(part if isinstance(part, str) else (match.group(part) or ""))
+            last = match.end()
+        out.append(text[last:])
+        return _out("".join(out), as_bytes)
+
+    return E(target, _strict(replace, *texts))
+
+
+@register_node(exp.RegexpInstr)
+def _regexp_instr_node(node):
+    _only(node, "this", "expression", "position", "occurrence", "option")
+    if _arg(node, "occurrence") is not None and _arg(node, "position") is None:
+        raise Unsupported("REGEXP_INSTR with an occurrence and no position")
+    if _arg(node, "option") is not None and _arg(node, "occurrence") is None:
+        raise Unsupported("REGEXP_INSTR with an option and no occurrence")
+    return "REGEXP_INSTR", _node_args(node, "this", "expression", "position", "occurrence", "option")
+
+
+@register("REGEXP_INSTR")
+def _regexp_instr_fn(c, node, args, cx):
+    _arity(args, 2, 5, "REGEXP_INSTR")
+    target, texts = _text_args(c, args[:2], "REGEXP_INSTR")
+    ints = [_int_arg(c, a, "REGEXP_INSTR") for a in args[2:]]
+
+    def instr(value, pattern, position=1, occurrence=1, option=0):
+        compiled, text = _regex_for(pattern, value)
+        group = _capture_group(compiled)
+        if option not in (0, 1):
+            raise Unsupported("REGEXP_INSTR with an option other than 0 or 1")
+        if compiled.empty and text and 1 <= position <= len(text) and occurrence >= 1:
+            return 0  # every match is empty and the reference reports none: REGEXP_INSTR("-2020-jack", "", 2) is 0
+        if compiled.nullable:
+            raise Unsupported("REGEXP_INSTR with a pattern that can match the empty string")
+        match = _search_from(compiled, text, position, occurrence, "REGEXP_INSTR")
+        if match is None:
+            return 0
+        if match.group(group) is None:
+            raise Unsupported("REGEXP_INSTR with a group that did not take part in the match")
+        return (match.end(group) if option else match.start(group)) + 1
+
+    return E(T.INT64, _strict(instr, *texts, *ints))
+
+
+# --------------------------------------------------------------------------------------------------------------
+# FORMAT
+# --------------------------------------------------------------------------------------------------------------
+#
+# Implemented: ``%[flags][width][.precision]specifier`` with flags ``- + space # 0``, ``*`` for width and precision,
+# specifiers ``d i x X o`` on INT64, ``f F e E g G`` on FLOAT64 (Python's ``%`` formatting is C printf's for finite
+# values), ``s t T`` on STRING and ``t T`` on INT64/BOOL (``t`` on finite FLOAT64), and ``%%``. Everything else
+# (``'``, ``%u %p %P %b``, NUMERIC and BIGNUMERIC, dates, arrays, structs, NULL arguments except as a ``*`` operand or
+# under ``*``, negative widths) raises Unsupported when met.
+
+
+class _Spec:
+    __slots__ = ("flags", "width", "prec", "conv")
+
+    def __init__(self, flags, width, prec, conv):
+        self.flags, self.width, self.prec, self.conv = flags, width, prec, conv
+
+
+@lru_cache(maxsize=512)
+def _parse_format(template: str) -> tuple:
+    parts: list = []
+    buf: list = []
+    i, n = 0, len(template)
+    while i < n:
+        ch = template[i]
+        if ch != "%":
+            buf.append(ch)
+            i += 1
+            continue
+        i += 1
+        j = i
+        while j < n and template[j] in "-+ #0'":
+            j += 1
+        flags = template[i:j]
+        k = j
+        if k < n and template[k] == "*":
+            width, k = "*", k + 1
+        else:
+            while k < n and template[k].isdigit() and template[k].isascii():
+                k += 1
+            width = int(template[j:k]) if k > j else None
+        prec = None
+        if k < n and template[k] == ".":
+            k += 1
+            if k < n and template[k] == "*":
+                prec, k = "*", k + 1
+            else:
+                m = k
+                while k < n and template[k].isdigit() and template[k].isascii():
+                    k += 1
+                prec = int(template[m:k]) if k > m else 0
+        if k >= n:
+            raise Unsupported("FORMAT pattern ending inside a specifier")
+        conv = template[k]
+        i = k + 1
+        if "'" in flags:
+            raise Unsupported("FORMAT flag '")
+        if conv == "%":
+            if flags or width is not None or prec is not None:
+                raise Unsupported("FORMAT %% with flags")
+            buf.append("%")
+            continue
+        if conv not in "dixXofFeEgGstT":
+            raise Unsupported(f"FORMAT specifier %{conv}")
+        if buf:
+            parts.append("".join(buf))
+            buf = []
+        parts.append(_Spec(flags, width, prec, conv))
+    if buf:
+        parts.append("".join(buf))
+    return tuple(parts)
+
+
+def _pad(text: str, width: int | None, left: bool) -> str:
+    if width is None or len(text) >= width:
+        return text
+    return text.ljust(width) if left else text.rjust(width)
+
+
+def _format_int(spec: _Spec, width, prec, value: int) -> str:
+    flags = spec.flags
+    if spec.conv in "di":
+        if "#" in flags:
+            raise Unsupported("FORMAT # flag with %d")
+        digits = str(abs(value))
+        if prec is not None:
+            if prec == 0 and value == 0:
+                raise Unsupported("FORMAT %.0d of zero")
+            digits = digits.rjust(prec, "0")
+        sign = "-" if value < 0 else ("+" if "+" in flags else (" " if " " in flags else ""))
+        prefix = ""
+    else:
+        if value < 0:
+            raise Unsupported("FORMAT of a negative integer with %x %X %o")
+        if "+" in flags or " " in flags:
+            raise Unsupported("FORMAT sign flags with %x %X %o")
+        digits = format(value, {"x": "x", "X": "X", "o": "o"}[spec.conv])
+        if prec is not None:
+            if prec == 0 and value == 0:
+                raise Unsupported("FORMAT %.0x of zero")
+            digits = digits.rjust(prec, "0")
+        sign = ""
+        prefix = ""
+        if "#" in flags:
+            if spec.conv == "o":
+                if not digits.startswith("0"):
+                    digits = "0" + digits
+            elif value != 0:
+                prefix = "0" + spec.conv
+    body = sign + prefix + digits
+    if width is not None and len(body) < width:
+        if "-" in flags:
+            body = body.ljust(width)
+        elif "0" in flags and prec is None:
+            body = sign + prefix + digits.rjust(width - len(sign) - len(prefix), "0")
+        else:
+            body = body.rjust(width)
+    return body
+
+
+def _format_float(spec: _Spec, width, prec, value: float) -> str:
+    flags = spec.flags
+    if value != value or value in (float("inf"), float("-inf")):
+        if flags or width is not None or prec is not None:
+            raise Unsupported("FORMAT of a non-finite float with flags, width or precision")
+        return ("%" + spec.conv) % value
+    fmt = "%" + flags + (str(width) if width is not None else "") + ("." + str(prec) if prec is not None else "") + spec.conv
+    return fmt % value
+
+
+_QUOTE_OK = frozenset(chr(c) for c in range(0x20, 0x7F)) - set("\"'`?")
+
+
+def _sql_string_literal(value: str) -> str:
+    out = []
+    for ch in value:
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ch in _QUOTE_OK or (not ch.isascii() and ch.isprintable()):
+            out.append(ch)
+        else:
+            raise Unsupported("FORMAT %T of a string with quotes, control or non-printable characters")
+    return '"' + "".join(out) + '"'
+
+
+def _format_text(spec: _Spec, width, prec, kind: str, value) -> str:
+    conv = spec.conv
+    if kind == "STRING":
+        text = value if conv in "st" else _sql_string_literal(value)
+    elif kind == "INT64" and conv in "tT":
+        text = str(value)
+    elif kind == "BOOL" and conv in "tT":
+        text = "true" if value else "false"
+    elif kind == "FLOAT64" and conv == "t" and value == value and value not in (float("inf"), float("-inf")):
+        text = V.format_double(value)
+    else:
+        raise Unsupported(f"FORMAT %{conv} of {kind}")
+    if set(spec.flags) - {"-"}:
+        raise Unsupported("FORMAT flags other than - on %s %t %T")
+    if (width is not None or prec is not None) and not text.isascii():
+        raise Unsupported("FORMAT width or precision on non-ASCII text")
+    if prec is not None:
+        text = text[:prec]
+    return _pad(text, width, "-" in spec.flags)
+
+
+_NOT_INTEGER = ("STRING", "BYTES", "BOOL")
+
+
+def _format(types: list, template: str, values: list):
+    parts = _parse_format(template)
+    out: list = []
+    index = 0
+
+    def take():
+        nonlocal index
+        if index >= len(values):
+            raise EvalError(f'Too few arguments to FORMAT for pattern "{template}"; Expected {index + 2}; Got {len(values) + 1}')
+        index += 1
+        return index - 1
+
+    for part in parts:
+        if isinstance(part, str):
+            out.append(part)
+            continue
+        starred = part.width == "*" or part.prec == "*"
+        resolved = []
+        for operand in (part.width, part.prec):
+            if operand == "*":
+                i = take()
+                if values[i] is None:
+                    return None
+                if types[i].kind != "INT64":
+                    raise EvalError("Invalid type for the * argument of FORMAT; Expected integer")
+                if values[i] < 0:
+                    raise Unsupported("FORMAT with a negative * operand")
+                resolved.append(values[i])
+            else:
+                resolved.append(operand)
+        width, prec = resolved
+        i = take()
+        kind, value = types[i].kind, values[i]
+        if value is None:
+            if starred and part.conv in "dixXofFeEgG":
+                return None
+            raise Unsupported("FORMAT with a NULL argument")
+        if part.conv in "dixXo":
+            if kind != "INT64":
+                if kind in _NOT_INTEGER:
+                    raise EvalError(f"Invalid type for argument {i + 2} to FORMAT; Expected integer; Got {kind}")
+                raise Unsupported(f"FORMAT %{part.conv} of {kind}")
+            out.append(_format_int(part, width, prec, value))
+        elif part.conv in "fFeEgG":
+            if kind != "FLOAT64":
+                if kind in _NOT_INTEGER:
+                    raise EvalError(f"Invalid type for argument {i + 2} to FORMAT; Expected floating point; Got {kind}")
+                raise Unsupported(f"FORMAT %{part.conv} of {kind}")
+            out.append(_format_float(part, width, prec, value))
+        else:
+            out.append(_format_text(part, width, prec, kind, value))
+    if index != len(values):
+        raise EvalError(f'Too many arguments to FORMAT for pattern "{template}"; Expected {index + 1}; Got {len(values) + 1}')
+    return "".join(out)
+
+
+@register_node(exp.Format)
+def _format_node(node):
+    _only(node, "this", "expressions")
+    return "FORMAT", [node.this] + list(node.expressions)
+
+
+@register("FORMAT")
+def _format_fn(c, node, args, cx):
+    if not args:
+        raise AnalysisError("No matching signature for function FORMAT with no arguments")
+    template = _string_arg(c, args[0], "FORMAT")
+    values = args[1:]
+    types = [v.type for v in values]
+    tf = template.fn
+    fns = [v.fn for v in values]
+
+    def run(env):
+        text = tf(env)
+        vals = [f(env) for f in fns]
+        if text is None:
+            return None
+        return _format(types, text, vals)
+
+    return E(T.STRING, run)
+
+
+# --------------------------------------------------------------------------------------------------------------
+# SOUNDEX, EDIT_DISTANCE, NORMALIZE
+# --------------------------------------------------------------------------------------------------------------
+
+_SOUNDEX = {}
+for _letters, _digit in (("BFPV", "1"), ("CGJKQSXZ", "2"), ("DT", "3"), ("L", "4"), ("MN", "5"), ("R", "6")):
+    for _ch in _letters:
+        _SOUNDEX[_ch] = _digit
+
+
+def _soundex_once(value: str, carry_first: bool, other_sep: bool, w_sep: bool, y_sep: bool) -> str:
+    out = ""
+    prev = ""
+    for ch in value:
+        letter = ch.upper() if ch.isascii() and ch.isalpha() else None
+        if letter is None:
+            if other_sep and out:
+                prev = ""
+            continue
+        code = _SOUNDEX.get(letter)
+        if not out:
+            out = letter
+            prev = code if (carry_first and code) else ""
+            continue
+        if letter in "HW":
+            if (letter == "W" and w_sep) or (letter == "H" and False):
+                prev = ""
+            continue
+        if letter == "Y" and y_sep:
+            prev = ""
+            continue
+        if code is None:
+            prev = ""  # a vowel (or Y read as one) separates repeated codes
+            continue
+        if code != prev:
+            out += code
+        prev = code
+        if len(out) == 4:
+            break
+    return (out + "000")[:4] if out else ""
+
+
+def _soundex(value: str) -> str:
+    if any(not ch.isascii() and ch.isalpha() for ch in value):
+        raise Unsupported("SOUNDEX of a non-ASCII letter")
+    answers = {
+        _soundex_once(value, a, b, c, d)
+        for a in (True, False)
+        for b in (True, False)
+        for c in (True, False)
+        for d in (True, False)
+    }
+    if len(answers) != 1:
+        raise Unsupported("SOUNDEX where undocumented rules (separators, Y, W) decide the code")
+    return answers.pop()
+
+
+@register_node(exp.Soundex)
+def _soundex_node(node):
+    _only(node, "this")
+    return "SOUNDEX", [node.this]
+
+
+@register("SOUNDEX")
+def _soundex_fn(c, node, args, cx):
+    _arity(args, 1, 1, "SOUNDEX")
+    return E(T.STRING, _strict(_soundex, _string_arg(c, args[0], "SOUNDEX")))
+
+
+@register_node(exp.Levenshtein)
+def _levenshtein_node(node):
+    _only(node, "this", "expression", "max_dist")
+    return "EDIT_DISTANCE", _node_args(node, "this", "expression", "max_dist")
+
+
+def _edit_distance(a, b, max_distance: int | None = None) -> int:
+    if max_distance is not None and max_distance < 0:
+        raise EvalError("max_distance must not be negative")
+    if isinstance(a, str) and not (a.isascii() and b.isascii()):
+        raise Unsupported("EDIT_DISTANCE of non-ASCII text (characters or bytes is undocumented)")
+    if len(a) < len(b):
+        a, b = b, a
+    previous = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        current = [i]
+        for j, cb in enumerate(b, 1):
+            current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (ca != cb)))
+        previous = current
+    distance = previous[-1]
+    return distance if max_distance is None else min(distance, max_distance)
+
+
+@register("EDIT_DISTANCE")
+def _edit_distance_fn(c, node, args, cx):
+    _arity(args, 2, 3, "EDIT_DISTANCE")
+    target, texts = _text_args(c, args[:2], "EDIT_DISTANCE")
+    if len(args) == 3:
+        if args[2].lit == "null":
+            raise Unsupported("EDIT_DISTANCE with a NULL max_distance")
+        limit = _int_arg(c, args[2], "EDIT_DISTANCE")
+        return E(T.INT64, _strict(_edit_distance, *texts, limit))
+    return E(T.INT64, _strict(_edit_distance, *texts))
+
+
+_FORMS = ("NFC", "NFKC", "NFD", "NFKD")
+
+
+@register_node(exp.Normalize)
+def _normalize_node(node):
+    _only(node, "this", "form", "is_casefold")
+    form = _arg(node, "form")
+    if form is None:
+        name = "NFC"
+    elif isinstance(form, (exp.Var, exp.Column)) and form.name.upper() in _FORMS:
+        name = form.name.upper()
+    else:
+        raise Unsupported("NORMALIZE mode")
+    return "NORMALIZE_" + name + ("_CASEFOLD" if node.args.get("is_casefold") else ""), [node.this]
+
+
+def _assigned(value: str) -> None:
+    if value.isascii():
+        return
+    for ch in value:
+        if unicodedata.category(ch) == "Cn":
+            raise Unsupported("normalization of a character unassigned in this Unicode version")
+
+
+def _normalizer(form: str, casefold: bool):
+    def normalize(value: str) -> str:
+        _assigned(value)
+        if not casefold:
+            return unicodedata.normalize(form, value)
+        # the order of normalization and case folding is not documented: answer when every order agrees
+        a = unicodedata.normalize(form, unicodedata.normalize(form, value).casefold())
+        b = unicodedata.normalize(form, value.casefold())
+        d = unicodedata.normalize(form, value).casefold()
+        if not (a == b == d):
+            raise Unsupported("NORMALIZE_AND_CASEFOLD where the order of folding and normalizing matters")
+        return a
+
+    return normalize
+
+
+def _register_normalize(form: str, casefold: bool) -> None:
+    name = "NORMALIZE_" + form + ("_CASEFOLD" if casefold else "")
+    fn = _normalizer(form, casefold)
+
+    @register(name)
+    def handler(c, node, args, cx):
+        _arity(args, 1, 1, name)
+        return E(T.STRING, _strict(fn, _string_arg(c, args[0], name)))
+
+
+for _form in _FORMS:
+    _register_normalize(_form, False)
+    _register_normalize(_form, True)
+
+# COLLATE and CONTAINS_SUBSTR are not registered: the first needs collation support, and sqlglot reads the second as
+# ``LOWER(a) CONTAINS LOWER(b)``, which is not what BigQuery computes.

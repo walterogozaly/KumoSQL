@@ -52,21 +52,57 @@ class Result:
     reasons: list = field(default_factory=list)
 
 
+def _strict_set_operations(text: str) -> bool:
+    """Whether ``text`` has ``STRICT CORRESPONDING`` set operations (sqlglot reads them exactly as ``BY NAME``: it drops the
+    keyword) and no ``BY NAME``, so that a set operation parsed without a mode is a STRICT one.
+
+    Works on tokens, so a STRICT in a string, a comment or a quoted name does not count. A bare STRICT anywhere else (or
+    one combined with INNER/LEFT/FULL) is refused: the parse could not tell us what it meant.
+    """
+
+    from sqlglot.dialects.bigquery import BigQuery
+    from sqlglot.tokens import TokenType
+
+    try:
+        tokens = BigQuery().tokenize(text)
+    except Exception:  # the parser reports what is wrong with the text
+        return False
+    setop = (TokenType.UNION, TokenType.INTERSECT, TokenType.EXCEPT)
+    quantifier = (TokenType.ALL, TokenType.DISTINCT)
+    strict = by_name = False
+    for i, token in enumerate(tokens):
+        word = token.text.upper()
+        if token.token_type is not TokenType.VAR:
+            continue
+        after_op = i >= 2 and tokens[i - 1].token_type in quantifier and tokens[i - 2].token_type in setop
+        if word == "STRICT":
+            followed = i + 1 < len(tokens) and tokens[i + 1].token_type is TokenType.VAR and tokens[i + 1].text.upper() == "CORRESPONDING"
+            if not (after_op and followed):
+                raise Unsupported("STRICT outside STRICT CORRESPONDING (sqlglot drops the keyword)")
+            if i >= 3 and tokens[i - 3].text.upper() in ("INNER", "LEFT", "FULL", "OUTER"):
+                raise Unsupported("STRICT CORRESPONDING combined with a join-style mode")
+            strict = True
+        elif word == "BY" and after_op and i + 1 < len(tokens) and tokens[i + 1].text.upper() == "NAME":
+            by_name = True
+    return strict and not by_name
+
+
 def evaluate(sql_or_tree: Any, database: Database | None = None, time_zone: str = "UTC", params: dict | None = None,
              mode: str = "bigquery") -> Result:
     from .compiler import Compiler, EmptyScope
 
     literals_decoded = False
+    strict_certain = False
     if isinstance(sql_or_tree, str):
-        from ..string_literals import canonical_literals, invalid_literal
+        from ..string_literals import invalid_literal
+        from .literals import decode_literals
 
         text = sql_or_tree
         if invalid_literal(text):
             raise AnalysisError("Invalid string literal")
-        if any(w in text.upper() for w in ("STRICT",)):
-            raise Unsupported("STRICT set operation (sqlglot drops the keyword)")
+        strict_certain = _strict_set_operations(text)
         try:
-            tree = sqlglot.parse_one(canonical_literals(text), read="bigquery")
+            tree = sqlglot.parse_one(decode_literals(text), read="bigquery")
         except sqlglot.errors.ParseError as error:
             raise Unsupported(f"sqlglot cannot parse the query: {str(error)[:120]}") from None
         literals_decoded = True
@@ -78,7 +114,7 @@ def evaluate(sql_or_tree: Any, database: Database | None = None, time_zone: str 
     database = database or Database()
     tz = V.zone(time_zone)
     ctx = Ctx(tz, params, mode, literals_decoded=literals_decoded)
-    compiler = Compiler(database, tz, params or {}, mode, literals_decoded)
+    compiler = Compiler(database, tz, params or {}, mode, literals_decoded, strict_certain)
     plan = compiler.query(tree, EmptyScope(), {})
     rows = plan.run(Env((), None, ctx, {}))
     return Result(plan.columns, rows, plan.ordered, not ctx.nondeterministic, ctx.inexact, plan.value_table, list(ctx.reasons))

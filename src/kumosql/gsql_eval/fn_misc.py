@@ -1,4 +1,4 @@
-"""Function family: errors (ERROR, NULLIFERROR, IFERROR, ISERROR), nondeterministic functions, bytes/JSON helpers.
+"""Function family: errors (ERROR, NULLIFERROR, IFERROR, ISERROR), nondeterministic functions, TO_JSON_STRING.
 
 Conditionals (IF, IFNULL, NULLIF, COALESCE) are handled in ``expressions.py``; FARM_FINGERPRINT, TYPEOF and the
 account/session functions are not implemented, so a call of them raises ``Unsupported``.
@@ -13,8 +13,8 @@ from sqlglot import exp
 
 from . import types as T
 from . import values as V
-from .errors import AnalysisError, EvalError, Unsupported
-from .functions import arity, args_of, bad_signature, coerce_to, lift1, register, register_node
+from .errors import EvalError, Unsupported
+from .functions import arity, args_of, coerce_to, register, register_node
 from .runtime import E
 
 # --- ERROR and the functions that absorb errors --------------------------------------------------------------------------
@@ -118,19 +118,7 @@ def rand(c, node, args, cx):
     return E(T.FLOAT64, run)
 
 
-# --- bytes and JSON ----------------------------------------------------------------------------------------------------
-
-
-@register_node(exp.SafeConvertBytesToString)
-def _map_safe_convert(node):
-    return "SAFE_CONVERT_BYTES_TO_STRING", args_of(node, "this")
-
-
-@register("SAFE_CONVERT_BYTES_TO_STRING")
-def safe_convert_bytes_to_string(c, node, args, cx):
-    arity("SAFE_CONVERT_BYTES_TO_STRING", args, 1)
-    a = coerce_to(c, "SAFE_CONVERT_BYTES_TO_STRING", args[0], T.BYTES)
-    return lift1(a, T.STRING, lambda v: v.decode("utf-8", errors="replace"))
+# --- JSON ----------------------------------------------------------------------------------------------------
 
 
 @register_node(exp.JSONFormat)

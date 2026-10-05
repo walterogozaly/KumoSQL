@@ -63,7 +63,7 @@ def numeric(value: Decimal) -> Decimal:
     if not value.is_finite():
         raise EvalError("numeric overflow")
     rounded = value.quantize(NUMERIC_SCALE, rounding=ROUND_HALF_UP, context=DEC)
-    if abs(rounded) >= NUMERIC_LIMIT:
+    if not (-NUMERIC_LIMIT < rounded < NUMERIC_LIMIT):  # exact comparison; abs() would round to the default 28 digits
         raise EvalError("numeric overflow")
     return rounded
 
@@ -476,7 +476,9 @@ def parse_timestamp(text: str, default_zone: tzinfo) -> int:
 def parse_interval_text(text: str) -> Interval:
     """``'Y-M D H:M:S.F'`` and its parts, as CAST(STRING AS INTERVAL) reads them."""
 
-    raise Unsupported("CAST to INTERVAL")
+    from . import datetimes
+
+    return datetimes.interval_from_string(text)
 
 
 # --- comparison, grouping and equality ---------------------------------------------------------
@@ -651,6 +653,7 @@ _CASTS[("DATETIME", "STRING")] = lambda v, tz: format_datetime(v)
 _CASTS[("TIME", "STRING")] = lambda v, tz: format_time(v)
 _CASTS[("TIMESTAMP", "STRING")] = lambda v, tz: format_timestamp(v, tz)
 _CASTS[("INTERVAL", "STRING")] = lambda v, tz: format_interval(v)
+_CASTS[("STRING", "INTERVAL")] = lambda v, tz: parse_interval_text(v)
 _CASTS[("DATE", "DATETIME")] = lambda v, tz: datetime(v.year, v.month, v.day)
 _CASTS[("DATETIME", "DATE")] = lambda v, tz: v.date()
 _CASTS[("DATETIME", "TIME")] = lambda v, tz: v.time()

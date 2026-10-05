@@ -32,13 +32,12 @@ from .functions import (
     guard_argument,
     lift1,
     lift2,
-    lift_n,
     null_of,
     register,
     register_node,
     safe_wrap,
 )
-from .runtime import E, const
+from .runtime import E
 
 INF = math.inf
 NAN = math.nan

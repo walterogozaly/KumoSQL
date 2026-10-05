@@ -47,6 +47,33 @@ MONTH_NAMES = [
 ]
 
 
+# --- time zones --------------------------------------------------------------------------------------
+
+_REGIONS = {
+    "Africa", "America", "Antarctica", "Arctic", "Asia", "Atlantic", "Australia", "Brazil", "Canada", "Chile", "Etc",
+    "Europe", "Indian", "Mexico", "Pacific", "US",
+}
+_LEGACY_NAMES = {
+    "cet", "cst6cdt", "cuba", "eet", "egypt", "eire", "est", "est5edt", "gb", "gb-eire", "gmt", "gmt+0", "gmt-0", "gmt0",
+    "greenwich", "hongkong", "hst", "iceland", "iran", "israel", "jamaica", "japan", "kwajalein", "libya", "met", "mst",
+    "mst7mdt", "navajo", "nz", "nz-chat", "poland", "portugal", "prc", "pst8pdt", "roc", "rok", "singapore", "turkey",
+    "uct", "universal", "w-su", "wet", "zulu",
+}
+
+
+def zone(name: str) -> tzinfo:
+    """A time zone by name. A name the machine's tz database lacks but BigQuery may know (a legacy link such as
+    ``US/Eastern``) is ``Unsupported``; any other unknown name is BigQuery's ``Invalid time zone`` error."""
+
+    try:
+        return V.zone(name)
+    except EvalError:
+        text = name.strip()
+        if ("/" in text and text.split("/")[0] in _REGIONS) or text.lower() in _LEGACY_NAMES:
+            raise Unsupported(f"time zone {text!r} is not in this machine's tz database") from None
+        raise
+
+
 # --- INTERVAL ------------------------------------------------------------------------------------
 
 
@@ -124,8 +151,9 @@ def interval_from_text(text: str, name: str) -> Interval:
 
 
 _SPAN_ORDER = ["YEAR", "MONTH", "DAY", "HOUR", "MINUTE", "SECOND"]
-_SIGNED = r"([+-]?)"
-_UINT = r"([0-9]+)"
+_SIGNED_COUNT = re.compile(r"^([+-]?)([0-9]+)$")
+_SIGNED_YM = re.compile(r"^([+-]?)([0-9]+)-([0-9]+)$")
+_SIGNED_TIME = re.compile(r"^([+-]?)([0-9]+(?::[0-9]+){0,2}(?:\.[0-9]+)?)$")
 
 
 def parse_interval_span(text: str, start: str, end: str) -> Interval:
@@ -135,63 +163,96 @@ def parse_interval_span(text: str, start: str, end: str) -> Interval:
     if start not in _SPAN_ORDER or end not in _SPAN_ORDER or _SPAN_ORDER.index(start) >= _SPAN_ORDER.index(end):
         raise AnalysisError(f"Invalid INTERVAL range {start} TO {end}")
     first, last = _SPAN_ORDER.index(start), _SPAN_ORDER.index(end)
-    pieces = []  # regular expression of each space separated piece, and what its groups mean
+    pieces = []
     if first == 0:
-        pieces.append((_SIGNED + _UINT + "-" + _UINT, "ym"))
+        pieces.append("ym")
     elif first == 1:
-        pieces.append((_SIGNED + _UINT, "m"))
+        pieces.append("m")
     if first <= 2 <= last:
-        pieces.append((_SIGNED + _UINT, "d"))
-    time_fields = [f for f in range(3, 6) if first <= f <= last or (f > first and f <= last)]
-    if first >= 3:
-        time_fields = list(range(first, last + 1))
-    else:
-        time_fields = list(range(3, last + 1)) if last >= 3 else []
+        pieces.append("d")
+    time_fields = [f for f in (3, 4, 5) if first <= f <= last]
     if time_fields:
-        body = ":".join(_UINT if f < 5 else _UINT + r"(?:\.([0-9]+))?" for f in time_fields)
-        pieces.append((_SIGNED + body, "t"))
-    if not pieces:
-        raise AnalysisError(f"Invalid INTERVAL range {start} TO {end}")
-    regex = re.compile("^" + " ".join(p for p, _ in pieces) + "$")
-    match = regex.match(text)
-    if not match:
+        pieces.append("t")
+    parts = text.split(" ")
+    if len(parts) != len(pieces):
         raise Unsupported(f"INTERVAL text {text!r} for {start} TO {end}")
-    groups = list(match.groups())
     months = days = micros = 0
-    for _, kind in pieces:
-        if kind == "ym":
-            sign, years, mons = groups[:3]
-            groups = groups[3:]
+    for piece, part in zip(pieces, parts):
+        if piece == "ym":
+            match = _SIGNED_YM.match(part)
+            if not match:
+                raise Unsupported(f"INTERVAL text {text!r} for {start} TO {end}")
+            sign, years, mons = match.groups()
             if int(mons) > 11:
                 raise Unsupported("INTERVAL month field above 11 in Y-M")
-            total = int(years) * 12 + int(mons)
-            months = -total if sign == "-" else total
-        elif kind == "m":
-            sign, mons = groups[:2]
-            groups = groups[2:]
-            months = -int(mons) if sign == "-" else int(mons)
-        elif kind == "d":
-            sign, d = groups[:2]
-            groups = groups[2:]
-            days = -int(d) if sign == "-" else int(d)
+            months = int(years) * 12 + int(mons)
+            months = -months if sign == "-" else months
+        elif piece in ("m", "d"):
+            match = _SIGNED_COUNT.match(part)
+            if not match:
+                raise Unsupported(f"INTERVAL text {text!r} for {start} TO {end}")
+            number = int(match.group(2))
+            number = -number if match.group(1) == "-" else number
+            if piece == "m":
+                months = number
+            else:
+                days = number
         else:
-            sign = groups[0]
-            count = len(time_fields)
-            has_seconds = time_fields[-1] == 5
-            values = [int(v) for v in groups[1 : 1 + count]]
-            fraction = groups[1 + count] if has_seconds else None
-            groups = groups[2 + count :] if has_seconds else groups[1 + count :]
+            match = _SIGNED_TIME.match(part)
+            if not match:
+                raise Unsupported(f"INTERVAL text {text!r} for {start} TO {end}")
+            sign, body = match.groups()
+            whole, _, fraction = body.partition(".")
+            numbers = whole.split(":")
+            if len(numbers) != len(time_fields) or (fraction and time_fields[-1] != 5):
+                raise Unsupported(f"INTERVAL text {text!r} for {start} TO {end}")
+            units = {3: MICROS_PER_HOUR, 4: MICROS_PER_MINUTE, 5: MICROS_PER_SECOND}
             total = 0
-            units = [MICROS_PER_HOUR, MICROS_PER_MINUTE, MICROS_PER_SECOND]
-            for index, field, number in zip(range(count), time_fields, values):
-                bounded = index > 0  # only the leading field may exceed its natural range
-                limit = 59
-                if bounded and number > limit:
+            for index, (field, number) in enumerate(zip(time_fields, numbers)):
+                if index > 0 and int(number) > 59:
                     raise Unsupported("INTERVAL minute or second field above 59")
-                total += number * units[field - 3]
+                total += int(number) * units[field]
             total += _micros_of_fraction(fraction)
             micros = -total if sign == "-" else total
     return check_interval(Interval(months, days, micros))
+
+
+_ISO_INTERVAL = re.compile(
+    r"^P(?:(-?[0-9]+)Y)?(?:(-?[0-9]+)M)?(?:(-?[0-9]+)D)?(?:T(?:(-?[0-9]+)H)?(?:(-?[0-9]+)M)?(?:(-?)([0-9]+)(?:\.([0-9]+))?S)?)?$"
+)
+_CANONICAL_INTERVAL = re.compile(
+    r"^([+-]?)([0-9]+)-([0-9]+)(?: ([+-]?[0-9]+)(?: ([+-]?)([0-9]+):([0-9]+):([0-9]+)(?:\.([0-9]+))?)?)?$"
+)
+
+
+def interval_from_string(text: str) -> Interval:
+    """``CAST(STRING AS INTERVAL)``: ISO 8601 (``P1Y2M3DT4H5M6.789S``) or ``[sign]Y-M [sign]D [sign]H:M:S[.F]``.
+
+    A string that cannot be an interval in any form raises the runtime error BigQuery raises; a form this
+    function does not know raises ``Unsupported``.
+    """
+
+    match = _ISO_INTERVAL.match(text) if text.startswith("P") else None
+    if match and text not in ("P", "PT") and not text.endswith("T"):
+        years, mons, days, hours, minutes, sign, seconds, fraction = match.groups()
+        tail = int(seconds or 0) * MICROS_PER_SECOND + _micros_of_fraction(fraction)
+        micros = int(hours or 0) * MICROS_PER_HOUR + int(minutes or 0) * MICROS_PER_MINUTE + (-tail if sign == "-" else tail)
+        return check_interval(Interval(int(years or 0) * 12 + int(mons or 0), int(days or 0), micros))
+    match = _CANONICAL_INTERVAL.match(text)
+    if match:
+        sign, years, mons, days, tsign, hours, minutes, seconds, fraction = match.groups()
+        if int(mons) > 11 or (minutes is not None and (int(minutes) > 59 or int(seconds) > 59)):
+            raise EvalError(f"Invalid INTERVAL value '{text}'")
+        months = int(years) * 12 + int(mons)
+        micros = 0
+        if hours is not None:
+            micros = int(hours) * MICROS_PER_HOUR + int(minutes) * MICROS_PER_MINUTE + int(seconds) * MICROS_PER_SECOND
+            micros += _micros_of_fraction(fraction)
+            micros = -micros if tsign == "-" else micros
+        return check_interval(Interval(-months if sign == "-" else months, int(days or 0), micros))
+    if text.startswith("P") or _COUNT.match(text):
+        raise EvalError(f"Invalid INTERVAL value '{text}'")
+    raise Unsupported(f"CAST of {text!r} to INTERVAL")
 
 
 def interval_divide(value: Interval, divisor: int) -> Interval:
@@ -565,22 +626,35 @@ def generate_dates(start: date, end: date, step: int, part: str) -> tuple:
 
     if step == 0:
         raise EvalError("Sequence step cannot be 0.")
+
+    def beyond(day: date) -> bool:
+        return day > end if step > 0 else day < end
+
     out = []
     k = 0
     while True:
         try:
             current = add_date_part(start, part, k * step)
         except EvalError:
-            break
-        if (current > end) if step > 0 else (current < end):
+            raise Unsupported("GENERATE_DATE_ARRAY running into the end of the DATE range") from None
+        if beyond(current):
             break
         out.append(current)
         if len(out) > MAX_GENERATED:
             raise Unsupported("a generated array of this size")
         k += 1
     if part in ("MONTH", "QUARTER", "YEAR") and start.day > 28:
-        # stepping from the previous element (clamped) and from the start give different dates here
-        raise Unsupported("GENERATE_DATE_ARRAY stepping months from a day above 28")
+        # stepping from the previous element (clamped to a month's end) differs from stepping from the start
+        chained = []
+        current = start
+        while not beyond(current) and len(chained) <= len(out):
+            chained.append(current)
+            try:
+                current = add_date_part(current, part, step)
+            except EvalError:
+                raise Unsupported("GENERATE_DATE_ARRAY running into the end of the DATE range") from None
+        if chained != out:
+            raise Unsupported("GENERATE_DATE_ARRAY stepping months from a day above 28")
     return tuple(out)
 
 
@@ -619,9 +693,7 @@ def unix_date(value: date) -> int:
 
 # --- FORMAT_* ----------------------------------------------------------------------------------------------
 
-_ELEMENT = re.compile(r"%(E(?:[0-9]+|\*)[SfY]|Ez|[A-Za-z%])")
-
-_DATE_ONLY = set("AaBbhCdejmQUuwVGgYyDFx") | {"E4Y"}
+_DATE_ONLY = set("AaBbhCdejmQUuWwVGgYyDFx") | {"E4Y"}
 _TIME_ONLY = set("HIklMPpRSTX")
 _BOTH = set("c")
 _STAMP_ONLY = set("Zzs") | {"Ez"}
@@ -641,6 +713,29 @@ def _fraction_digits(micro: int, count: int) -> str:
     return f"{micro:06d}".ljust(count, "0")[:count]
 
 
+_TOKEN = re.compile(r"%(E(?:[0-9]+|\*)[SfY]|Ez|[A-Za-z%])|(\s+)|(.)", re.S)
+
+
+_MAPPED_PREFIXES = ("m/%d/%y", "-d", "S.%f", "Y-%m-%d", "H:%M:%S", "a %b %e %H:%M:%S %Y")
+_UNMAP = re.compile(r"%%|%-d|%S\.%f")
+
+
+def unmap_format(text: str) -> str:
+    """The format string a query wrote, from the one sqlglot's BigQuery parser hands over for a literal.
+
+    The parser rewrites some elements while reading a literal format (``%e`` becomes ``%-d``, ``%E6S`` becomes
+    ``%S.%f``; ``%x``, ``%D``, ``%F``, ``%T`` and ``%c`` become the elements they stand for, which print and parse
+    the same). The two lossy ones are undone here. A ``%%`` followed by the start of a rewrite cannot be told from
+    a rewritten escaped element, so that is ``Unsupported``.
+    """
+
+    if "%%" in text:
+        for prefix in _MAPPED_PREFIXES:
+            if "%%" + prefix in text:
+                raise Unsupported("a format string where an escaped percent sign precedes a rewritten element")
+    return _UNMAP.sub(lambda m: {"%-d": "%e", "%S.%f": "%E6S"}.get(m.group(0), m.group(0)), text)
+
+
 def format_elements(fmt: str, kind: str, day: date | None, tod: time | None, stamp: tuple | None = None) -> str:
     """FORMAT_DATE / FORMAT_TIME / FORMAT_DATETIME / FORMAT_TIMESTAMP: the documented format elements, else ``Unsupported``.
 
@@ -648,17 +743,14 @@ def format_elements(fmt: str, kind: str, day: date | None, tod: time | None, sta
     """
 
     out = []
-    pos = 0
-    for match in _ELEMENT.finditer(fmt):
-        out.append(fmt[pos : match.start()])
-        pos = match.end()
-        if "%" in fmt[match.start() : match.start() + 1] and False:  # pragma: no cover
-            pass
-        out.append(_element(match.group(1), kind, day, tod, stamp))
-    tail = fmt[pos:]
-    if "%" in tail:
-        raise Unsupported("a format string with a stray %")
-    out.append(tail)
+    for match in _TOKEN.finditer(fmt):
+        code, space, char = match.groups()
+        if code:
+            out.append(_element(code, kind, day, tod, stamp))
+        elif char == "%":
+            raise Unsupported("a format string with a stray %")
+        else:
+            out.append(match.group(0))
     return "".join(out)
 
 
@@ -699,8 +791,7 @@ def _element(code: str, kind: str, day: date | None, tod: time | None, stamp: tu
         if not name:
             raise Unsupported("%Z without a zone abbreviation")
         return name
-    if code in _DATE_ONLY or code == "c" or code == "E4Y":
-        d = day
+    d = day
     if code == "A":
         return DAY_NAMES[d.weekday()]
     if code == "a":
@@ -785,10 +876,12 @@ def _element(code: str, kind: str, day: date | None, tod: time | None, stamp: tu
 
 
 class _Fields:
-    __slots__ = ("year", "month", "day", "yday", "hour", "hour12", "pm", "minute", "second", "micro", "offset", "kinds")
+    __slots__ = (
+        "year", "month", "day", "yday", "weekday", "hour", "hour12", "pm", "minute", "second", "micro", "offset", "kinds",
+    )
 
     def __init__(self):
-        self.year = self.month = self.day = self.yday = None
+        self.year = self.month = self.day = self.yday = self.weekday = None
         self.hour = self.hour12 = self.pm = self.minute = self.second = self.micro = self.offset = None
         self.kinds = set()  # "date", "time", "offset"
 
@@ -802,34 +895,19 @@ _FORMAT_EXPANSIONS = {"F": "%Y-%m-%d", "T": "%H:%M:%S", "R": "%H:%M", "D": "%m/%
 
 def _tokens(fmt: str) -> list:
     tokens = []
-    pos = 0
-    expanded = []
-    for match in _ELEMENT.finditer(fmt):
-        expanded.append(fmt[pos : match.start()])
-        pos = match.end()
-        code = match.group(1)
-        expanded.append(_FORMAT_EXPANSIONS.get(code) and ("\0" + _FORMAT_EXPANSIONS[code]) or "\1" + code + "\2")
-    expanded.append(fmt[pos:])
-    text = "".join(expanded)
-    # re-tokenise: literal characters, whitespace runs and \1code\2 elements (expansions hold plain % elements)
-    text = re.sub(r"\0(%[A-Za-z])(.)(%[A-Za-z])(.)?(%[A-Za-z])?", lambda m: "".join(
-        "\1" + part[1:] + "\2" if part.startswith("%") else part for part in m.groups() if part), text)
-    index = 0
-    while index < len(text):
-        char = text[index]
-        if char == "\1":
-            end = text.index("\2", index)
-            tokens.append(("e", text[index + 1 : end]))
-            index = end + 1
-        elif char.isspace():
-            while index < len(text) and text[index].isspace():
-                index += 1
+    for match in _TOKEN.finditer(fmt):
+        code, space, char = match.groups()
+        if code:
+            if code in _FORMAT_EXPANSIONS:
+                tokens.extend(_tokens(_FORMAT_EXPANSIONS[code]))
+            else:
+                tokens.append(("e", code))
+        elif space:
             tokens.append(("space", None))
+        elif char == "%":
+            raise Unsupported("a format string with a stray %")
         else:
             tokens.append(("lit", char))
-            index += 1
-    if "%" in "".join(t[1] for t in tokens if t[0] == "lit"):
-        raise Unsupported("a format string with a stray %")
     return tokens
 
 
@@ -860,6 +938,23 @@ def _month_name(text: str, pos: int, full: bool, original: str) -> tuple[int, in
         if full:
             raise Unsupported("%B over an abbreviated month name")
         return abbreviations.index(word) + 1, end
+    raise _failed(original)
+
+
+def _weekday_name(text: str, pos: int, full: bool, original: str) -> tuple[int, int]:
+    end = pos
+    while end < len(text) and text[end].isalpha() and text[end].isascii():
+        end += 1
+    word = text[pos:end].lower()
+    names = [d.lower() for d in DAY_NAMES]
+    if word in names:
+        if not full:
+            raise Unsupported("%a over a full weekday name")
+        return names.index(word), end
+    if word in [n[:3] for n in names]:
+        if full:
+            raise Unsupported("%A over an abbreviated weekday name")
+        return [n[:3] for n in names].index(word), end
     raise _failed(original)
 
 
@@ -913,6 +1008,9 @@ def parse_fields(fmt: str, text: str) -> _Fields:
         elif code in ("b", "h", "B"):
             fields.month, pos = _month_name(text, pos, code == "B", text)
             fields.kinds.add("date")
+        elif code in ("a", "A"):
+            fields.weekday, pos = _weekday_name(text, pos, code == "A", text)
+            fields.kinds.add("date")
         elif code == "H":
             fields.hour, pos = _digits(text, pos, 0, 23, 2, text)
             fields.kinds.add("time")
@@ -963,16 +1061,20 @@ def parse_fields(fmt: str, text: str) -> _Fields:
 
 
 def _civil_date(fields: _Fields, text: str) -> date:
+    result = _civil_date_of(fields, text)
+    if fields.weekday is not None and result.weekday() != fields.weekday:
+        raise Unsupported("a weekday name that does not match the date")
+    return result
+
+
+def _civil_date_of(fields: _Fields, text: str) -> date:
     year = 1970 if fields.year is None else fields.year
     if fields.yday is not None:
         if fields.month is not None or fields.day is not None:
             raise Unsupported("%j together with a month or day")
-        try:
-            return date(year, 1, 1) + timedelta(days=fields.yday - 1) if fields.yday <= (
-                366 if V._days_in_month(year, 2) == 29 else 365
-            ) else (_ for _ in ()).throw(ValueError)
-        except ValueError:
-            raise _failed(text) from None
+        if fields.yday > (366 if V._days_in_month(year, 2) == 29 else 365):
+            raise _failed(text)
+        return date(year, 1, 1) + timedelta(days=fields.yday - 1)
     try:
         return date(year, 1 if fields.month is None else fields.month, 1 if fields.day is None else fields.day)
     except ValueError:
@@ -1018,6 +1120,3 @@ def parse_timestamp(fmt: str, text: str, tz: tzinfo) -> int:
     if fields.offset is not None:
         return V.timestamp(V.utc_to_micros(civil) - fields.offset * MICROS_PER_MINUTE)
     return V.timestamp(V.from_civil(civil, tz))
-
-
-__all__ = [name for name in dir() if not name.startswith("_") and name not in ("annotations",)]

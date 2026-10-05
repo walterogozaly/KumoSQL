@@ -60,6 +60,16 @@ class Type:
             return any(t.foreign for _, t in self.fields)
         return False
 
+    @property
+    def nested_array(self) -> bool:
+        """An array of arrays anywhere inside (BigQuery has none)."""
+
+        if self.kind == "ARRAY":
+            return self.elem.kind == "ARRAY" or self.elem.nested_array
+        if self.kind == "STRUCT":
+            return any(t.nested_array for _, t in self.fields)
+        return False
+
     def field_index(self, name: str) -> int | None:
         """The position of field ``name`` (case-insensitive); raises on an ambiguous name."""
 
@@ -95,8 +105,9 @@ BY_NAME.update({"DOUBLE": FLOAT64, "FLOAT": FLOAT32, "BOOLEAN": BOOL, "INT": INT
 
 
 def array(elem: Type) -> Type:
-    if elem.kind == "ARRAY":
-        raise AnalysisError("Arrays of arrays are not supported")
+    """ARRAY<elem>. Arrays of arrays exist in GoogleSQL but not in BigQuery: the compiler refuses an expression of such a
+    type in BigQuery mode (:attr:`Type.nested_array`)."""
+
     return Type("ARRAY", elem=elem)
 
 
@@ -268,11 +279,30 @@ def implicitly_coercible(source: Type, target: Type) -> bool:
         return True
     if source.kind == "STRUCT" and target.kind == "STRUCT" and len(source.fields) == len(target.fields):
         return all(implicitly_coercible(s, t) for (_, s), (_, t) in zip(source.fields, target.fields))
+    if source.kind == "ARRAY" and target.kind == "ARRAY":
+        return implicitly_coercible(source.elem, target.elem)
     return False
 
 
-def supertype(types: list[tuple[Type, str | None]]) -> Type:
-    """The common supertype of ``(type, literal kind)`` pairs; literal kind is ``"null"``, ``"literal"`` or ``None``.
+_TEMPORAL = ("DATE", "DATETIME", "TIME", "TIMESTAMP")
+
+
+def coercible_with_info(source: Type, target: Type, info) -> bool:
+    """Like :func:`implicitly_coercible`, for a value whose literal ``info`` (``"null"``, ``"literal"`` or a struct of
+    field infos, see ``runtime.E.info``) lets NULL fields take any type and string literals become date/time values."""
+
+    if info == "null":
+        return True
+    if isinstance(info, tuple) and source.kind == "STRUCT" and target.kind == "STRUCT" and len(source.fields) == len(target.fields):
+        return all(coercible_with_info(s, t, i) for (_, s), (_, t), i in zip(source.fields, target.fields, info[1]))
+    if info == "literal" and source.kind == "STRING" and target.kind in _TEMPORAL:
+        return True
+    return implicitly_coercible(source, target)
+
+
+def supertype(types: list[tuple[Type, object]]) -> Type:
+    """The common supertype of ``(type, info)`` pairs; ``info`` is ``"null"`` for the NULL literal, ``"literal"``, a
+    ``("struct", field infos)`` pair for a STRUCT constructor, or ``None``.
 
     NULL literals take any type; string literals may become a date or time type; numbers widen along
     INT64, NUMERIC, BIGNUMERIC, FLOAT64.
@@ -285,12 +315,19 @@ def supertype(types: list[tuple[Type, str | None]]) -> Type:
     first = candidates[0]
     if all(t == first for t in candidates):
         return first
+    infos = [k for _, k in typed]
     non_literal = [t for t, k in typed if k != "literal"]
     if all(t.is_numeric for t in candidates):
+        fixed = [t for t, k in typed if k != "literal"]
+        if fixed:
+            best = max(fixed, key=numeric_rank)
+            # a literal takes the others' type when it converts: any INT64 literal, a FLOAT64 literal to NUMERIC/BIGNUMERIC
+            if all(k != "literal" or t.kind == "INT64" or numeric_rank(t) <= numeric_rank(best)
+                   or (t.kind == "FLOAT64" and best.kind in ("NUMERIC", "BIGNUMERIC")) for t, k in typed):
+                return best
         return max(candidates, key=numeric_rank)
-    temporal = {"DATE", "DATETIME", "TIME", "TIMESTAMP"}
     kinds = {t.kind for t in candidates}
-    if kinds <= temporal | {"STRING"}:
+    if kinds <= set(_TEMPORAL) | {"STRING"}:
         strings_literal = all(k == "literal" for t, k in typed if t.kind == "STRING")
         others = {t.kind for t in candidates if t.kind != "STRING"}
         if strings_literal and len(others) == 1:
@@ -302,9 +339,16 @@ def supertype(types: list[tuple[Type, str | None]]) -> Type:
     if all(t.kind == "STRUCT" for t in candidates) and len({len(t.fields) for t in candidates}) == 1:
         fields = []
         for i in range(len(first.fields)):
-            fields.append((first.fields[i][0], supertype([(t.fields[i][1], None) for t in candidates])))
+            subs = [k[1][i] if isinstance(k, tuple) else None for k in infos]
+            fields.append((first.fields[i][0], supertype([(t.fields[i][1], sub) for t, sub in zip(candidates, subs)])))
         result = struct(fields)
-        if all(implicitly_coercible(t, result) for t in candidates):
+        if all(coercible_with_info(t, result, k) for t, k in typed):
+            return result
+    if all(t.kind == "ARRAY" for t in candidates):
+        # a literal empty array (info "literal") takes the type of the others
+        real = [t for t, k in typed if k != "literal"] or candidates
+        result = array(supertype([(t.elem, None) for t in real]))
+        if all(implicitly_coercible(t, result) or k == "literal" for t, k in typed):
             return result
     if non_literal and all(implicitly_coercible(t, non_literal[0]) for t in candidates):
         return non_literal[0]
@@ -313,5 +357,5 @@ def supertype(types: list[tuple[Type, str | None]]) -> Type:
 
 __all__ = [name for name in dir() if name.isupper()] + [
     "Type", "array", "struct", "other", "comparable", "equatable", "groupable", "from_sqlglot", "parse_type_name",
-    "implicitly_coercible", "supertype", "numeric_rank",
+    "implicitly_coercible", "coercible_with_info", "supertype", "numeric_rank",
 ]

@@ -23,7 +23,7 @@ raises ``Unsupported`` (or marks the context nondeterministic) instead of pickin
 from __future__ import annotations
 
 import math
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from fractions import Fraction
 from itertools import accumulate
 from typing import Any, Callable
@@ -152,8 +152,10 @@ def _argument(compiler, cx, node, name: str, distinct_ok: bool = False) -> tuple
             raise Unsupported(f"{name}(DISTINCT ...)")
         distinct = True
         node = node.expressions[0]
-    if isinstance(node, (exp.HavingMax, exp.Star)):
-        raise Unsupported(f"{name} of {type(node).__name__}")
+    if isinstance(node, exp.Star):
+        raise AnalysisError(f"{name}(*) is not allowed")
+    if isinstance(node, exp.HavingMax):
+        raise Unsupported(f"{name} with HAVING MAX/MIN")
     value = compiler.expr(node, cx)
     _check_type(value, name)
     return value, distinct
@@ -247,6 +249,18 @@ def _numeric_argument(compiler, cx, node, name: str) -> tuple[E, bool]:
     return value, distinct
 
 
+def _fit(value: Decimal, kind: str) -> Decimal:
+    """``value`` as a NUMERIC or BIGNUMERIC payload (``V.numeric`` takes ``abs`` under the default 28-digit context,
+    which rounds the largest NUMERIC values up to the limit, so the range check is done here with exact comparisons)."""
+
+    if kind == "NUMERIC":
+        rounded = value.quantize(V.NUMERIC_SCALE, rounding=ROUND_HALF_UP, context=V.DEC)
+        if not (-V.NUMERIC_LIMIT < rounded < V.NUMERIC_LIMIT):
+            raise EvalError("numeric overflow")
+        return rounded
+    return V.bignumeric(value)
+
+
 def _decimal_total(values: list, kind: str) -> tuple[Decimal, bool]:
     """The exact sum, and whether some prefix sum left the type's range."""
 
@@ -299,14 +313,13 @@ def _sum(compiler, node, cx, nulls) -> AggSpec:
 
         return AggSpec(T.INT64, sum_int, "SUM")
     if kind in ("NUMERIC", "BIGNUMERIC"):
-        convert = V.decimal_of(kind)
 
         def sum_decimal(rows, env):
             values = gather(rows, env)
             if not values:
                 return None
             total, over = _decimal_total(values, kind)
-            result = convert(total)  # EvalError when the total is out of range
+            result = _fit(total, kind)  # EvalError when the total is out of range
             if over:
                 raise Unsupported(f"SUM whose partial sums overflow {kind} although the total does not")
             return result
@@ -336,7 +349,7 @@ def _divide_decimal(total: Decimal, count: int, kind: str) -> Decimal:
     result = Decimal(quotient).scaleb(-scale, context=V.DEC)
     if scaled < 0 and quotient:
         result = -result
-    return V.decimal_of(kind)(result)
+    return _fit(result, kind)
 
 
 def _avg(compiler, node, cx, nulls) -> AggSpec:

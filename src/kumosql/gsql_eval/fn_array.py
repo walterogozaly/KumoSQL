@@ -8,7 +8,6 @@ element by position (ARRAY_FIRST, ARRAY_LAST, ARRAY_TO_STRING).
 from __future__ import annotations
 
 import math
-from datetime import date
 from decimal import Decimal
 
 from sqlglot import exp
@@ -32,7 +31,7 @@ from .functions import (
     same_kind,
     takes_lambda,
 )
-from .runtime import E, const
+from .runtime import E
 
 MAX_GENERATED = 16000  # beyond this many elements the exact BigQuery limit is not known to this evaluator
 
@@ -246,9 +245,9 @@ def array_includes(c, node, args, cx):
     array, probe = args
     if isinstance(array, LambdaArg):
         raise bad_signature("ARRAY_INCLUDES", [])
-    array = _array_arg(c, "ARRAY_INCLUDES", array)
     if isinstance(probe, LambdaArg):
-        return _includes_lambda(c, array, probe)
+        return _includes_lambda(c, _array_arg(c, "ARRAY_INCLUDES", array), probe)
+    array = _array_arg(c, "ARRAY_INCLUDES", array, probe.type if probe.lit != "null" else T.INT64)
     target, left, right = _unify_with_elements(c, "ARRAY_INCLUDES", array, probe, False)
     lf, rf = left.fn, right.fn
 
@@ -300,8 +299,10 @@ def _includes_lambda(c, array: E, lam: LambdaArg) -> E:
 def _includes_many(name: str, require_all: bool):
     def handler(c, node, args, cx):
         arity(name, args, 2)
-        array = _array_arg(c, name, args[0])
-        probe = _array_arg(c, name, args[1], array.type.elem)
+        second = args[1]
+        hint = second.type.elem if second.lit != "null" and second.type.kind == "ARRAY" else T.INT64
+        array = _array_arg(c, name, args[0], hint)
+        probe = _array_arg(c, name, second, array.type.elem)
         if is_empty_array_literal(probe):
             probe = E(T.array(array.type.elem), probe.fn, probe.lit, probe.value)
         target, left, right = _unify_with_elements(c, name, array, probe, True)
@@ -384,17 +385,48 @@ def _map_generate_date_array(node):
     return "GENERATE_DATE_ARRAY", args_of(node, "start", "end", "step")
 
 
+@register_node(exp.GenerateTimestampArray)
+def _map_generate_timestamp_array(node):
+    return "GENERATE_TIMESTAMP_ARRAY", args_of(node, "start", "end", "step")
+
+
+_DATE_UNITS = ("DAY", "WEEK", "MONTH", "QUARTER", "YEAR")
+_TIMESTAMP_UNITS = ("MICROSECOND", "MILLISECOND", "SECOND", "MINUTE", "HOUR", "DAY")
+
+
+def _step_unit(name: str, node, allowed: tuple) -> None:
+    """The date part of the written ``INTERVAL n part`` step must be one of ``allowed`` (checked at analysis time)."""
+
+    step = node.args.get("step") if isinstance(node, exp.Expression) else None
+    if step is None:
+        return
+    unit = step.args.get("unit") if isinstance(step, exp.Interval) else None
+    if unit is None:
+        raise Unsupported(f"{name} with a step that is not a written INTERVAL")
+    if unit.name.upper() not in allowed:
+        raise AnalysisError(f"{name} does not accept an INTERVAL in {unit.name.upper()}")
+
+
+def _step_argument(c, name: str, args: list) -> E | None:
+    if len(args) < 3:
+        return None
+    step = args[2]
+    if step.lit == "null":
+        return c.coerce(step, T.INTERVAL)
+    if step.type != T.INTERVAL:
+        raise bad_signature(name, args)
+    return step
+
+
 @register("GENERATE_DATE_ARRAY")
 def generate_date_array(c, node, args, cx):
+    from . import datetimes as D
+
     arity("GENERATE_DATE_ARRAY", args, 2, 3)
+    _step_unit("GENERATE_DATE_ARRAY", node, _DATE_UNITS)
     start = coerce_to(c, "GENERATE_DATE_ARRAY", args[0], T.DATE)
     end = coerce_to(c, "GENERATE_DATE_ARRAY", args[1], T.DATE)
-    step = args[2] if len(args) > 2 else None
-    if step is not None:
-        if step.lit == "null":
-            step = c.coerce(step, T.INTERVAL)
-        if step.type != T.INTERVAL:
-            raise bad_signature("GENERATE_DATE_ARRAY", args)
+    step = _step_argument(c, "GENERATE_DATE_ARRAY", args)
     sf, ef = start.fn, end.fn
     stf = step.fn if step is not None else None
 
@@ -405,28 +437,89 @@ def generate_date_array(c, node, args, cx):
             return None
         if interval.micros != 0 or (interval.months != 0 and interval.days != 0):
             raise Unsupported("GENERATE_DATE_ARRAY step that is not a whole number of one date part")
-        if interval.months == 0 and interval.days == 0:
-            raise EvalError("Sequence step cannot be 0.")
-        out = []
         if interval.months:
-            if first.day > 28:
-                raise Unsupported("GENERATE_DATE_ARRAY by months from a day beyond the 28th")
-            i = 0
-            while True:
-                current = V.add_months(first, interval.months * i)
-                if (interval.months > 0 and current > last) or (interval.months < 0 and current < last):
-                    break
-                out.append(current)
-                i += 1
-                if len(out) > MAX_GENERATED:
-                    raise Unsupported("GENERATE_DATE_ARRAY beyond 16000 elements")
-            return tuple(out)
-        step_days = interval.days
-        count = 0
-        if (step_days > 0 and first <= last) or (step_days < 0 and first >= last):
-            count = abs((last - first).days) // abs(step_days) + 1
-        if count > MAX_GENERATED:
-            raise Unsupported("GENERATE_DATE_ARRAY beyond 16000 elements")
-        return tuple(V.date_add_days(first, step_days * i) for i in range(count))
+            return D.generate_dates(first, last, interval.months, "MONTH")
+        return D.generate_dates(first, last, interval.days, "DAY")
 
     return E(T.array(T.DATE), run)
+
+
+@register("GENERATE_TIMESTAMP_ARRAY")
+def generate_timestamp_array(c, node, args, cx):
+    from . import datetimes as D
+
+    arity("GENERATE_TIMESTAMP_ARRAY", args, 3)
+    _step_unit("GENERATE_TIMESTAMP_ARRAY", node, _TIMESTAMP_UNITS)
+    start = coerce_to(c, "GENERATE_TIMESTAMP_ARRAY", args[0], T.TIMESTAMP)
+    end = coerce_to(c, "GENERATE_TIMESTAMP_ARRAY", args[1], T.TIMESTAMP)
+    step = _step_argument(c, "GENERATE_TIMESTAMP_ARRAY", args)
+    sf, ef, stf = start.fn, end.fn, step.fn
+
+    def run(env):
+        first, last, interval = sf(env), ef(env), stf(env)
+        if first is None or last is None or interval is None:
+            return None
+        if interval.months != 0 or (interval.days != 0 and interval.micros != 0):
+            raise Unsupported("GENERATE_TIMESTAMP_ARRAY step that is not a whole number of one date part")
+        if interval.days:
+            return D.generate_timestamps(first, last, interval.days, "DAY")
+        return D.generate_timestamps(first, last, interval.micros, "MICROSECOND")
+
+    return E(T.array(T.TIMESTAMP), run)
+
+
+# --- EUCLIDEAN_DISTANCE ------------------------------------------------------------------------------------------------
+
+
+@register_node(exp.EuclideanDistance)
+def _map_euclidean(node):
+    return "EUCLIDEAN_DISTANCE", args_of(node, "this", "expression")
+
+
+@register("EUCLIDEAN_DISTANCE")
+def euclidean_distance(c, node, args, cx):
+    """Dense vectors (ARRAY<FLOAT64>) or sparse ones (ARRAY<STRUCT<key, FLOAT64>>); any irregular input is declined."""
+
+    arity("EUCLIDEAN_DISTANCE", args, 2)
+    a, b = args
+    if a.lit == "null" and b.lit == "null":
+        raise AnalysisError("EUCLIDEAN_DISTANCE of two untyped NULLs")
+    if a.lit == "null":
+        a = E(b.type, a.fn, "null", None)
+    if b.lit == "null":
+        b = E(a.type, b.fn, "null", None)
+    if a.type != b.type or a.type.kind != "ARRAY":
+        raise bad_signature("EUCLIDEAN_DISTANCE", args)
+    elem = a.type.elem
+    sparse = elem.kind == "STRUCT"
+    if sparse:
+        if len(elem.fields) != 2 or elem.fields[1][1] != T.FLOAT64 or elem.fields[0][1].kind not in ("STRING", "INT64"):
+            raise Unsupported("EUCLIDEAN_DISTANCE on this sparse vector type")
+    elif elem != T.FLOAT64:
+        raise Unsupported(f"EUCLIDEAN_DISTANCE on {a.type}")
+    af, bf = a.fn, b.fn
+
+    def run(env):
+        x, y = af(env), bf(env)
+        if x is None or y is None:
+            return None
+        env.ctx.inexact = True
+        if not V.ordered_kind(x) or not V.ordered_kind(y):
+            env.ctx.nondet("EUCLIDEAN_DISTANCE of an unordered array")
+        if sparse:
+            left, right = {}, {}
+            for table, vector in ((left, x), (right, y)):
+                for item in vector:
+                    if item is None or item[0] is None or item[1] is None or item[0] in table:
+                        raise Unsupported("EUCLIDEAN_DISTANCE on a sparse vector with a NULL or repeated key")
+                    table[item[0]] = item[1]
+            pairs = [(left.get(k, 0.0), right.get(k, 0.0)) for k in {**left, **right}]
+        else:
+            if len(x) != len(y) or any(v is None for v in x) or any(v is None for v in y):
+                raise Unsupported("EUCLIDEAN_DISTANCE on vectors of different lengths or with NULL elements")
+            pairs = list(zip(x, y))
+        if any(math.isnan(p) or math.isinf(p) or math.isnan(q) or math.isinf(q) for p, q in pairs):
+            raise Unsupported("EUCLIDEAN_DISTANCE of a non-finite value")
+        return math.sqrt(math.fsum((p - q) ** 2 for p, q in pairs))
+
+    return E(T.FLOAT64, run)
