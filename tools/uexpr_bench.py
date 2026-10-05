@@ -40,12 +40,50 @@ def prove(left, right, tables, constants=False):
     return prove_result(left, right, tables, constants).proven
 
 
+def order_check(names, seed: int) -> int:
+    """Prove every pair in file order and again in a shuffled order; the two must agree pair by pair.
+
+    A proof must not depend on what the process translated before it. No random-database check runs here:
+    this compares the proofs only, so it is quick.
+    """
+
+    import random
+
+    differ = 0
+    for name in names:
+        pairs_file, schema_file = bench.SUITES[name]
+        tables = bench.load_schema(bench.FIXTURES / schema_file)
+        pairs = bench.load_pairs(bench.FIXTURES / pairs_file)
+
+        def run(order):
+            found = {}
+            for index in order:
+                left, right = pairs[index][:2]
+                constants = name in bench.CONSTANT_GROUPING
+                if constants:
+                    left, right = bench.calcite_operators(left), bench.calcite_operators(right)
+                found[index] = prove(left, right, tables, constants)
+            return found
+
+        order = list(range(len(pairs)))
+        first = run(order)
+        random.Random(seed).shuffle(order)
+        second = run(order)
+        moved = [i for i in first if first[i] != second[i]]
+        print(f"{name:8} in order {sum(first.values())}  shuffled (seed {seed}) {sum(second.values())}  differ at {moved}")
+        differ += len(moved)
+    return 1 if differ else 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("suites", nargs="*", default=list(bench.SUITES))
     parser.add_argument("--trials", type=int, default=60)
     parser.add_argument("--show", action="store_true", help="list the unproved pairs with their reason")
+    parser.add_argument("--order-check", type=int, metavar="SEED", help="prove every pair in file order and in a shuffled order and compare (no random-database check)")
     args = parser.parse_args(argv)
+    if args.order_check is not None:
+        return order_check(args.suites, args.order_check)
     print(f"{'suite':8} {'pairs':>6} {'scored':>7} {'proved':>7} {'unknown':>8} {'wrong':>6} {'unchecked':>10} {'sec':>6}")
     total = wrong = 0
     for name in args.suites:
@@ -59,8 +97,12 @@ def main(argv=None) -> int:
             _, schema_file = bench.SUITES[name]
             tables = bench.load_schema(bench.FIXTURES / schema_file)
             pairs = bench.load_pairs(bench.FIXTURES / bench.SUITES[name][0])
+            constants = name in bench.CONSTANT_GROUPING  # reprove exactly as run_suite did
             for index, why in r.unproved:
-                reason = prove_result(*pairs[index][:2], tables).reason if why == "not proven" else why
+                left, right = pairs[index][:2]
+                if constants:
+                    left, right = bench.calcite_operators(left), bench.calcite_operators(right)
+                reason = prove_result(left, right, tables, constants).reason if why == "not proven" else why
                 print(f"  {name}[{index}]: {reason}")
     print(f"proved {total}, wrong {wrong}")
     return 1 if wrong else 0

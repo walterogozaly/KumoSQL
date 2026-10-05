@@ -29,6 +29,7 @@ from fractions import Fraction
 import itertools
 
 from .ir import (
+    rkey,
     FALSE,
     ONE,
     TRUE,
@@ -386,7 +387,7 @@ def _witnessed(ex, conds: set, rows: set, ctx: Ctx) -> bool:
         if not isinstance(f, NInd):
             return False
         needed.extend(_conjuncts(f.f))
-    pools = [[x for x in sorted(rows, key=repr) if x.table == y.table] for y in body.vars]
+    pools = [[x for x in sorted(rows, key=rkey) if x.table == y.table] for y in body.vars]
     if any(not p for p in pools) or len(body.vars) > 4:
         return False
     inner = ctx.with_known(rows)
@@ -582,7 +583,7 @@ def _pick_value(members: list, y: TVar):
         if y in free_vars(m) or _mentions_tuple(m, y):
             continue
         rank = 0 if isinstance(m, Lit) and m.value is not None else 1 if isinstance(m, (Ref, Col)) else 2
-        key = (rank, repr(m))
+        key = (rank, rkey(m))
         if best_rank is None or key < best_rank:
             best, best_rank = m, key
     return best
@@ -761,7 +762,7 @@ def _propagate_equalities(conjs: list, bound: set):
         outer = [m for m in members if not _bound_in(m, bound)]
         if not outer:
             continue
-        outer.sort(key=lambda m: (0 if isinstance(m, Lit) and m.value is not None else 1 if isinstance(m, Ref) else 2, repr(m)))
+        outer.sort(key=lambda m: (0 if isinstance(m, Lit) and m.value is not None else 1 if isinstance(m, Ref) else 2, rkey(m)))
         if isinstance(outer[0], Lit) and outer[0].value is None:
             continue
         for m in members:
@@ -1013,7 +1014,7 @@ def _one_valued_aggregate(v: Agg, terms: list, w: SVar, ctx: Ctx):
         for m in members:
             if m == Ref(w) or w in free_vars(m) or (free_vars(m) & bound) or any(_mentions_tuple(m, y) for y in bound if isinstance(y, TVar)):
                 continue
-            rank = (0 if isinstance(m, Lit) and m.value is not None else 1 if isinstance(m, (Ref, Col)) else 2, repr(m))
+            rank = (0 if isinstance(m, Lit) and m.value is not None else 1 if isinstance(m, (Ref, Col)) else 2, rkey(m))
             if best is None or rank < best[0]:
                 best = (rank, m)
         if best is None:
@@ -1240,7 +1241,7 @@ def _pull_equalities(inside: list, bound: set) -> tuple:
         outer = [m for m in members if is_outside(m)]
         if not outer:
             continue
-        outer.sort(key=lambda m: (0 if isinstance(m, Lit) else 1 if isinstance(m, Ref) else 2, repr(m)))
+        outer.sort(key=lambda m: (0 if isinstance(m, Lit) else 1 if isinstance(m, Ref) else 2, rkey(m)))
         rep = outer[0]
         rewritten.add(root)
         make = (lambda m, r: Cmp("=", m, r)) if root in strict else (lambda m, r: Same(m, r))
