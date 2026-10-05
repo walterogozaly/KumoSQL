@@ -98,7 +98,12 @@ def test_sqlancer_near_misses_are_not_proved():
     loose = C0_21.replace("WHERE (x.b >= x.a)", "WHERE (x.b IS NULL OR x.b >= x.a)")
     assert not _proved(_case21(0, c0=loose), _case21(1, c0=loose))
     # the IS NULL test in ON keeps u's rows with their b
-    assert not _proved(_case10(where="AND y.b IS NULL"), _case10(k=2, where="AND y.b IS NULL"))
+    # (the rule alone must leave it; whether a pair built on it is provable is up to other rules, e.g. the UNNEST split
+    # makes the k=1 and k=2 forms of this case provably equal, which they are: the unnested value is never read)
+    assert _rule(
+        "SELECT x.a AS a, MIN(x.b) AS b FROM (SELECT x.a AS a, y.b AS b FROM t AS x FULL OUTER JOIN u AS y "
+        "ON x.a = y.b AND y.b IS NULL) AS x GROUP BY x.a HAVING MIN(x.b) > 1"
+    ) is None
     # MIN of an all-NULL column IS NULL in every group: the groups survive
     assert not _proved(_case10(having="MIN(x.b) IS NULL"), _case10(cond="e IS NULL", having="MIN(x.b) IS NULL"))
 
