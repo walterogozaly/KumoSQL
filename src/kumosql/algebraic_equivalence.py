@@ -84,6 +84,7 @@ from .partition_rules import recombine_partitions
 from .keyed_rules import drop_keyed_distinct, exists_over_aggregate, remove_keyed_grouping
 from .keyed_set_join import lift_keyed_set_join
 from .aggregate_rules import rewrite_aggregates
+from .nested_array_subscripts import normalize_array_subscripts
 from .null_rejecting_joins import left_join_to_inner
 from .outer_on_rejection import strengthen_under_outer_on
 from .join_rewrites import join_rewrites
@@ -4839,6 +4840,7 @@ def normalize(
     tree = _peel_star_wrappers(tree)
     tree = trim_redundant_row_clauses(tree)
     tree = _bigquery_sugar(tree)
+    tree = normalize_array_subscripts(tree, dialect)
     tree = using_to_on_unqualified(_using_to_on(tree, schema))
     tree = drop_subsumed_like(tree)
     tree = _semi_joins_to_exists(tree)
