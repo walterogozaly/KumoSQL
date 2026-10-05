@@ -32,7 +32,7 @@ _SAME = {k: k for k in _NUM}
 UNARY_NUMERIC = {
     "ABS": _SAME, "SIGN": _SAME,
     "CEIL": _TO_DOUBLE, "CEILING": _TO_DOUBLE, "FLOOR": _TO_DOUBLE, "ROUND": _TO_DOUBLE, "TRUNC": _TO_DOUBLE,
-    "EXP": _TO_DOUBLE, "LN": _TO_DOUBLE, "LOG10": _TO_DOUBLE, "SQRT": _TO_DOUBLE,
+    "EXP": _TO_DOUBLE, "RADIANS": _TO_DOUBLE, "DEGREES": _TO_DOUBLE, "LN": _TO_DOUBLE, "LOG10": _TO_DOUBLE, "SQRT": _TO_DOUBLE,
     "SAFE_NEGATE": _row("INT32", "INT64", "ERROR", "ERROR", "NUMERIC", "BIGNUMERIC", "FLOAT32", F64),
     "AVG": {**_TO_DOUBLE, "INTERVAL": "INTERVAL"},
     "ARRAY_AVG": {**_TO_DOUBLE, "INTERVAL": "INTERVAL"},
@@ -120,7 +120,7 @@ _fixed(BOOL,
 _fixed(STRING,
        "FORMAT", "TO_HEX", "TO_BASE64", "TO_BASE32", "INITCAP", "SOUNDEX", "CHR", "CODE_POINTS_TO_STRING",
        "SAFE_CONVERT_BYTES_TO_STRING", "NORMALIZE", "NORMALIZE_AND_CASEFOLD", "SPLIT_SUBSTR", "COLLATE",
-       "GENERATE_UUID", "SESSION_USER", "FORMAT_DATE", "FORMAT_DATETIME", "FORMAT_TIME", "FORMAT_TIMESTAMP",
+       "GENERATE_UUID", "SESSION_USER", "TYPEOF", "FORMAT_DATE", "FORMAT_DATETIME", "FORMAT_TIME", "FORMAT_TIMESTAMP",
        "JSON_EXTRACT_SCALAR", "JSON_VALUE", "TO_JSON_STRING", "JSON_TYPE", "LAX_STRING", "NET.HOST",
        "NET.PUBLIC_SUFFIX", "NET.REG_DOMAIN", "NET.IP_TO_STRING", "NET.MAKE_NET", "ST_ASGEOJSON", "ST_ASKML",
        "ST_ASTEXT", "ST_GEOHASH", "ST_GEOMETRYTYPE")
@@ -161,6 +161,23 @@ _fixed(GType.array(FLOAT64), "LAX_DOUBLE_ARRAY", "DOUBLE_ARRAY", "FLOAT64_ARRAY"
 _fixed(GType.array(GEOGRAPHY), "ST_DUMP", "ST_DUMPPOINTS", "ST_INTERIORRINGS")
 _fixed(GType.struct([("xmin", FLOAT64), ("ymin", FLOAT64), ("xmax", FLOAT64), ("ymax", FLOAT64)]),
        "ST_BOUNDINGBOX", "ST_EXTENT")
+# KLL sketches (kll_functions.md): INIT and MERGE_PARTIAL give the sketch, MERGE and EXTRACT the quantiles or one point.
+for _kind, _type in (("INT64", INT64), ("DOUBLE", FLOAT64), ("FLOAT64", FLOAT64)):
+    FIXED[f"KLL_QUANTILES.INIT_{_kind}"] = BYTES
+    for _verb in ("MERGE", "EXTRACT"):
+        FIXED[f"KLL_QUANTILES.{_verb}_{_kind}"] = GType.array(_type)
+        FIXED[f"KLL_QUANTILES.{_verb}_POINT_{_kind}"] = _type
+FIXED["KLL_QUANTILES.INIT_UINT64"] = BYTES
+FIXED["KLL_QUANTILES.MERGE_PARTIAL"] = BYTES
+for _verb in ("MERGE", "EXTRACT"):
+    FIXED[f"KLL_QUANTILES.{_verb}_UINT64"] = GType.array(GType("UINT64"))
+    FIXED[f"KLL_QUANTILES.{_verb}_POINT_UINT64"] = GType("UINT64")
+    for _kind in ("INT64", "UINT64", "DOUBLE", "FLOAT64"):
+        FIXED[f"KLL_QUANTILES.{_verb}_RELATIVE_RANK_{_kind}"] = FLOAT64
+_fixed(BOOL, "AI.IF", "REGEXP_MATCH")
+_fixed(FLOAT64, "AI.SCORE")
+_fixed(STRING, "AEAD.DECRYPT_STRING", "DETERMINISTIC_DECRYPT_STRING", "ZSTD_DECOMPRESS_TO_STRING")
+_fixed(BYTES, "BIT_CAST_TO_BYTES", "ZSTD_COMPRESS", "ZSTD_DECOMPRESS_TO_BYTES")
 # GoogleSQL-only types, exact as documented (json_functions.md, bit_functions.md).
 for _name, _type in (("INT32", "INT32"), ("UINT32", "UINT32"), ("UINT64", "UINT64"), ("FLOAT", "FLOAT32"),
                      ("LAX_INT32", "INT32"), ("LAX_UINT32", "UINT32"), ("LAX_UINT64", "UINT64"),
@@ -184,14 +201,15 @@ ELEMENT_OF_FIRST = {"ARRAY_FIRST", "ARRAY_LAST", "ARRAY_MIN", "ARRAY_MAX", "ARRA
 ARRAY_OF_FIRST = {"ARRAY_AGG", "APPROX_QUANTILES"}
 # STRING in, STRING out; BYTES in, BYTES out (the first argument decides).
 STRING_OR_BYTES = {
-    "LOWER", "UPPER", "LTRIM", "RTRIM", "TRIM", "LPAD", "RPAD", "LEFT", "RIGHT", "REPEAT", "REPLACE", "REVERSE",
+    "LOWER", "UPPER", "LCASE", "UCASE", "LTRIM", "RTRIM", "TRIM", "LPAD", "RPAD", "LEFT", "RIGHT", "REPEAT", "REPLACE", "REVERSE",
     "SUBSTR", "SUBSTRING", "TRANSLATE", "REGEXP_EXTRACT", "REGEXP_REPLACE", "REGEXP_SUBSTR", "STRING_AGG",
 }
 ARRAY_OF_STRING_OR_BYTES = {"SPLIT", "REGEXP_EXTRACT_ALL"}
 SUPERTYPE_OF_ALL = {"COALESCE", "IFNULL", "GREATEST", "LEAST", "IFERROR", "NULLIF"}
 # Functions that keep the argument's type only for some input types.
 DATE_PART_FUNCTIONS = {
-    "DATE_ADD": {"DATE"}, "DATE_SUB": {"DATE"}, "DATETIME_ADD": {"DATETIME"}, "DATETIME_SUB": {"DATETIME"},
+    "DATE_ADD": {"DATE", "DATETIME"}, "DATE_SUB": {"DATE", "DATETIME"},
+    "DATETIME_ADD": {"DATETIME", "TIMESTAMP"}, "DATETIME_SUB": {"DATETIME", "TIMESTAMP"},
     "TIMESTAMP_ADD": {"TIMESTAMP"}, "TIMESTAMP_SUB": {"TIMESTAMP"}, "TIME_ADD": {"TIME"}, "TIME_SUB": {"TIME"},
     "DATE_TRUNC": {"DATE", "DATETIME", "TIMESTAMP"}, "DATETIME_TRUNC": {"DATETIME", "DATE", "TIMESTAMP"},
     "TIMESTAMP_TRUNC": {"TIMESTAMP", "DATE", "DATETIME"}, "TIME_TRUNC": {"TIME"},
@@ -199,6 +217,13 @@ DATE_PART_FUNCTIONS = {
     # The bucket functions keep their input's type (DATE_BUCKET of a DATETIME is a DATETIME).
     "DATE_BUCKET": {"DATE", "DATETIME", "TIMESTAMP"}, "DATETIME_BUCKET": {"DATE", "DATETIME", "TIMESTAMP"},
     "TIMESTAMP_BUCKET": {"DATE", "DATETIME", "TIMESTAMP"},
+}
+# Date-part functions whose first argument is a string literal or NULL (it coerces to the function's home type):
+# name -> (home type, literal kinds that take it). NULL is left out where the function has several overloads.
+LITERAL_HOME = {
+    "ADD_MONTHS": (DATE, {"string"}), "TIMESTAMP_TRUNC": (TIMESTAMP, {"string"}),
+    "DATE_BUCKET": (DATE, {"string", "null"}), "DATETIME_BUCKET": (DATETIME, {"string", "null"}),
+    "TIMESTAMP_BUCKET": (TIMESTAMP, {"string", "null"}),
 }
 
 # Node classes sqlglot builds from special syntax (no written function name), each with a single BigQuery source.
@@ -208,6 +233,7 @@ CLASS_NAMES = {
     "JSONObject": "JSON_OBJECT", "MakeInterval": "MAKE_INTERVAL", "Collate": "COLLATE",
     "CurrentDate": "CURRENT_DATE", "CurrentDatetime": "CURRENT_DATETIME", "CurrentTime": "CURRENT_TIME",
     "CurrentTimestamp": "CURRENT_TIMESTAMP", "Trim": "TRIM",
+    "StrToDate": "PARSE_DATE",  # a nameless one is CAST(.. AS DATE FORMAT ..); PARSE_DATE keeps its written name
 }
 
 
@@ -321,13 +347,18 @@ def type_call(typer, node: exp.Expression, scope, ctes) -> T:
             _visit_children(typer, node, scope, ctes)
             return UNKNOWN
         return _named(typer, inner, "NET." + name, scope, ctes)
-    if isinstance(node, exp.Dot) and isinstance(node.this, exp.Identifier) and isinstance(node.expression, exp.Func):
+    if isinstance(node, exp.Dot) and isinstance(node.expression, exp.Func) and _namespace(node.this):
         name = function_name(node.expression)
         if name is None:
             return UNKNOWN
-        return _named(typer, node.expression, f"{node.this.name.upper()}.{name}", scope, ctes)
+        path = _namespace(node.this)
+        if path[0] == "SAFE":  # SAFE.fn(..) has the type of fn(..); only the error becomes NULL
+            path = path[1:]
+        return _named(typer, node.expression, ".".join(path + [name]), scope, ctes)
     if isinstance(node, exp.Extract):
         return extract(typer, node, scope, ctes)
+    if isinstance(node, exp.Identifier):
+        return _lambda_parameter(typer, node, scope)
     if isinstance(node, (exp.Var, exp.Star, exp.Placeholder, exp.Parameter, exp.JSONPath, exp.Lambda)):
         return UNKNOWN
     if not isinstance(node, exp.Func):
@@ -338,6 +369,32 @@ def type_call(typer, node: exp.Expression, scope, ctes) -> T:
         _visit_children(typer, node, scope, ctes)
         return UNKNOWN
     return _named(typer, node, name, scope, ctes)
+
+
+def _namespace(node) -> list[str] | None:
+    """The upper-case names of a function's namespace written as ``A`` or ``A.B``; None for anything else."""
+
+    if isinstance(node, exp.Identifier):
+        return [node.name.upper()]
+    if isinstance(node, exp.Dot) and isinstance(node.this, exp.Identifier) and isinstance(node.expression, exp.Identifier):
+        return [node.this.name.upper(), node.expression.name.upper()]
+    return None
+
+
+def _lambda_parameter(typer, node: exp.Identifier, scope) -> T:
+    """sqlglot leaves a lambda parameter used in the body as a bare Identifier (not a Column). Resolve it only when it
+    names a value range (the parameter itself) in scope; anything else stays unknown and raises no finding."""
+
+    s = scope
+    while s is not None:
+        kind, target = s.lookup(node.name)
+        if kind == "none":
+            s = s.parent
+            continue
+        if kind == "range" and target.value is not None and target.node is None:
+            return target.value
+        return UNKNOWN
+    return UNKNOWN
 
 
 def _visit_children(typer, node, scope, ctes) -> None:
@@ -357,6 +414,10 @@ def _named(typer, node, name: str, scope, ctes) -> T:
         return UNKNOWN
     if name in ("ARRAY_TRANSFORM",) or (name in ("ARRAY_FILTER",) and _has_lambda(node)):
         return lambda_call(typer, node, name, scope, ctes)
+    if name == "ARRAY_ZIP" and isinstance(node, exp.Anonymous):
+        return array_zip_call(typer, node, scope, ctes)
+    if name in ARRAY_LAMBDA_RESULTS and _has_lambda(node):
+        return array_lambda_call(typer, node, name, scope, ctes)
     if _has_lambda(node):
         _visit_children(typer, node, scope, ctes)
         return UNKNOWN
@@ -384,15 +445,17 @@ def _named(typer, node, name: str, scope, ctes) -> T:
         if first is None or first.kind not in ("ARRAY", "RANGE"):
             return UNKNOWN
         return known(first.element)
+    if name == "ARRAY_AGG" and call.first().lit == "null":
+        return T(GType.array(INT64))  # an untyped NULL is INT64
     if name in ARRAY_OF_FIRST:
         first = call.first()
         if first.type is None or first.lit == "null" or first.type.kind == "ARRAY":
             return UNKNOWN
         return T(GType.array(first.type))
     if name in STRING_OR_BYTES:
-        return string_or_bytes(call.first())
+        return string_or_bytes(call.first(), call.ts[1:])
     if name in ARRAY_OF_STRING_OR_BYTES:
-        inner = string_or_bytes(call.first())
+        inner = string_or_bytes(call.first(), call.ts[1:])
         return T(GType.array(inner.type)) if inner.type is not None else UNKNOWN
     if name in SUPERTYPE_OF_ALL:
         result = supertype(call.ts)
@@ -403,6 +466,9 @@ def _named(typer, node, name: str, scope, ctes) -> T:
         first = call.first()
         if first.lit is None and first.type is not None and first.type.kind in DATE_PART_FUNCTIONS[name]:
             return T(first.type)
+        home = LITERAL_HOME.get(name)
+        if home is not None and first.lit in home[1]:
+            return T(home[0])
         return UNKNOWN
     return UNKNOWN
 
@@ -511,6 +577,9 @@ def _temporal_arithmetic(op: str, left: T, right: T) -> T:
                  ("INTERVAL", "INTERVAL"): INTERVAL}
     elif op == "*":
         pairs = {("INTERVAL", "INT64"): INTERVAL, ("INT64", "INTERVAL"): INTERVAL}
+        # INTERVAL times a FLOAT64 (compliance: interval/multiply_double) is an INTERVAL; the other operand is a number.
+        if {a, b} == {"INTERVAL", "FLOAT64"} and "string" not in (left.lit, right.lit):
+            return T(INTERVAL)
     elif op == "/":
         pairs = {("INTERVAL", "INT64"): INTERVAL}
     else:
@@ -549,12 +618,23 @@ def _bitwise_pair(left: T, right: T) -> T:
     return UNKNOWN
 
 
-def string_or_bytes(t: T) -> T:
-    if t.type is None or t.lit == "null":
+def string_or_bytes(t: T, rest: list[T] = ()) -> T:
+    """STRING in, STRING out; BYTES in, BYTES out. An untyped NULL first argument takes the STRING signature when the
+    other arguments are all typed and none is BYTES (compliance: REPEAT(NULL, 10), SPLIT(NULL, ','))."""
+
+    if t.lit == "null":
+        if all(r.type is not None and r.type.kind != "BYTES" for r in rest):
+            return T(STRING)
+        return UNKNOWN
+    if t.type is None:
         return UNKNOWN
     if t.type.kind in ("STRING", "BYTES"):
         return T(t.type)
     return UNKNOWN
+
+
+_CONCAT_CAST_KINDS = {"BOOL", "INT64", "NUMERIC", "BIGNUMERIC", "FLOAT64", "TIMESTAMP", "DATE", "DATETIME", "TIME",
+                      "INTERVAL"}
 
 
 def concat(ts: list[T]) -> T:
@@ -567,6 +647,8 @@ def concat(ts: list[T]) -> T:
         return T(BYTES)
     if "STRING" in kinds:
         return T(STRING)
+    if kinds and kinds <= _CONCAT_CAST_KINDS and all(t.type is not None for t in ts):
+        return T(STRING)  # CONCAT casts these scalars to STRING (compliance: concat_function)
     if kinds and all(k == "ARRAY" for k in kinds):
         result = supertype(ts)
         return T(result.type) if result is not None and result.lit is None else UNKNOWN
@@ -600,8 +682,19 @@ def if_(typer, node: exp.If, scope, ctes) -> T:
     return T(result.type) if result.lit != "null" else T(INT64)
 
 
+_INTERVAL_PARTS = {"YEAR", "MONTH", "DAY", "HOUR", "MINUTE", "SECOND", "MILLISECOND", "MICROSECOND", "NANOSECOND"}
+
+
 def extract(typer, node: exp.Extract, scope, ctes) -> T:
-    source = typer.expr(node.expression, scope, ctes)
+    zoned = node.expression
+    if isinstance(zoned, exp.AtTimeZone):  # EXTRACT(part FROM timestamp AT TIME ZONE zone) takes a TIMESTAMP only
+        if isinstance(zoned.args.get("zone"), exp.Expression):
+            typer.expr(zoned.args["zone"], scope, ctes)
+        source = typer.expr(zoned.this, scope, ctes)
+        if source.type is None or source.type.kind != "TIMESTAMP":
+            return UNKNOWN
+    else:
+        source = typer.expr(node.expression, scope, ctes)
     part = node.this.name.upper() if isinstance(node.this, exp.Expression) else str(node.this).upper()
     if source.type is None or source.lit is not None:
         return UNKNOWN
@@ -613,6 +706,8 @@ def extract(typer, node: exp.Extract, scope, ctes) -> T:
     if part == "DATETIME":
         return T(DATETIME) if kind == "TIMESTAMP" else UNKNOWN
     if kind in ("DATE", "DATETIME", "TIMESTAMP", "TIME"):
+        return T(INT64)
+    if kind == "INTERVAL" and part in _INTERVAL_PARTS:
         return T(INT64)
     return UNKNOWN
 
@@ -639,6 +734,105 @@ def lambda_call(typer, node, name: str, scope, ctes) -> T:
     if name == "ARRAY_FILTER":
         return T(array.type)
     if body.type is None:
+        return UNKNOWN
+    return T(GType.array(body.type))
+
+
+# Array functions that take a predicate lambda: their result depends on the array argument only (array_functions.md).
+ARRAY_LAMBDA_RESULTS = {"ARRAY_FIND", "ARRAY_FIND_ALL", "ARRAY_OFFSET", "ARRAY_OFFSETS", "ARRAY_INCLUDES"}
+
+
+def _array_syntax(node) -> bool:
+    """Whether ``node`` is written as an array: ``[..]``, ``ARRAY<..>[..]`` or a CAST to an ARRAY type."""
+
+    if isinstance(node, exp.Paren):
+        return _array_syntax(node.this)
+    if isinstance(node, exp.Array):
+        return True
+    if isinstance(node, (exp.Cast, exp.TryCast)):
+        to = node.args.get("to")
+        return isinstance(to, exp.DataType) and to.is_type(exp.DataType.Type.ARRAY)
+    return False
+
+
+def array_lambda_call(typer, node, name: str, scope, ctes) -> T:
+    """ARRAY_FIND(array, e -> cond [, mode]) is the element type, ARRAY_FIND_ALL the array type, ARRAY_OFFSET an INT64,
+    ARRAY_OFFSETS an ARRAY<INT64> and ARRAY_INCLUDES a BOOL. The first argument must be a typed ARRAY."""
+
+    args = list(node.expressions) if isinstance(node, exp.Anonymous) else _arguments(node)
+    if not args or isinstance(args[0], exp.Lambda) or not any(isinstance(a, exp.Lambda) for a in args[1:]):
+        _visit_children(typer, node, scope, ctes)
+        return UNKNOWN
+    array = typer.expr(args[0], scope, ctes)
+    if name in ("ARRAY_OFFSET", "ARRAY_OFFSETS", "ARRAY_INCLUDES") and (
+            array.lit == "empty_array" or (array.type is not None and array.lit is None and array.type.kind == "ARRAY")
+            or _array_syntax(args[0])):
+        # These results do not depend on the element type, so an array of a type this typer leaves unknown is fine.
+        if name == "ARRAY_OFFSET":
+            return T(INT64)
+        return T(GType.array(INT64)) if name == "ARRAY_OFFSETS" else T(BOOL)
+    if array.type is None or array.lit is not None or array.type.kind != "ARRAY" or array.type.element is None:
+        return UNKNOWN
+    if name == "ARRAY_FIND":
+        return known(array.type.element)
+    if name == "ARRAY_FIND_ALL":
+        return T(array.type)
+    if name == "ARRAY_OFFSET":
+        return T(INT64)
+    if name == "ARRAY_OFFSETS":
+        return T(GType.array(INT64))
+    return T(BOOL)
+
+
+def array_zip_call(typer, node: exp.Anonymous, scope, ctes) -> T:
+    """ARRAY_ZIP(a1 [AS n1], a2 [AS n2], .. [, transformation => (e1, e2) -> body] [, mode => 'PAD']): an
+    ARRAY<STRUCT<n1 T1, n2 T2, ..>> of the arrays' element types (a field is unnamed unless aliased), or an
+    ARRAY of the lambda body's type. Arrays that are not typed ARRAY (a bare NULL) and unaliased paths are unknown."""
+
+    from .googlesql_types import _Range, _Scope
+
+    arrays, lam = [], None
+    for arg in node.expressions:
+        if isinstance(arg, exp.Kwarg):
+            key = arg.this.name.lower() if isinstance(arg.this, exp.Expression) else ""
+            if key == "mode":
+                typer.expr(arg.expression, scope, ctes)
+                continue
+            if key != "transformation" or not isinstance(arg.expression, exp.Lambda) or lam is not None:
+                return UNKNOWN
+            lam = arg.expression
+        elif isinstance(arg, exp.Lambda):
+            if lam is not None:
+                return UNKNOWN
+            lam = arg
+        elif lam is not None:
+            return UNKNOWN
+        else:
+            arrays.append(arg)
+    if len(arrays) < 2:
+        return UNKNOWN
+    elements, names = [], []
+    for arg in arrays:
+        value, name = (arg.this, arg.alias) if isinstance(arg, exp.Alias) else (arg, None)
+        t = typer.expr(value, scope, ctes)
+        if t.lit == "null":  # each array argument is typed on its own; a bare NULL is an ARRAY<INT64> (compliance)
+            t = T(GType.array(INT64))
+        if t.type is None or t.type.kind != "ARRAY" or t.type.element is None or t.lit not in (None, "empty_array"):
+            return UNKNOWN
+        if name is None and isinstance(value, (exp.Column, exp.Dot)):
+            return UNKNOWN  # a path may lend its name to the field
+        elements.append(t.type.element)
+        names.append(name)
+    if lam is None:
+        return T(GType.array(GType.struct([StructField(n, e) for n, e in zip(names, elements)])))
+    params = [p.name for p in lam.expressions]
+    if len(params) != len(elements):
+        return UNKNOWN
+    inner = _Scope(scope)
+    for param, element in zip(params, elements):
+        inner.ranges.append(_Range(param.lower(), None, value=T(element)))
+    body = typer.expr(lam.this, inner, ctes)
+    if body.type is None or body.lit == "null":
         return UNKNOWN
     return T(GType.array(body.type))
 
@@ -685,16 +879,19 @@ def _approx_top_sum(call: Call) -> T:
 
 
 def _percentile_cont(call: Call) -> T:
-    value = call.first()
-    if value.type is None or value.lit is not None:
+    """PERCENTILE_CONT(value, percentile): (FLOAT64, FLOAT64) -> FLOAT64, (NUMERIC, NUMERIC) -> NUMERIC and
+    (BIGNUMERIC, BIGNUMERIC) -> BIGNUMERIC; an INT64 coerces to FLOAT64. Mixed or untyped arguments are unknown."""
+
+    if len(call.ts) != 2:
         return UNKNOWN
-    if value.type.kind in ("INT64", "FLOAT64", "INT32", "UINT32", "UINT64", "FLOAT32") and \
-            all(t.lit != "null" for t in call.ts[1:]):
-        if len(call.ts) > 1 and call.ts[1].type is not None and call.ts[1].type.kind in ("NUMERIC", "BIGNUMERIC") \
-                and call.ts[1].lit is None:
-            return UNKNOWN
-        return T(FLOAT64) if value.type.kind == "FLOAT64" or (len(call.ts) > 1 and call.ts[1].lit is None
-                                                            and call.ts[1].type == FLOAT64) else UNKNOWN
+    value, percentile = call.ts
+    if value.type is None or percentile.type is None or value.lit is not None or percentile.lit in ("null", "string"):
+        return UNKNOWN
+    a, b = value.type.kind, percentile.type.kind
+    if a in ("INT64", "FLOAT64") and b in ("INT64", "FLOAT64"):
+        return T(FLOAT64)
+    if a == b and a in ("NUMERIC", "BIGNUMERIC") and percentile.lit is None:
+        return T(value.type)
     return UNKNOWN
 
 

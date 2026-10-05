@@ -1475,6 +1475,8 @@ def implicit_alias(node: exp.Expression) -> str | None:
         return node.this.name
     if isinstance(node, exp.Dot) and isinstance(node.expression, exp.Identifier):
         return node.expression.name
+    if isinstance(node, exp.Identifier):  # a lambda parameter used in the body
+        return node.name
     return None
 
 
