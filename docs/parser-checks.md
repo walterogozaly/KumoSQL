@@ -2,11 +2,11 @@
 
 [Plain-language version](../docs_simple/parser-checks.md)
 
-Every prover starts from sqlglot's reading of the text. When sqlglot groups operators differently from the engine, drops a `NOT`, or reads code as a comment, the provers reason about a query nobody wrote, and the proof is wrong although no rule is. `kumosql.parse_check` reads each query a proof depends on a second time, with its own tokenizer and its own precedence tables, and compares the two readings. Any difference turns the proof into `not_proven` with the reason `parser disagreement: ...`. The check can only remove a proof; it never adds one.
+Every prover starts from sqlglot's reading of the text. When sqlglot groups operators differently from the engine, drops a `NOT`, or reads code as a comment, a proof or refutation can describe queries nobody wrote. `kumosql.parse_check` reads each query a verdict depends on a second time, with its own tokenizer and its own precedence tables, and compares the two readings. Any known difference turns the verdict into `not_proven` with the reason `parser disagreement: ...`. The check never adds a proof or refutation.
 
 ## Where it runs
 
-One decorator, `parse_check.refuse_misread_proofs`, wraps the public entry points where a proof is accepted:
+One decorator, `parse_check.refuse_misread_proofs`, wraps the public entry points where a verdict is returned:
 
 | Entry point | Dialect used |
 | --- | --- |
@@ -15,7 +15,7 @@ One decorator, `parse_check.refuse_misread_proofs`, wraps the public entry point
 | `smt_equivalence.prove_equivalent_smt` | the call's `dialect` |
 | `sqlsolver_backend.prove_equivalent` and `prove_equivalent_sqlsolver` | BigQuery |
 
-A proven or conditionally proven result is checked against the two texts the caller passed; a disagreement replaces it with `not_proven` (`dataclasses.replace`, so `proof_checks`, diagnostics and the other fields stay; a conditional proof also loses its conditions). Only the outermost call checks, so texts the provers write for their own stages are not read again. A result that is not a proof, including a counterexample, passes through untouched. A failure inside the checker never fails the prover: the proof stands and the query counts as unchecked. The rewrite verifier, the pipeline checks and the model-reuse checks reach the provers through these functions and need no change.
+A proven or conditionally proven result, and a `not_equivalent` result, is checked against the two texts the caller passed. A disagreement replaces it with `not_proven` (`dataclasses.replace`, so diagnostics and other fields stay; conditions and assumptions are cleared, and an untrusted counterexample is removed). Only the outermost call checks, so texts the provers write for their own stages are not read again. Other outcomes pass through untouched. A failure inside the checker never fails the prover: the result remains as returned and the query counts as unchecked. The rewrite verifier, the pipeline checks and the model-reuse checks reach the provers through these functions and need no change.
 
 The reason names the construct, for example `parser disagreement: GoogleSQL reads (a) | (b & c); sqlglot's tree does not`. `parse_check.check_query(sql, dialect)` returns `agree`, `disagree` or `unchecked`; `disagreement(sql, dialect)` adds the round trip below; `reading(sql, dialect)` prints the independent reading with every grouping in parentheses.
 
@@ -120,7 +120,7 @@ The first run of the matrix found that byte and raw string literals (`b"..."`, `
 ## Limits
 
 - The check covers the text each prover entry point receives. A layer that prints sqlglot trees and proves the printed text (a pipeline stage, a rewrite) is checked on what it hands the prover; a misread of the original text above it is caught only where the original is also passed to a prover.
-- Counterexamples and refutations are not checked. A misread could in principle produce a wrong `not_equivalent`; the executed comparisons that back those run the original text on an engine.
+- A refutation is checked only for disagreements the independent reader recognizes. An unchecked construct or dialect can still leave sqlglot's reading in use; executed comparisons run the original text on an engine.
 - Unchecked constructs (see above) and dialects without a table keep sqlglot's reading. 2,565 of 7,868 GoogleSQL compliance queries are unchecked, most of them syntax sqlglot does not read (the prover declines those anyway).
 - Positions for `NULL`, `TRUE` and `FALSE` are placed by order; a tree that visits its names out of text order keeps no positions for them.
 - MySQL's rejection of `FULL JOIN` and DuckDB's parser as of 1.5.6 are not modeled beyond what is listed.

@@ -13,7 +13,7 @@ import pytest
 
 from kumosql import parse_check as pc
 from kumosql.equivalence import EquivalenceResult, EquivalenceStatus
-from kumosql.smt_equivalence import SmtEquivalenceResult, SmtStatus
+from kumosql.smt_equivalence import Counterexample, SmtEquivalenceResult, SmtStatus
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -252,12 +252,19 @@ def test_other_fields_of_the_result_survive():
     assert dataclasses.is_dataclass(result)
 
 
-def test_only_a_proof_is_changed():
+def test_a_refutation_of_a_misread_is_downgraded_and_its_counterexample_removed():
+    counterexample = Counterexample(tables={"t": [{"a": 1}]}, left_rows=[(1,)], right_rows=[])
+
     @pc.refuse_misread_proofs
     def prover(left, right, **kwargs):
-        return SmtEquivalenceResult(SmtStatus.NOT_EQUIVALENT, "counterexample")
+        return SmtEquivalenceResult(SmtStatus.NOT_EQUIVALENT, "counterexample", counterexample=counterexample)
 
-    assert prover(*MISREAD_PAIR).status is SmtStatus.NOT_EQUIVALENT
+    result = prover(*MISREAD_PAIR)
+    assert result.status is SmtStatus.NOT_PROVEN
+    assert result.reason.startswith("parser disagreement:")
+    assert result.counterexample is None
+    clean = prover(*SAME_PAIR)
+    assert clean.status is SmtStatus.NOT_EQUIVALENT and clean.counterexample is counterexample
 
 
 def test_only_the_outermost_call_checks():

@@ -19,9 +19,9 @@ those positions on identifiers and literals, so the two readings line up without
 Every operation of the independent reading must appear in sqlglot's tree; one that does not is a
 disagreement. :func:`disagreement` also requires sqlglot to read back its own SQL unchanged (a round trip).
 
-A construct this reader does not know leaves the query unchecked rather than disagreeing, so the check only
-ever turns a proof into ``not_proven``. :func:`guarded` is the hook the provers call where a proof is
-accepted.
+A construct this reader does not know leaves the query unchecked rather than disagreeing. At the prover
+boundary, a known disagreement turns a proof or a refutation into ``not_proven``. :func:`guarded` is the
+hook the provers call before returning either verdict.
 """
 
 from __future__ import annotations
@@ -2442,7 +2442,7 @@ def outermost():
 
 
 def guarded(left_sql: str, right_sql: str, dialect: str = "bigquery") -> str | None:
-    """The reason to refuse a proof of ``left_sql`` against ``right_sql``, or ``None``."""
+    """The reason to refuse a verdict for ``left_sql`` against ``right_sql``, or ``None``."""
 
     for sql in (left_sql, right_sql):
         try:
@@ -2455,21 +2455,24 @@ def guarded(left_sql: str, right_sql: str, dialect: str = "bigquery") -> str | N
 
 
 def refuse_misread_proofs(prover):
-    """Decorate a public prover entry point so a proof of text sqlglot misreads becomes ``not_proven``.
+    """Decorate a public prover entry point so a verdict about text sqlglot misreads becomes ``not_proven``.
 
     The decorated function takes the two query texts first and returns a result with a ``status`` whose enum
     has ``NOT_PROVEN`` (``EquivalenceResult``, ``SmtEquivalenceResult``). A proven or conditionally proven
-    result is checked with :func:`guarded` under the call's ``dialect`` (``bigquery`` when it has none); a
-    disagreement replaces it with ``not_proven`` and the reason. Only the outermost call checks, so the texts
-    the provers write for their own stages are not read again, and a result that is not a proof passes
-    through untouched: the check can only remove a proof.
+    result, or a ``not_equivalent`` result, is checked with :func:`guarded` under the call's ``dialect``
+    (``bigquery`` when it has none); a disagreement replaces it with ``not_proven`` and the reason. A
+    refutation's counterexample is removed because it was built from an untrusted parse. Only the outermost
+    call checks, so the texts the provers write for their own stages are not read again. Other results pass
+    through untouched.
     """
 
     @wraps(prover)
     def checked(*args, **kwargs):
         with outermost() as top:
             result = prover(*args, **kwargs)
-            if not top or not (result.proven or getattr(result, "conditionally_proven", False)):
+            refuted = getattr(getattr(result, "status", None), "value", None) == "not_equivalent"
+            needs_check = result.proven or getattr(result, "conditionally_proven", False) or refuted
+            if not top or not needs_check:
                 return result
             left_sql = args[0] if args else kwargs["left_sql"]
             right_sql = args[1] if len(args) > 1 else kwargs["right_sql"]
@@ -2480,6 +2483,8 @@ def refuse_misread_proofs(prover):
             for name in ("conditions", "assumptions"):
                 if hasattr(result, name):
                     changes[name] = ()
+            if refuted and hasattr(result, "counterexample"):
+                changes["counterexample"] = None
             return replace(result, **changes)
 
     return checked

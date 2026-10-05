@@ -104,7 +104,7 @@ The limits: without declared types the older, looser reading applies and the res
 
 ## The parser is checked too
 
-The provers also refuse to trust the parser blindly. Before a proof counts, the text is read a second time by a small separate reader that knows each engine's operator order, and if the two readings group the operators differently (for example `a | b & c` in BigQuery, or `a = b < c` in MySQL) the answer is "not proven" with the reason "parser disagreement". The limit is that this can only take proofs away, and a construct the second reader does not know is left to sqlglot's reading. See [parser checks](parser-checks.md).
+The provers also refuse to trust the parser blindly. Before a proof or a claim that two queries differ counts, the text is read a second time by a small separate reader that knows each engine's operator order. If the two readings group the operators differently (for example `a | b & c` in BigQuery, or `a = b < c` in MySQL), the answer is "not proven" with the reason "parser disagreement"; any counterexample based on that reading is removed. The limit is that a construct the second reader does not know is left to sqlglot's reading. See [parser checks](parser-checks.md).
 
 ## Example: grouping with a grand total
 

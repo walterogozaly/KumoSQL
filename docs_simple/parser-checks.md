@@ -4,7 +4,7 @@
 
 Every proof starts from how a parser (sqlglot) reads the SQL text. If the parser groups the operators differently from the database, the proof is about a query nobody wrote. Take `SELECT a | b & c`. In BigQuery, `&` binds tighter than `|`, so it means `a | (b & c)`. sqlglot reads it as `(a | b) & c`. So `a | b & c` and `(a | b) & c` look identical to it, and KumoSQL used to prove them equal. They are not: `2 | 1 & 0` is 2 on BigQuery.
 
-KumoSQL now reads each query a second time with its own small parser, built from each database's grammar, and compares the two readings. If they disagree, the result is `not_proven` with the reason "parser disagreement". The check can only take a proof away. It never makes a proof.
+KumoSQL reads each query a second time with its own small parser, built from each database's grammar, and compares the two readings. If they disagree, a proof or a claim that two queries differ becomes `not_proven` with the reason "parser disagreement". Any counterexample based on the untrusted reading is removed. The check never makes a proof or a refutation.
 
 ## What it checks
 
@@ -27,4 +27,4 @@ Some proofs the benchmarks counted are gone, because they rested on a text BigQu
 - Constructs it does not know (such as `LATERAL` and `PIVOT`) and other dialects are unchecked, which means sqlglot's reading is trusted as before.
 - The random expressions show the tables are right; they do not measure how often real queries are misread.
 
-The [full reference](../docs/parser-checks.md) has the misreads found, the numbers, how the cases were triaged and the commands.
+Limit: this catches only disagreements the small parser recognizes. If it does not know a construct, KumoSQL still uses sqlglot's reading; database-run comparisons use the original SQL text. The [full reference](../docs/parser-checks.md) has the misreads found, the numbers, how the cases were triaged and the commands.
