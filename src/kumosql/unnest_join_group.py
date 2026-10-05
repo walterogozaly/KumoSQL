@@ -111,7 +111,11 @@ def _first_item(call: exp.Anonymous) -> exp.Unnest:
     select = item[0] if len(item) == 1 else None
     source = select.args.get("from_") or select.args.get("from") if isinstance(select, exp.Select) else None
     unnest = source.this if isinstance(source, exp.From) else None
-    if not isinstance(unnest, exp.Unnest) or unnest.args.get("joins") or unnest.args.get("explode_array"):
+    # Nothing but the ``UNNEST`` may follow it: a join, ``WHERE`` or the like in the text would be dropped without a word.
+    extra = [key for key, value in select.args.items() if value and key not in ("expressions", "from", "from_")] if source else []
+    if extra:
+        raise ParseError("a parenthesized join that starts with UNNEST is not read: the first item is not an UNNEST call")
+    if not isinstance(unnest, exp.Unnest) or unnest.args.get("joins"):
         raise ParseError("a parenthesized join that starts with UNNEST is not read: the first item is not an UNNEST call")
     unnest.parent = None
     return unnest

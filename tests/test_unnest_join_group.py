@@ -89,7 +89,7 @@ def test_the_group_is_a_subquery_around_a_table_that_holds_the_unnest_and_the_jo
 
 
 def test_the_unnest_arguments_are_kept_whole():
-    tree = parse("SELECT x FROM (UNNEST(['it''s', \"a,b\", ')']) AS x JOIN t ON x = t.a)")
+    tree = parse("SELECT x FROM (UNNEST(['it\\'s', \"a,b\", ')']) AS x JOIN t ON x = t.a)")
     assert [e.sql("bigquery") for e in group_of(tree).this.expressions] == ["['it\\'s', 'a,b', ')']"]
 
 
@@ -120,10 +120,12 @@ def test_a_group_bigquery_rejects_is_refused_not_guessed_at(sql):
 
 def test_the_first_item_must_be_an_unnest_call():
     # The marker is internal: SQL that spells it is not a group and is never turned into an UNNEST.
+    # (it only matters when a real group makes the reader take the rewrite path)
+    group = "SELECT * FROM (UNNEST([1]) AS x JOIN t ON x = t.a) CROSS JOIN "
     with pytest.raises(ParseError):
-        parse("SELECT __KUMO_UNNEST_FIRST__('UNNEST([1]) AS x') FROM t")
+        parse(group + "(__KUMO_UNNEST_FIRST__('SELECT 1') JOIN u ON TRUE)")
     with pytest.raises(ParseError):
-        parse("SELECT * FROM (__KUMO_UNNEST_FIRST__('SELECT 1') JOIN t ON TRUE)")
+        parse(group + "(__KUMO_UNNEST_FIRST__('UNNEST([1]) AS y JOIN v ON TRUE') JOIN u ON TRUE)")
 
 
 def test_a_statement_is_still_one_script_item_when_the_group_is_in_a_multi_statement_text():
