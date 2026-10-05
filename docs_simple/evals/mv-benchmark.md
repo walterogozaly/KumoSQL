@@ -1,6 +1,6 @@
 # Testing reuse of shared joins
 
-[Simple eval index](README.md) · [Full reference](../../docs/evals/mv-benchmark.md)
+[Simple eval index](README.md) Â· [Full reference](../../docs/evals/mv-benchmark.md)
 
 A materialized view stores the result of a query so other queries can reuse it. This benchmark asks whether shared joins can supply other workload queries with a verified rewrite.
 
@@ -23,3 +23,7 @@ The benchmark does not build the views in an engine or time their use. A valid r
 The random databases are small and can leave some large joins empty, which limits that cross-check. The full guide lists workload sources, overlap with other evals, pinned downloads, licensing notes, and results.
 
 See [model reuse](../model-reuse.md) for the everyday distinction between reuse, containment, and summary rebuilding.
+
+## Faster test execution
+
+The regular test runner can divide this eval's 24 query checks among separate processes. All queries still use the same views, and their results are added together before checking the same score floor. No cases or database checks are removed. The runner leaves room for the other tests and uses up to three eval processes by default. `--eval-jobs 1` provides a serial comparison; see the [full reference](../../docs/evals/mv-benchmark.md#parallel-test-execution) for the timing commands. A shorter eval is useful, but the full-suite timing is the final measure of improvement.

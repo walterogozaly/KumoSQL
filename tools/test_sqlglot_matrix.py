@@ -1,4 +1,4 @@
-"""Run the CTE-lifting regression suite against pinned sqlglot releases.
+"""Run the CTE-lifting regression suite against the supported compiled SQLGlot release.
 
 Each version gets a temporary virtual environment, so matrix runs cannot alter
 the caller's installed packages or the repository checkout.
@@ -17,7 +17,7 @@ import venv
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SUPPORTED_SQLGLOT_VERSIONS = ("26.0.0", "30.20.0")
+SUPPORTED_SQLGLOT_VERSIONS = ("30.21.0",)
 REGRESSION_TESTS = (
     "tests/test_lift_subqueries.py",
     "tests/test_rule_registry.py",
@@ -42,6 +42,7 @@ def main() -> int:
         "--versions",
         nargs="+",
         default=SUPPORTED_SQLGLOT_VERSIONS,
+        choices=SUPPORTED_SQLGLOT_VERSIONS,
         help="exact sqlglot releases to test (default: %(default)s)",
     )
     args = parser.parse_args()
@@ -74,6 +75,9 @@ def main() -> int:
                     "--disable-pip-version-check",
                     ".[dev]",
                     f"sqlglot=={version}",
+                    f"sqlglotc=={version}",
+                    "--only-binary",
+                    "sqlglotc",
                 ],
                 version=version,
             )

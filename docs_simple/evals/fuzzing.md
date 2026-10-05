@@ -14,6 +14,14 @@ A fourth, typed soundness fuzzer tests proof claims on schemas with types and in
 
 NULLs need the third partition: in SQL, a condition can be unknown as well as true or false.
 
+## Splitting a DISTINCT query by a condition
+
+Another metamorphic test splits `SELECT DISTINCT x FROM t` into three `UNION DISTINCT` pieces: rows where a condition is true, false, or NULL. KumoSQL now merges pieces of the same query that differ only in their filters back into one piece, because a set that removes duplicates does not care which piece a row came from. If the three filters together cover every row, the filter disappears and the pair is proved equal.
+
+Example: `SELECT a FROM t WHERE b > 0 UNION DISTINCT SELECT a FROM t WHERE NOT (b > 0) UNION DISTINCT SELECT a FROM t WHERE (b > 0) IS NULL` is `SELECT DISTINCT a FROM t`. Drop the NULL piece and it is not: rows where `b` is NULL disappear, and the prover says so.
+
+Limits: the rule only merges simple pieces (no aggregates, windows, LIMIT, `DISTINCT ON`, or random functions), and it was checked on generated tables and a rewrite-level fuzz, not proved for every database. See the [full reference](../../docs/evals/fuzzing.md) for the rule details and recorded scores.
+
 ## Run a sample
 
 ```sh
@@ -33,3 +41,13 @@ Some generated pairs differ by a small edit (a constant, a dropped `NOT`) inside
 It is careful about the cases that look similar but are not empty: a sum over no rows with no `GROUP BY` is one NULL row, `ROLLUP` and `CUBE` add a total row, a `LEFT JOIN` can pad a column with NULL, and `COUNT` is never NULL. If it cannot tell, it leaves the query alone.
 
 The evidence is the unit tests, with near misses that really return a row, plus a random comparison of rewritten and original queries on small databases. That is evidence, not a proof of the rule. See the [full reference](../../docs/evals/fuzzing.md#queries-that-can-never-return-a-row-null-facts) for the exact conditions.
+
+## Tautologies and duplicates nobody reads
+
+Two small simplifications let the prover finish cases it used to leave unknown.
+
+- A test that can only be true or false, such as `(a IS NOT NULL) IS NULL`, is never NULL, so asking whether it is NULL always answers "no". `NOT NOT p` is just `p`, and a leftover `WHERE TRUE` filters nothing. Removing them makes two queries that differ only by such noise look identical. Example: `WHERE NOT NOT (a IS NOT NULL) OR (a IS NOT NULL) IS NULL` is the same filter as `WHERE a IS NOT NULL`. A comparison such as `(a = 1) IS NULL` is left alone, because a comparison can be NULL.
+- `x IN (subquery)` only asks which values the subquery contains, not how often. So a `UNION DISTINCT` (duplicate removal) inside it can be read as `UNION ALL`. This stops as soon as something counts or picks rows: a `LIMIT`, an aggregate, a window or a join.
+
+Limits of the evidence: the rules are checked by tests with near misses that must not be proved, and by a random run on small DuckDB databases. That shows no difference on those databases, not a proof for every query shape. See the [full reference](../../docs/evals/fuzzing.md) for the exact conditions.
+
