@@ -10,6 +10,9 @@ a column that might come from the outer query (or that cannot be resolved withou
 leaves it alone, because the same text could then mean different values on each side.
 The placeholder stands for the single value the subquery returns (NULL when it returns no
 row), so a proof assumes each such subquery returns at most one row.
+
+A correlated lookup over an array (``(SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'k')``)
+is replaced too, by an unknown function of that array (:mod:`kumosql.nested_scalar_unnest`).
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from __future__ import annotations
 import sqlglot
 from sqlglot import exp
 
+from . import nested_scalar_unnest
 from .ast_utils import faithful_sql, select_sources as _sources
 
 ASSUMPTION = "uncorrelated scalar subqueries return at most one row"
@@ -116,7 +120,7 @@ def _candidates(tree: exp.Expression, schema) -> list[exp.Subquery]:
     return found
 
 
-def unify(left_sql: str, right_sql: str, *, dialect: str = "bigquery", schema=None, prove=None, single_row=None, report=None) -> tuple[str, str, bool]:
+def unify(left_sql: str, right_sql: str, *, dialect: str = "bigquery", schema=None, prove=None, single_row=None, report=None, types=None) -> tuple[str, str, bool]:
     """Replace shared uncorrelated scalar subqueries by placeholders in both queries.
 
     ``prove(a, b)`` is called to compare two differently written subqueries (it returns
@@ -131,8 +135,14 @@ def unify(left_sql: str, right_sql: str, *, dialect: str = "bigquery", schema=No
     left_tree = sqlglot.parse_one(left_sql, read=dialect)
     right_tree = sqlglot.parse_one(right_sql, read=dialect)
     left_nodes, right_nodes = _candidates(left_tree, schema), _candidates(right_tree, schema)
+    lookups = nested_scalar_unnest.Lookups(dialect, types)  # correlated lookups over UNNEST: one unknown function each
+    looked_up = lookups.replace(left_tree) + lookups.replace(right_tree)
+    if report is not None and lookups.unproven:
+        report["unnest_lookups"] = lookups.unproven
     if not left_nodes and not right_nodes:
-        return left_sql, right_sql, False
+        if looked_up and report is not None:
+            report["unproven"] = 0  # no uncorrelated subquery was replaced, so its assumption is not needed
+        return (faithful_sql(left_tree, dialect), faithful_sql(right_tree, dialect), True) if looked_up else (left_sql, right_sql, False)
     classes: list[str] = []  # representative SQL of each class
     proofs = 0
 
@@ -152,7 +162,7 @@ def unify(left_sql: str, right_sql: str, *, dialect: str = "bigquery", schema=No
         classes.append(text)
         return len(classes) - 1
 
-    replaced = False
+    replaced = bool(looked_up)
     for tree, nodes in ((left_tree, left_nodes), (right_tree, right_nodes)):
         # Outermost first: a subquery inside another one is replaced with its parent.
         for node in nodes:
