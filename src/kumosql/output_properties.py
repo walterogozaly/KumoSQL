@@ -898,6 +898,8 @@ def infer_properties(
     analyzer = _Analyzer(constraints or {}, schema or {}, dialect)
     try:
         tree = sqlglot.parse_one(sql, read=dialect)
+        if tree.find(exp.MatchRecognize) is not None:
+            raise _Unsupported("MATCH_RECOGNIZE returns the partition columns and its measures, not the columns of the table it reads")
         rel = analyzer.query_rel(tree)
     except (_Unsupported, sqlglot.errors.SqlglotError) as error:
         return OutputProperties(unsupported=str(error))

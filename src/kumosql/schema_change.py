@@ -27,6 +27,7 @@ from sqlglot.optimizer.annotate_types import annotate_types
 from sqlglot.optimizer.qualify import qualify
 from sqlglot.schema import MappingSchema
 
+from . import match_recognize_view
 from .ast_utils import binding_cte, star_modifier
 
 if TYPE_CHECKING:
@@ -100,7 +101,11 @@ def _resolve(pipeline: "Pipeline", key: str, tables: dict[str, Columns | None]) 
     query = analysis.parsed.get(key)
     if query is None:
         raise _Unresolvable("unparsed_model")
-    query = query.copy()
+    try:
+        # A MATCH_RECOGNIZE select returns its partition columns and measures, not the columns of the table it reads.
+        query = match_recognize_view.lineage_form(query) if match_recognize_view.has_match_recognize(query) else query.copy()
+    except match_recognize_view.UnknownOutput as exc:
+        raise _Unresolvable("match_recognize") from exc
     schema: dict = {}
     for table in list(query.find_all(exp.Table)):
         if binding_cte(table) is not None:

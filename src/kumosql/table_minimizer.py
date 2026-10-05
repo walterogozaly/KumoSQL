@@ -452,8 +452,10 @@ def _output_names(sql: str, columns: Mapping[str, Sequence[str]]) -> tuple[str, 
             if len(parts) != 3 or not cols:
                 continue
             nested.setdefault(parts[0], {}).setdefault(parts[1], {})[parts[2]] = {c: "STRING" for c in cols}
-        tree = qualify(sqlglot.parse_one(sql, read="bigquery"), schema=nested, dialect="bigquery",
-                       validate_qualify_columns=False, quote_identifiers=False)
+        tree = sqlglot.parse_one(sql, read="bigquery")
+        if tree.find(exp.MatchRecognize) is not None:
+            return ()  # MATCH_RECOGNIZE returns its partition columns and measures: the star is not the table's columns
+        tree = qualify(tree, schema=nested, dialect="bigquery", validate_qualify_columns=False, quote_identifiers=False)
         while isinstance(tree, exp.Subquery):
             tree = tree.this
         while isinstance(tree, exp.SetOperation):

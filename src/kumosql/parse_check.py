@@ -36,6 +36,8 @@ import re
 import sqlglot
 from sqlglot import exp
 
+from . import match_recognize
+
 
 # ---------------------------------------------------------------------------------------------------------
 # Results
@@ -2445,6 +2447,11 @@ def guarded(left_sql: str, right_sql: str, dialect: str = "bigquery") -> str | N
     """The reason to refuse a proof of ``left_sql`` against ``right_sql``, or ``None``."""
 
     for sql in (left_sql, right_sql):
+        if match_recognize.text_has_clause(sql):
+            return (
+                "parser disagreement: MATCH_RECOGNIZE is not a construct the independent reader knows, so sqlglot's reading of "
+                "its clause cannot be checked and no proof over it stands"
+            )
         try:
             reason = disagreement(sql, dialect)
         except (RecursionError, Exception):  # a failing check must never turn into a failing prover

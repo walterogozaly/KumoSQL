@@ -141,6 +141,8 @@ def _plain(sql: str, schema: Mapping[str, Sequence[str]], dialect: str) -> exp.E
 
 def _prepare(sql: str, schema: Mapping[str, Sequence[str]], dialect: str) -> exp.Expression:
     tree = _lowercase(sqlglot.parse_one(sql, read=dialect))
+    if tree.find(exp.MatchRecognize) is not None:
+        raise _Unsupported("a MATCH_RECOGNIZE query is not compared: its clause changes which rows the table it reads returns")
     known = {t.lower() for t in schema}
     for table in tree.find_all(exp.Table):
         if table.args.get("db") and table.name in known:
