@@ -40,12 +40,17 @@ from .smt_equivalence import SmtEquivalenceResult, SmtStatus, TableConstraints
 MAX_CANDIDATES = 40
 DEFAULT_WALL_SECONDS = 30.0
 
-KINDS = ("not_null", "unique", "foreign_key")
+KINDS = ("not_null", "unique", "foreign_key", "no_rows")
 
 
 @dataclass(frozen=True)
 class Condition:
-    """One fact the pair is equivalent under: a NOT NULL column, a unique key or a foreign key."""
+    """One fact the pair is equivalent under: a NOT NULL column, a unique key, a foreign key, or that no row satisfies a predicate.
+
+    ``no_rows`` ("no row of t has P") carries P in ``predicate``; ``columns`` are the columns P reads. It is
+    not a constraint the provers can assume: :func:`with_conditions` skips it, and ``kumosql.difference_explanation``
+    is what proves a pair under it.
+    """
 
     kind: str
     table: str  # lower-case, as the queries spell it: how the provers look the table up
@@ -54,15 +59,19 @@ class Condition:
     parent_columns: tuple[str, ...] = ()
     text: str = ""
     check_sql: str = ""
+    predicate: str = ""  # ``no_rows`` only: the SQL predicate no row may satisfy
 
     @property
     def key(self) -> tuple:
-        return (self.kind, self.table, self.columns, self.parent, self.parent_columns)
+        key = (self.kind, self.table, self.columns, self.parent, self.parent_columns)
+        return key + (self.predicate,) if self.kind == "no_rows" else key
 
     def to_json(self) -> dict:
         data = {"kind": self.kind, "table": self.table, "columns": list(self.columns), "text": self.text, "check_sql": self.check_sql}
         if self.kind == "foreign_key":
             data.update(parent=self.parent, parent_columns=list(self.parent_columns))
+        if self.kind == "no_rows":
+            data["predicate"] = self.predicate
         return data
 
 
@@ -195,9 +204,23 @@ def _make(kind: str, occ: _Occurrence, columns: Iterable[str], dialect: str, par
     )
 
 
+def no_rows(parts: Iterable[str], predicate: str, columns: Iterable[str] = (), dialect: str = "bigquery") -> Condition:
+    """The condition "no row of the table has ``predicate``" (``parts`` are the table's name parts, as the queries spell them).
+
+    Its check counts the rows that satisfy the predicate: zero when the condition holds.
+    """
+
+    parts = list(parts)
+    shown = ".".join(parts)
+    return Condition(
+        "no_rows", shown.lower(), tuple(sorted(set(columns))), text=f"no row of {shown} has {predicate}", predicate=predicate,
+        check_sql=f"SELECT COUNT(*) AS violations FROM {_table_sql(parts, dialect)} WHERE {predicate}",
+    )
+
+
 def _declared(constraints: Mapping[str, TableConstraints] | None, condition: Condition) -> bool:
     facts = {k.lower(): v for k, v in (constraints or {}).items()}.get(condition.table)
-    if facts is None:
+    if facts is None or condition.kind == "no_rows":
         return False
     if condition.kind == "not_null":
         return condition.columns[0] in facts.not_null
@@ -345,6 +368,8 @@ def with_conditions(constraints: Mapping[str, TableConstraints] | None, conditio
 
     merged = {k.lower(): v for k, v in (constraints or {}).items()}
     for condition in conditions:
+        if condition.kind == "no_rows":
+            continue  # not a declared constraint: a proof under it filters the table instead (see difference_explanation)
         facts = merged.get(condition.table, TableConstraints())
         not_null, keys, fks = set(facts.not_null), list(facts.keys), list(facts.foreign_keys)
         if condition.kind == "not_null":
@@ -379,10 +404,56 @@ def _rows_of(tables: Mapping[str, list], name: str) -> list[Mapping] | None:
     return None
 
 
+def _satisfy(predicate: str, columns: tuple[str, ...], rows: list[Mapping]) -> bool:
+    """Whether some row satisfies ``predicate`` (TRUE, not NULL), run on DuckDB; ``False`` when it cannot be run.
+
+    A column no row has is unconstrained: the predicate is then not visibly satisfied. A column that only
+    holds NULL has no type to read off the values, so BIGINT and then VARCHAR are tried.
+    """
+
+    try:
+        import duckdb
+
+        from .duckdb_load import insert_rows, small_database
+    except ImportError:
+        return False
+    rows = [dict(r) for r in rows]
+    if not rows or not all(any(str(k).lower() == c for k in r) for r in rows for c in columns):
+        return False
+    names = sorted({str(k) for r in rows for k in r})
+    try:
+        statement = sqlglot.parse_one(f"SELECT 1 FROM t WHERE {predicate}", read="bigquery").sql(dialect="duckdb")
+    except sqlglot.errors.SqlglotError:
+        return False
+    kinds = {bool: "BOOLEAN", int: "BIGINT", float: "DOUBLE", str: "VARCHAR"}
+    guesses: list[list[str]] = []
+    for name in names:
+        seen = {type(r[name]) for r in rows if r.get(name) is not None}
+        if seen == {int, float}:
+            seen = {float}
+        if len(seen) > 1 or any(t not in kinds for t in seen):
+            return False
+        guesses.append([kinds[seen.pop()]] if seen else ["BIGINT", "VARCHAR"])
+    for attempt in range(2):
+        db = small_database()
+        try:
+            types = [g[min(attempt, len(g) - 1)] for g in guesses]
+            db.execute(f"CREATE TABLE t ({', '.join(_quote(n, 'duckdb') + ' ' + k for n, k in zip(names, types))})")
+            insert_rows(db, "t", [[r.get(n) for n in names] for r in rows])
+            return bool(db.execute(statement).fetchall())
+        except duckdb.Error:
+            continue
+        finally:
+            db.close()
+    return False
+
+
 def broken_by(condition: Condition, tables: Mapping[str, list]) -> bool:
     """Whether ``tables`` visibly violates the condition (missing columns are read as unconstrained)."""
 
     rows = _rows_of(tables, condition.table)
+    if condition.kind == "no_rows":
+        return _satisfy(condition.predicate, condition.columns, rows or [])
     if condition.kind == "not_null":
         return any(seen and value is None for seen, value in (_row_value(r, condition.columns[0]) for r in rows or []))
     if condition.kind == "unique":
