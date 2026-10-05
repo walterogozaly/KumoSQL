@@ -1,0 +1,26 @@
+{
+  "job": "candidate-1",
+  "kind": "candidate",
+  "ref": "codex/stewardship-candidate-1",
+  "sha": "e684f164612b3ba94af5ed853b469071f0fd457b",
+  "leg": "candidate-no-evals",
+  "mode": "no-evals",
+  "status": "finished",
+  "exit": 0,
+  "seconds": 698.8,
+  "workers": 4,
+  "notes": [],
+  "finished": "2026-10-05T07:10:04Z",
+  "machine": {
+    "system": "Linux",
+    "release": "6.18.40.1-microsoft-standard-WSL2",
+    "cpus": 6,
+    "python": "3.12.3"
+  },
+  "passed": 10853,
+  "failed": [],
+  "errors": [],
+  "skipped": 108,
+  "tests": 10961,
+  "known_failed": []
+}
