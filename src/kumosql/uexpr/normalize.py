@@ -358,12 +358,17 @@ def simplify_term(t: Term, ctx: Ctx) -> list:
         if changed is not None:
             t = changed
             continue
-        # 6. an existence test that the term's own rows witness is redundant
+        # 6. an equality of two outside values is known inside the inner terms
+        changed = _inline_outer_equalities(t)
+        if changed is not None:
+            t = changed
+            continue
+        # 7. an existence test that the term's own rows witness is redundant
         changed = _drop_implied_exists(t, ctx)
         if changed is not None:
             t = changed
             continue
-        # 7. conditions simplified against each other: once more, until they settle
+        # 8. conditions simplified against each other: once more, until they settle
         if passes < 3 and not _settled(new_conjs, conjs):
             passes += 1
             continue
@@ -592,6 +597,53 @@ def _split_literal_domain(t: Term) -> list | None:
                     Term(tuple(v for v in t.vars if v != var), t.coef, tuple(subst(g, {var: lit}) for g in rest)) for lit in lits
                 ]
     return None
+
+
+def _inline_outer_equalities(t: Term) -> Term | None:
+    """``[o = e]·F(Σx. φ(o))`` is ``[o = e]·F(Σx. φ(e))`` for outside values ``o``, ``e``.
+
+    Inside the term ``o`` and ``e`` are the same value, so the inner terms may read either; stating the
+    one that is not a bare variable makes an inner term the same whichever side it was written from.
+    """
+
+    bound = set(t.vars)
+    for c in t.factors:
+        if not (isinstance(c, NInd) and (isinstance(c.f, Same) or (isinstance(c.f, Cmp) and c.f.op == "="))):
+            continue
+        for o, e in ((c.f.a, c.f.b), (c.f.b, c.f.a)):
+            if not isinstance(o, Ref) or isinstance(e, (Ref, Lit)) or o.var in bound:
+                continue
+            fv = free_vars(e)
+            if o.var in fv or fv & bound:
+                continue
+            new, changed = [], False
+            for g in t.factors:
+                h = g if g is c else _subst_inner(g, o.var, e)
+                changed = changed or h is not g
+                new.append(h)
+            if changed:
+                return Term(t.vars, t.coef, tuple(new))
+    return None
+
+
+def _subst_inner(n, var, value):
+    """``n`` with ``var`` replaced by ``value`` inside the nested terms (sums, aggregates, scalars) only."""
+
+    from dataclasses import fields
+
+    from .ir import Node
+
+    if isinstance(n, tuple):
+        out = tuple(_subst_inner(c, var, value) for c in n)
+        return n if all(a is b for a, b in zip(out, n)) else out
+    if not isinstance(n, Node) or isinstance(n, (TVar, SVar)):
+        return n
+    if isinstance(n, (NSum, Agg, Scalar)):
+        return subst(n, {var: value}) if var in free_vars(n) else n
+    vals = [_subst_inner(getattr(n, f.name), var, value) for f in fields(n)]
+    if all(a is getattr(n, f.name) for a, f in zip(vals, fields(n))):
+        return n
+    return type(n)(*vals)
 
 
 def _unkey_scalars(t: Term, ctx: Ctx) -> Term | None:

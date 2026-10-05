@@ -98,3 +98,21 @@ def test_string_functions_fold_over_a_union_of_literals():
     assert proves(left, "SELECT 'TABLE' AS u")
     assert not proves(left, "SELECT 'TABLES' AS u")
     assert not proves(left, "SELECT 'VIEW' AS u")
+
+
+def test_single_value_is_not_an_extreme_or_a_sum():
+    # the inner query can return several rows (empno < 20 is not a key lookup); there the scalar
+    # subquery and SINGLE_VALUE are in error, while MAX, MIN and SUM return a value
+    scalar = "SELECT empno, (SELECT deptno FROM emp WHERE empno < 20) AS d FROM emp"
+    for aggregate in ("MAX", "MIN", "SUM", "AVG"):
+        other = f"SELECT e.empno, t.f0 AS d FROM emp AS e LEFT JOIN (SELECT {aggregate}(x.deptno) AS f0 FROM emp AS x WHERE x.empno < 20) AS t ON TRUE"
+        assert not proves(scalar, other), aggregate
+    assert not proves(
+        scalar,
+        "SELECT e.empno, t.f0 AS d FROM emp AS e LEFT JOIN (SELECT SINGLE_VALUE(x.deptno) AS f0 FROM emp AS x WHERE x.empno < 21) AS t ON TRUE",
+    )
+    # a grouped SINGLE_VALUE is one value per group, not one value for the table
+    assert not proves(
+        "SELECT deptno, (SELECT sal FROM emp WHERE empno = 1) FROM emp GROUP BY deptno",
+        "SELECT x.deptno, SINGLE_VALUE(x.sal) FROM emp AS x GROUP BY x.deptno",
+    )
