@@ -71,3 +71,42 @@ def test_commands_come_from_results_files(tmp_path):
     for name, command in rows.items():
         (results / f"{name}.json").write_text(json.dumps({"command": command}), encoding="utf-8")
     assert eval_diff.commands(tmp_path) == {"python tools/a.py --scale": ["a", "b"]}
+
+
+def test_run_uses_current_python_and_records_failure(tmp_path):
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    (tools / "probe.py").write_text(
+        "import os,sys\nprint(sys.executable)\nprint(os.environ['PYTHONHASHSEED'])\nraise SystemExit(7)\n",
+        encoding="utf-8",
+    )
+    result = eval_diff.run(tmp_path, "python tools/probe.py", 10)
+    import sys
+    assert result.returncode == 7
+    assert sys.executable in result.output
+    assert result.output.splitlines()[-1] == "0"
+    assert result.state == "finished"
+    assert result.seconds >= 0
+
+
+def test_run_timeout_returns_uncomparable_result(tmp_path):
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    (tools / "probe.py").write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
+    result = eval_diff.run(tmp_path, "python tools/probe.py", 1)
+    assert result.returncode == -1
+    assert result.state == "timed out"
+    assert "process tree terminated" in result.output
+    assert result.seconds < 15
+
+
+def test_matching_failures_do_not_count_as_agreement(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(eval_diff, "commands", lambda root: {"python tools/probe.py": ["probe"]})
+    monkeypatch.setattr(eval_diff.subprocess, "run", lambda *a, **kw: None)
+    monkeypatch.setattr(eval_diff, "run", lambda *a: eval_diff.RunResult(2, "same failure", 0.01))
+    timings = tmp_path / "timings.json"
+    assert eval_diff.main(["--serial", "--timings", str(timings)]) == 1
+    output = capsys.readouterr().out
+    assert "0 comparisons completed; 0 differ; 1 could not be compared" in output
+    row = json.loads(timings.read_text())["runs"][0]
+    assert row["base_exit"] == row["checkout_exit"] == 2
