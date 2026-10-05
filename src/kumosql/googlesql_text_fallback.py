@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from collections.abc import Sequence
+from functools import lru_cache
 
 import sqlglot
 from sqlglot import exp
@@ -47,14 +49,16 @@ class _Tok:
         self.type = token.token_type.name
 
 
-def _tokens(sql: str, dialect: str) -> list[_Tok] | None:
+@lru_cache(maxsize=32)
+def _tokens(sql: str, dialect: str) -> tuple[_Tok, ...] | None:
     try:
-        return [_Tok(t) for t in Dialect.get_or_raise(dialect).tokenize(sql)]
+        return tuple(_Tok(t) for t in Dialect.get_or_raise(dialect).tokenize(sql))
     except Exception:  # noqa: BLE001 - text that does not tokenize is left alone
         return None
 
 
-def _pairs(tokens: list[_Tok]) -> dict[int, int] | None:
+@lru_cache(maxsize=32)
+def _pairs(tokens: tuple[_Tok, ...]) -> dict[int, int] | None:
     """Index of each ``(`` or ``[`` to the index of its closer; ``None`` when they do not balance."""
 
     stack: list[int] = []
@@ -82,7 +86,7 @@ def _cut(sql: str, spans: list[tuple[int, int, str]]) -> str:
     return "".join(out)
 
 
-def _direct(tokens: list[_Tok], pairs: dict[int, int], lo: int, hi: int):
+def _direct(tokens: Sequence[_Tok], pairs: dict[int, int], lo: int, hi: int):
     """Indexes of the tokens in (lo, hi) that are not inside a nested parenthesis."""
 
     i = lo + 1
@@ -264,7 +268,7 @@ def _unknown_typed_arrays(sql: str, dialect: str) -> str | None:
     return _cut(sql, spans) if spans else None
 
 
-def _matching_bracket(tokens: list[_Tok], open_index: int) -> int | None:
+def _matching_bracket(tokens: Sequence[_Tok], open_index: int) -> int | None:
     depth = 0
     for k in range(open_index, len(tokens)):
         if tokens[k].type == "L_BRACKET":
@@ -342,7 +346,7 @@ _MR_FOLLOWER = {"ONE": "ROW", "ALL": "ROWS", "AFTER": "MATCH"}  # keywords that 
 _MR_PATTERN_FUNCTIONS = frozenset({"FIRST", "LAST", "PREV", "NEXT", "MATCH_NUMBER", "CLASSIFIER", "MATCH_ROW_NUMBER"})
 
 
-def _split_commas(tokens: list[_Tok], pairs: dict[int, int], lo: int, hi: int) -> list[tuple[int, int]]:
+def _split_commas(tokens: Sequence[_Tok], pairs: dict[int, int], lo: int, hi: int) -> list[tuple[int, int]]:
     """Index ranges [start, end) of the comma-separated items between ``lo`` and ``hi``."""
 
     out, start = [], lo
@@ -422,21 +426,104 @@ def _match_recognize(sql: str, dialect: str) -> str | None:
                         for k, p in enumerate(parts)):
                     return None
                 keys.append(sql[parts[0].start:parts[-1].end])
-        # the from item the clause follows
-        if m == 0:
-            return None
-        k = m - 1
-        if tokens[k].type == "R_PAREN":
-            k = opening[k]
-            if k > 0 and re.fullmatch(r"[A-Za-z_]\w*", tokens[k - 1].text) and tokens[k - 1].upper not in ("FROM", "JOIN"):
-                k -= 1  # a table function: name(...)
-        else:
-            while k >= 2 and tokens[k - 1].type == "DOT":
-                k -= 2
-        if k == 0 or (tokens[k - 1].upper not in ("FROM", "JOIN") and tokens[k - 1].type != "COMMA"):
+        k = _from_item_start(tokens, opening, m)
+        if k is None:
             return None
         from_item = sql[tokens[k].start:tokens[m].start].strip()
         select = ", ".join(keys + measures)
+        return sql[:tokens[k].start] + f"(SELECT {select} FROM {from_item})" + sql[tokens[body_close].end:]
+    return None
+
+
+def _from_item_start(tokens: Sequence[_Tok], opening: dict[int, int], m: int) -> int | None:
+    """Index of the first token of the ``FROM`` item that ends just before token ``m`` (a table path, a subquery or a
+    table function call), when a ``FROM``, ``JOIN`` or comma comes before it."""
+
+    if m == 0:
+        return None
+    k = m - 1
+    if tokens[k].type == "R_PAREN":
+        k = opening[k]
+        if k > 0 and re.fullmatch(r"[A-Za-z_]\w*", tokens[k - 1].text) and tokens[k - 1].upper not in ("FROM", "JOIN"):
+            k -= 1  # a table function: name(...)
+    else:
+        while k >= 2 and tokens[k - 1].type == "DOT":
+            k -= 2
+    if k == 0 or (tokens[k - 1].upper not in ("FROM", "JOIN") and tokens[k - 1].type != "COMMA"):
+        return None
+    return k
+
+
+_ALIGN_CLAUSES = ("PERIOD", "ORIGIN", "OUTPUT", "PARTITION", "METRICS")
+
+
+def _align(sql: str, dialect: str) -> str | None:
+    """``rel ALIGN (TIMESTAMP ts PERIOD ... ORIGIN ... PARTITION BY p METRICS agg(x) WITHIN (...) AS m)``: the
+    columns are the partition columns, the metrics, then the aligned timestamp (named by its alias, else its column,
+    else ``timestamp``) of the timestamp expression's own type. It becomes ``(SELECT p, agg(x) AS m, ts FROM rel)``.
+    A metric that names a partition alias or ``aligned_timestamp`` is a column of unknown type; clauses out of the
+    documented order, or a partition key that is neither a column nor aliased, leave the query unknown."""
+
+    tokens = _tokens(sql, dialect)
+    pairs = _pairs(tokens) if tokens is not None else None
+    if tokens is None or pairs is None:
+        return None
+    opening = {close: open_ for open_, close in pairs.items()}
+    name_pattern = r"[A-Za-z_]\w*"
+    for m, t in enumerate(tokens[:-1]):
+        if t.upper != "ALIGN" or tokens[m + 1].type != "L_PAREN":
+            continue
+        body_open, body_close = m + 1, pairs[m + 1]
+        starts = [i for i in _direct(tokens, pairs, body_open, body_close)
+                  if tokens[i].upper.split(" ")[0] in _ALIGN_CLAUSES and tokens[i - 1].upper != "AS"]
+        names = [tokens[i].upper.split(" ")[0] for i in starts]
+        if "PERIOD" not in names or len(set(names)) != len(names) or names != sorted(names, key=_ALIGN_CLAUSES.index):
+            return None
+        end_of = {n: (starts[k + 1] if k + 1 < len(starts) else body_close) for k, n in enumerate(names)}
+        begin_of = {n: starts[k] for k, n in enumerate(names)}
+        first = body_open + 1
+        if tokens[first].upper == "TIMESTAMP" and tokens[first + 1].type != "STRING":
+            lo, hi = first + 1, begin_of["PERIOD"]
+            if lo >= hi:
+                return None
+            if hi - lo >= 3 and tokens[hi - 2].upper == "AS" and re.fullmatch(name_pattern, tokens[hi - 1].text):
+                expression, stamp = sql[tokens[lo].start:tokens[hi - 3].end], tokens[hi - 1].text
+            else:
+                expression = sql[tokens[lo].start:tokens[hi - 1].end]
+                is_path = (hi - lo) % 2 == 1 and all(tokens[i].type == ("DOT" if (i - lo) % 2 else "VAR") for i in range(lo, hi))
+                stamp = tokens[hi - 1].text if is_path else "timestamp"
+        elif begin_of["PERIOD"] == first:
+            expression, stamp = "`timestamp`", "timestamp"  # the default timestamp column
+        else:
+            return None
+        aliases, partition = set(), []
+        if "PARTITION" in names:
+            lo = begin_of["PARTITION"] + (2 if tokens[begin_of["PARTITION"]].upper == "PARTITION" else 1)
+            for a, b in _split_commas(tokens, pairs, lo, end_of["PARTITION"]):
+                if a >= b:
+                    return None
+                if b - a >= 3 and tokens[b - 2].upper == "AS" and re.fullmatch(name_pattern, tokens[b - 1].text):
+                    aliases.add(tokens[b - 1].upper)
+                elif not ((b - a) % 2 == 1 and all(tokens[i].type == ("DOT" if (i - a) % 2 else "VAR") for i in range(a, b))):
+                    return None
+                partition.append(sql[tokens[a].start:tokens[b - 1].end])
+        metrics = []
+        if "METRICS" in names:
+            for a, b in _split_commas(tokens, pairs, begin_of["METRICS"] + 1, end_of["METRICS"]):
+                if b - a < 3 or tokens[b - 2].upper != "AS" or not re.fullmatch(name_pattern, tokens[b - 1].text):
+                    return None
+                name = tokens[b - 1].text
+                if any(tokens[i].upper in aliases or tokens[i].upper in ("ALIGNED_TIMESTAMP", "SELECT") for i in range(a, b - 2)):
+                    metrics.append(f"{UNKNOWN_FUNCTION}(NULL) AS {name}")
+                    continue
+                cuts = [(tokens[i].start - tokens[a].start, tokens[pairs[i + 1]].end - tokens[a].start, "")
+                        for i in range(a, b - 2) if tokens[i].upper == "WITHIN" and tokens[i + 1].type == "L_PAREN"]
+                metrics.append(f"{_cut(sql[tokens[a].start:tokens[b - 2].start], cuts).strip()} AS {name}")
+        k = _from_item_start(tokens, opening, m)
+        if k is None:
+            return None
+        from_item = sql[tokens[k].start:tokens[m].start].strip()
+        select = ", ".join(partition + metrics + [f"{expression} AS `{stamp}`"])
         return sql[:tokens[k].start] + f"(SELECT {select} FROM {from_item})" + sql[tokens[body_close].end:]
     return None
 
@@ -560,6 +647,7 @@ _REWRITES = (
     ("recursion depth column", _recursion_depth),
     ("multiway unnest", _multiway_unnest),
     ("match recognize", _match_recognize),
+    ("align", _align),
     ("quantified comparison over an array", _quantified_unnest),
     ("protocol buffer constructor", _new_proto),
     ("bit aggregate mode", _bit_aggregate_mode),
