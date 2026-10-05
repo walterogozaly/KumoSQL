@@ -474,6 +474,15 @@ class RewriteRule:
                 rewritten_statements.append(statement)
                 rendered_statements.append(_render_or_source(statement, sql[start:end]))
                 continue
+            if statement.find(exp.MatchRecognize) is not None:
+                # MATCH_RECOGNIZE is a table operator no rule knows: a rule that rebuilds the SELECT around it, or lifts
+                # or inlines the table it reads, could change which rows it matches, so the statement is left as written.
+                diagnostics.append(
+                    RuleDiagnostic(index, "match_recognize_kept", "a statement with MATCH_RECOGNIZE is left as written")
+                )
+                rewritten_statements.append(statement)
+                rendered_statements.append(_render_or_source(statement, sql[start:end]))
+                continue
             before = statement.copy()
             try:
                 count, statement_diagnostics = self.rewrite_statement(statement, index)

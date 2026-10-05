@@ -79,8 +79,15 @@ def _strip_variables(node: exp.Expression, variables: set[str]) -> exp.Expressio
     return node
 
 
+def has_match_recognize(tree: exp.Expression) -> bool:
+    return tree.find(exp.MatchRecognize) is not None
+
+
 def lineage_form(tree: exp.Expression) -> exp.Expression:
-    """A copy of ``tree`` with every ``MATCH_RECOGNIZE`` select written as the plain select that traces the same columns."""
+    """A copy of ``tree`` with every ``MATCH_RECOGNIZE`` select written as the plain select that traces the same columns.
+
+    Raises :class:`UnknownOutput` when a clause stands anywhere but in the one shape this package reads it in.
+    """
 
     tree = tree.copy()
     # An inner clause is rewritten first: it is inside the operand of the outer one.
@@ -91,6 +98,8 @@ def lineage_form(tree: exp.Expression) -> exp.Expression:
             tree = replacement
         else:
             select.replace(replacement)
+    if has_match_recognize(tree):
+        raise UnknownOutput("a MATCH_RECOGNIZE clause that is not the whole of its select")
     return tree
 
 
