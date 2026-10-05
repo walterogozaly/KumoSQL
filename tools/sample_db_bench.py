@@ -70,6 +70,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tools"))
 logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
+import sample_db_oracle_sh  # noqa: E402  (Oracle SH: the run-time download and the CSV load)
 
 FIXTURES = ROOT / "tests" / "fixtures" / "sample_databases"
 HOLDOUT_MODULUS = 5
@@ -94,6 +95,7 @@ class Upstream:
     path: str  # path inside the repository
     sha256: str
     licence: str
+    remote: bool = False  # not committed: fetched at run time from the pinned commit (``Adapter.pin_path``)
 
     @property
     def url(self) -> str:
@@ -537,10 +539,33 @@ class Adapter:
     #: complete a NOT NULL foreign key column a counterexample leaves out with a fresh value (and a parent row
     #: for it) instead of the type's default, which can coincide with a value the counterexample uses elsewhere
     fresh_foreign_key_values: bool = False
+    #: True: part of the data is fetched at run time (too large or not licensed to commit); the shared tests that
+    #: sweep every adapter leave such a database to its own test file, which skips when the data cannot be fetched
+    remote: bool = False
 
     @property
     def folder(self) -> Path:
         return FIXTURES / self.name
+
+    def pin_path(self, pin: Upstream) -> Path:
+        """Where a pinned file is: committed under the fixture folder, or (``pin.remote``) fetched into a cache."""
+
+        return self.folder / pin.local
+
+    def available(self) -> bool:
+        """False when run-time data cannot be fetched (no network): the database is then skipped, not failed."""
+
+        return True
+
+    def inserted_counts(self) -> Counter:
+        """Rows per adapted table that the upstream script's INSERT statements give."""
+
+        inserted = Counter()
+        for upstream_table, rows in self.upstream_rows().items():
+            inserted[self.renames.get(upstream_table, upstream_table)] += len(rows)
+        for table, added in self.trigger_rows(self.inserted_rows()).items():
+            inserted[table] += len(added)  # rows an upstream trigger adds while loading
+        return inserted
 
     def upstream_text(self) -> str:
         return (self.folder / self.data_file).read_text(encoding="utf-8")
@@ -1478,9 +1503,158 @@ class OracleCO(OracleSample):
     identity = {"inventory": "inventory_id"}  # the only INSERTs that leave the identity column to the database
 
 
+class OracleSH(OracleSample):
+    """Oracle Sales History: SQL*Plus scripts committed unchanged, six CSV files downloaded at run time.
+
+    ``sh_populate.sql`` INSERTs the three small tables (channels, countries, products) and loads the other six
+    with SQLcl ``LOAD <table> <file>.csv`` lines; those files (91 MB, 918,843 sales rows) are fetched from the pinned
+    commit by ``tools/sample_db_oracle_sh.py`` and read by DuckDB. The star schema (time, product, customer with its
+    country, channel and promotion dimensions; sales and costs facts) is loaded whole.
+    """
+
+    name = "oracle_sh"
+    title = "Oracle SH"
+    results_order = 356
+    remote = True
+    workload_note = (
+        "SH's one view (profits) and its two materialized views (cal_month_sales_mv, fweek_pscat_sales_mv) are the only queries the scripts hold; "
+        "they are adapted from Oracle SQL to BigQuery (the schema prefix dropped; recorded in the workload file). "
+        "Oracle's range partitioning of sales and costs, bitmap and text indexes, dimensions and statistics are dropped from the BigQuery DDL (BigQuery declares only primary and foreign keys); "
+        "sales and costs have no primary key upstream and none is invented. "
+        "The six CSV files (91 MB) are not committed: they are downloaded at run time from the pinned commit and checked against their SHA-256"
+    )
+    baseline_note = "The first run is the baseline (nothing tuned)"
+    ddl_file = "upstream/sh_create.sql"
+    data_file = "upstream/sh_populate.sql"
+    _REPO, _COMMIT = "oracle-samples/db-sample-schemas", "6660bad68c07bd143430ace58565b3f727e17263"
+    _LICENCE = "MIT text, Copyright (c) 2023 Oracle and/or its affiliates (upstream/LICENSE.txt)"
+    upstream = (
+        Upstream("upstream/sh_create.sql", _REPO, _COMMIT, "sales_history/sh_create.sql", "739357c74c101fb043b1cf20897829392902e8a1506fcdc1e7ff8adfac67b190", _LICENCE),
+        Upstream("upstream/sh_populate.sql", _REPO, _COMMIT, "sales_history/sh_populate.sql", "1581dabda1e0b482f0ec37c9ca5d2cb6968926b84df4f62a6e639d44cc9a3bcd", _LICENCE),
+        Upstream("upstream/sh_install.sql", _REPO, _COMMIT, "sales_history/sh_install.sql", "fec44618ff24ae4ffcf117978b753014fd25e7072b0346846564e0b3c4e25378", _LICENCE),
+        Upstream("upstream/README.md", _REPO, _COMMIT, "sales_history/README.md", "2e9cf0d1a46fa271567b2a93c2defd691404b3ee3c6039cef85be34c07c6e7e3", _LICENCE),
+        *sample_db_oracle_sh.csv_pins(Upstream, _REPO, _COMMIT, _LICENCE),
+        Upstream("upstream/LICENSE.txt", _REPO, _COMMIT, "LICENSE.txt", "2da4f8e1f04662e5db9b224a20dfd13db8bc396398271d607bda0343212fbce3", "the licence itself"),
+    )
+    # the 'provided' counts of the installation verification in the pinned sh_install.sql
+    published_counts = {
+        "channels": 5,
+        "costs": 82112,
+        "countries": 35,
+        "customers": 55500,
+        "products": 72,
+        "promotions": 503,
+        "sales": 918843,
+        "times": 1826,
+        "supplementary_demographics": 4500,
+    }
+    published_counts_source = "the 'provided' column of the installation verification at the end of the pinned sh_install.sql"
+
+    # -- the run-time data
+
+    def pin_path(self, pin: Upstream) -> Path:
+        if pin.remote:
+            return sample_db_oracle_sh.download(pin.local, pin.sha256, verify=False)
+        return super().pin_path(pin)
+
+    _available: bool | None = None
+
+    def available(self) -> bool:
+        if OracleSH._available is None:
+            try:
+                sample_db_oracle_sh.fetch_all()
+                OracleSH._available = True
+            except OSError:
+                OracleSH._available = False
+        return OracleSH._available
+
+    def csv_loads(self) -> dict[str, str]:
+        """``LOAD <table> <file>`` of the pinned sh_populate.sql: table -> CSV file name."""
+
+        return {
+            m.group(1).lower(): m.group(2)
+            for m in re.finditer(r"(?im)^[ \t]*LOAD\s+(\w+)\s+(\S+\.csv)\s*$", self._read(self.data_file))
+        }
+
+    def csv_files(self) -> dict[str, Path]:
+        """Table -> the cached, verified CSV file; the script's own ``LOAD`` lines say which table each file fills."""
+
+        loads = self.csv_loads()
+        if sorted(loads.values()) != sorted(sample_db_oracle_sh.CSV_FILES):
+            raise ValueError(f"sh_populate.sql loads {sorted(loads.values())}, not the pinned {sorted(sample_db_oracle_sh.CSV_FILES)}")
+        return {table: sample_db_oracle_sh.download(name) for table, name in loads.items()}
+
+    # -- reading the scripts
+
+    def upstream_views(self) -> dict[str, str]:
+        """The view and the two materialized views of sh_create.sql, by name (body as written)."""
+
+        return {
+            m.group(1): m.group(2).strip()
+            for m in re.finditer(
+                r"(?is)create\s+(?:or\s+replace\s+)?(?:materialized\s+)?view\s+(\w+)\s*(?:\([^)]*\))?\s*(?:--[^\n]*\n\s*)*(?:enable\s+query\s+rewrite\s+)?as\s+(.*?);",
+                self._read(self.ddl_file),
+            )
+        }
+
+    def evaluate(self, raw: Raw) -> Raw:
+        if raw.text == "TO_DATE" and raw.args[1].text.lower() == "yyyy-mm-dd-hh24-mi-ss":
+            date, hour, minute, second = raw.args[0].text.rsplit("-", 3)
+            if (hour, minute, second) != ("00", "00", "00"):
+                raise ValueError(f"a time of day in a DATE column: {raw.args[0].text}")
+            return Raw("string", _dt.date.fromisoformat(date).isoformat())
+        return super().evaluate(raw)
+
+    def convert(self, table, column, kind, raw):
+        if raw.kind == "string" and raw.text == "":
+            return None  # Oracle reads '' as NULL
+        return super().convert(table, column, kind, raw)
+
+    # -- counts and loading
+
+    def inserted_counts(self) -> Counter:
+        counts = super().inserted_counts()
+        for table, path in self.csv_files().items():
+            counts[table] += sample_db_oracle_sh.count_records(path)
+        return counts
+
+    def connect(self, rows=None):
+        if rows is not None:
+            return super().connect(rows)
+        import duckdb
+
+        schema = self.schema()
+        con = duckdb.connect(":memory:")
+        con.execute("SET threads=1")
+        inserted = self.rows_from_inserts()
+        files = self.csv_files()
+        for table in schema.values():
+            con.execute(create_table_sql(table))
+            if table.name in files:
+                columns = {c: duck_type(k) for c, k in table.columns.items()}
+                sample_db_oracle_sh.load_csv(con, table.name, columns, files[table.name])
+            else:
+                insert_all(con, table, inserted.get(table.name, []))
+        for name, sql in self.views():
+            con.execute(f'CREATE VIEW "{name}" AS {to_duckdb(sql)}')
+        return con
+
+    def rows_from_inserts(self) -> dict[str, list[tuple]]:
+        return Adapter.rows(self)
+
+    def rows(self) -> dict[str, list[tuple]]:
+        """Every row of every table (the CSV tables are read through DuckDB)."""
+
+        out = self.rows_from_inserts()
+        con = self.connect()
+        for table in self.csv_files():
+            out[table] = con.execute(f'SELECT * FROM "{table}"').fetchall()
+        return out
+
+
 ADAPTERS: dict[str, Adapter] = {
     a.name: a
-    for a in (Chinook(), Northwind(), Sakila(), Pagila(), OracleHR(), OracleCO())
+    for a in (Chinook(), Northwind(), Sakila(), Pagila(), OracleHR(), OracleCO(), OracleSH())
 }
 
 
@@ -1492,7 +1666,7 @@ def check_database(adapter: Adapter, con=None) -> dict:
 
     problems: list[str] = []
     for pin in adapter.upstream:
-        digest = sha256(adapter.folder / pin.local)
+        digest = sha256(adapter.pin_path(pin))
         if digest != pin.sha256:
             problems.append(
                 f"{pin.local}: SHA-256 {digest} is not the pinned {pin.sha256}"
@@ -1530,11 +1704,7 @@ def check_database(adapter: Adapter, con=None) -> dict:
         declared["primary_keys"] += bool(table.primary_key)
         declared["foreign_keys"] += len(table.foreign_keys)
         declared["not_null"] += len(table.not_null)
-    inserted = Counter()
-    for upstream_table, rows in adapter.upstream_rows().items():
-        inserted[adapter.renames.get(upstream_table, upstream_table)] += len(rows)
-    for table, added in adapter.trigger_rows(adapter.inserted_rows()).items():
-        inserted[table] += len(added)  # rows an upstream trigger adds while loading
+    inserted = adapter.inserted_counts()
     upstream_views = adapter.upstream_views()
     for query in adapter.workload():
         if query["origin"] == "upstream-view" and query["name"] not in upstream_views:

@@ -1,0 +1,237 @@
+{
+ "about": "Oracle Sales History workload for tools/sample_db_bench.py. origin 'upstream-view': the view and the two materialized views sh_create.sql ships (profits, cal_month_sales_mv, fweek_pscat_sales_mv, at the pinned commit), adapted to BigQuery as 'adaptation' says; 'authored': written for this eval on the star schema (time, product, customer with its country, channel and promotion dimensions; sales and costs facts).",
+ "queries": [
+  {
+   "id": "sh-view-profits",
+   "origin": "upstream-view",
+   "name": "profits",
+   "adaptation": "CREATE OR REPLACE VIEW profits AS dropped; table aliases written with AS and the column alias total_cost in lower case; the comma join and its four-column join condition are as upstream writes them",
+   "sql": "SELECT s.channel_id, s.cust_id, s.prod_id, s.promo_id, s.time_id, c.unit_cost, c.unit_price, s.amount_sold, s.quantity_sold, c.unit_cost * s.quantity_sold AS total_cost FROM costs AS c, sales AS s WHERE c.prod_id = s.prod_id AND c.time_id = s.time_id AND c.channel_id = s.channel_id AND c.promo_id = s.promo_id",
+   "create_view": true
+  },
+  {
+   "id": "sh-view-cal-month-sales-mv",
+   "origin": "upstream-view",
+   "name": "cal_month_sales_mv",
+   "adaptation": "CREATE MATERIALIZED VIEW ... ENABLE QUERY REWRITE AS dropped; the sh. schema prefix dropped; table aliases written with AS",
+   "sql": "SELECT t.calendar_month_desc, SUM(s.amount_sold) AS dollars FROM sales AS s, times AS t WHERE s.time_id = t.time_id GROUP BY t.calendar_month_desc"
+  },
+  {
+   "id": "sh-view-fweek-pscat-sales-mv",
+   "origin": "upstream-view",
+   "name": "fweek_pscat_sales_mv",
+   "adaptation": "CREATE MATERIALIZED VIEW ... ENABLE QUERY REWRITE AS dropped; the sh. schema prefix dropped; table aliases written with AS",
+   "sql": "SELECT t.week_ending_day, p.prod_subcategory, SUM(s.amount_sold) AS dollars, s.channel_id, s.promo_id FROM sales AS s, times AS t, products AS p WHERE s.time_id = t.time_id AND s.prod_id = p.prod_id GROUP BY t.week_ending_day, p.prod_subcategory, s.channel_id, s.promo_id"
+  },
+  {
+   "id": "sh-a01-sales-by-month",
+   "origin": "authored",
+   "sql": "SELECT t.calendar_month_desc, SUM(s.amount_sold) AS dollars, COUNT(*) AS lines FROM sales AS s JOIN times AS t ON s.time_id = t.time_id GROUP BY t.calendar_month_desc"
+  },
+  {
+   "id": "sh-a02-category-revenue-having",
+   "origin": "authored",
+   "sql": "SELECT p.prod_category, SUM(s.amount_sold) AS revenue FROM sales AS s JOIN products AS p ON s.prod_id = p.prod_id GROUP BY p.prod_category HAVING SUM(s.amount_sold) > 1000000"
+  },
+  {
+   "id": "sh-a03-snowflake-region-revenue",
+   "origin": "authored",
+   "sql": "SELECT k.country_region, k.country_subregion, SUM(s.amount_sold) AS revenue FROM sales AS s JOIN customers AS c ON s.cust_id = c.cust_id JOIN countries AS k ON c.country_id = k.country_id GROUP BY k.country_region, k.country_subregion"
+  },
+  {
+   "id": "sh-a04-channel-mix",
+   "origin": "authored",
+   "sql": "SELECT ch.channel_class, ch.channel_desc, COUNT(*) AS lines, SUM(s.quantity_sold) AS units FROM sales AS s JOIN channels AS ch ON s.channel_id = ch.channel_id GROUP BY ch.channel_class, ch.channel_desc"
+  },
+  {
+   "id": "sh-a05-distinct-product-key",
+   "origin": "authored",
+   "sql": "SELECT DISTINCT prod_id, prod_name FROM products"
+  },
+  {
+   "id": "sh-a06-distinct-time-key",
+   "origin": "authored",
+   "sql": "SELECT DISTINCT time_id, calendar_year FROM times WHERE calendar_year = 2021"
+  },
+  {
+   "id": "sh-a07-distinct-category-pairs",
+   "origin": "authored",
+   "sql": "SELECT DISTINCT prod_category, prod_subcategory FROM products"
+  },
+  {
+   "id": "sh-a08-in-tele-sales-products",
+   "origin": "authored",
+   "sql": "SELECT prod_id, prod_name FROM products WHERE prod_id IN (SELECT prod_id FROM sales WHERE channel_id = 9)"
+  },
+  {
+   "id": "sh-a09-exists-us-customers-2022",
+   "origin": "authored",
+   "sql": "SELECT c.cust_id, c.cust_last_name FROM customers AS c WHERE c.country_id = 52790 AND EXISTS (SELECT 1 FROM sales AS s WHERE s.cust_id = c.cust_id AND s.time_id >= DATE '2022-01-01')"
+  },
+  {
+   "id": "sh-a10-not-exists-unused-promotions",
+   "origin": "authored",
+   "sql": "SELECT p.promo_id, p.promo_name FROM promotions AS p WHERE NOT EXISTS (SELECT 1 FROM sales AS s WHERE s.promo_id = p.promo_id)"
+  },
+  {
+   "id": "sh-a11-not-in-nullable-outer-column",
+   "origin": "authored",
+   "sql": "SELECT d.cust_id FROM supplementary_demographics AS d WHERE d.comments NOT IN (SELECT e.comments FROM supplementary_demographics AS e WHERE e.occupation = 'Farming' AND e.comments IS NOT NULL)"
+  },
+  {
+   "id": "sh-a12-not-in-not-null-column",
+   "origin": "authored",
+   "sql": "SELECT prod_id, prod_name FROM products WHERE prod_id NOT IN (SELECT prod_id FROM costs WHERE channel_id = 9)"
+  },
+  {
+   "id": "sh-a13-scalar-subquery-above-average-price",
+   "origin": "authored",
+   "sql": "SELECT prod_id, prod_name, prod_list_price FROM products WHERE prod_list_price > (SELECT AVG(prod_list_price) FROM products)"
+  },
+  {
+   "id": "sh-a14-correlated-sale-above-product-average",
+   "origin": "authored",
+   "sql": "SELECT s.prod_id, s.cust_id, s.amount_sold FROM sales AS s WHERE s.time_id = DATE '2022-12-24' AND s.amount_sold > (SELECT AVG(s2.amount_sold) FROM sales AS s2 WHERE s2.prod_id = s.prod_id)"
+  },
+  {
+   "id": "sh-a15-union-all-channels",
+   "origin": "authored",
+   "sql": "SELECT cust_id FROM sales WHERE channel_id = 9 AND time_id >= DATE '2022-01-01' UNION ALL SELECT cust_id FROM sales WHERE channel_id = 4 AND time_id >= DATE '2022-12-01'"
+  },
+  {
+   "id": "sh-a16-union-distinct-customers",
+   "origin": "authored",
+   "sql": "SELECT cust_id FROM sales WHERE channel_id = 9 UNION DISTINCT SELECT cust_id FROM sales WHERE promo_id = 350 AND time_id >= DATE '2022-06-01'"
+  },
+  {
+   "id": "sh-a17-intersect-customers",
+   "origin": "authored",
+   "sql": "SELECT cust_id FROM sales WHERE channel_id = 2 AND time_id >= DATE '2022-06-01' INTERSECT DISTINCT SELECT cust_id FROM sales WHERE channel_id = 3 AND time_id >= DATE '2022-06-01'"
+  },
+  {
+   "id": "sh-a18-except-customers-without-sales",
+   "origin": "authored",
+   "sql": "SELECT cust_id FROM customers EXCEPT DISTINCT SELECT cust_id FROM sales"
+  },
+  {
+   "id": "sh-a19-rank-products-by-revenue",
+   "origin": "authored",
+   "sql": "SELECT prod_id, revenue, RANK() OVER (ORDER BY revenue DESC) AS revenue_rank FROM (SELECT prod_id, SUM(amount_sold) AS revenue FROM sales GROUP BY prod_id) AS r"
+  },
+  {
+   "id": "sh-a20-running-monthly-total",
+   "origin": "authored",
+   "sql": "SELECT calendar_month_desc, dollars, SUM(dollars) OVER (ORDER BY calendar_month_desc) AS running FROM (SELECT t.calendar_month_desc, SUM(s.amount_sold) AS dollars FROM sales AS s JOIN times AS t ON s.time_id = t.time_id GROUP BY t.calendar_month_desc) AS m"
+  },
+  {
+   "id": "sh-a21-previous-month-change",
+   "origin": "authored",
+   "sql": "SELECT calendar_month_desc, dollars, dollars - LAG(dollars) OVER (ORDER BY calendar_month_desc) AS change FROM (SELECT t.calendar_month_desc, SUM(s.amount_sold) AS dollars FROM sales AS s JOIN times AS t ON s.time_id = t.time_id GROUP BY t.calendar_month_desc) AS m"
+  },
+  {
+   "id": "sh-a22-cte-chain-with-unused",
+   "origin": "authored",
+   "sql": "WITH monthly AS (SELECT t.calendar_month_desc, SUM(s.amount_sold) AS dollars FROM sales AS s JOIN times AS t ON s.time_id = t.time_id GROUP BY t.calendar_month_desc), unused AS (SELECT cust_id FROM customers), big AS (SELECT * FROM monthly WHERE dollars > 1500000) SELECT calendar_month_desc, dollars FROM big"
+  },
+  {
+   "id": "sh-a23-derived-table-trivial-predicate",
+   "origin": "authored",
+   "sql": "SELECT prod_id, revenue FROM (SELECT prod_id, SUM(amount_sold) AS revenue FROM sales WHERE 1 = 1 GROUP BY prod_id) AS r WHERE TRUE"
+  },
+  {
+   "id": "sh-a24-redundant-parentheses",
+   "origin": "authored",
+   "sql": "SELECT ((prod_id)), (prod_name) FROM products WHERE ((prod_category = 'Baseball') AND (prod_list_price > 20))"
+  },
+  {
+   "id": "sh-a25-margin-by-category",
+   "origin": "authored",
+   "sql": "SELECT p.prod_category, AVG(c.unit_price - c.unit_cost) AS margin, COUNT(*) AS price_points FROM costs AS c JOIN products AS p ON c.prod_id = p.prod_id GROUP BY p.prod_category"
+  },
+  {
+   "id": "sh-a26-left-join-supplementary-demographics",
+   "origin": "authored",
+   "sql": "SELECT c.cust_id, c.cust_last_name FROM customers AS c LEFT JOIN supplementary_demographics AS d ON c.cust_id = d.cust_id"
+  },
+  {
+   "id": "sh-a27-fk-join-products-day",
+   "origin": "authored",
+   "sql": "SELECT s.prod_id, s.amount_sold FROM sales AS s JOIN products AS p ON s.prod_id = p.prod_id WHERE s.time_id = DATE '2022-12-24'"
+  },
+  {
+   "id": "sh-a28-count-through-times",
+   "origin": "authored",
+   "sql": "SELECT COUNT(*) AS lines FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE t.calendar_year = 2021"
+  },
+  {
+   "id": "sh-a29-preaggregated-by-day",
+   "origin": "authored",
+   "sql": "SELECT t.calendar_month_desc, SUM(a.dollars) AS dollars FROM (SELECT time_id, SUM(amount_sold) AS dollars FROM sales GROUP BY time_id) AS a JOIN times AS t ON a.time_id = t.time_id GROUP BY t.calendar_month_desc"
+  },
+  {
+   "id": "sh-a30-group-by-key-and-dependents",
+   "origin": "authored",
+   "sql": "SELECT p.prod_id, p.prod_name, p.prod_category, SUM(s.amount_sold) AS revenue FROM sales AS s JOIN products AS p ON s.prod_id = p.prod_id GROUP BY p.prod_id, p.prod_name, p.prod_category"
+  },
+  {
+   "id": "sh-a31-distinct-customers-per-channel",
+   "origin": "authored",
+   "sql": "SELECT channel_id, COUNT(DISTINCT cust_id) AS customers FROM sales GROUP BY channel_id"
+  },
+  {
+   "id": "sh-a32-year-quarter-extract",
+   "origin": "authored",
+   "sql": "SELECT EXTRACT(YEAR FROM time_id) AS y, EXTRACT(QUARTER FROM time_id) AS q, COUNT(*) AS lines FROM sales GROUP BY y, q"
+  },
+  {
+   "id": "sh-a33-month-trunc-units",
+   "origin": "authored",
+   "sql": "SELECT DATE_TRUNC(time_id, MONTH) AS month, SUM(quantity_sold) AS units FROM sales GROUP BY month"
+  },
+  {
+   "id": "sh-a34-conditional-aggregation",
+   "origin": "authored",
+   "sql": "SELECT prod_id, SUM(CASE WHEN channel_id = 3 THEN amount_sold ELSE 0 END) AS direct_sales, SUM(CASE WHEN channel_id <> 3 THEN amount_sold ELSE 0 END) AS other_sales FROM sales GROUP BY prod_id"
+  },
+  {
+   "id": "sh-a35-email-domain-counts",
+   "origin": "authored",
+   "sql": "SELECT SUBSTR(cust_email, STRPOS(cust_email, '@') + 1) AS domain, COUNT(*) AS customers FROM customers GROUP BY domain"
+  },
+  {
+   "id": "sh-a36-top-customers-by-spend",
+   "origin": "authored",
+   "sql": "SELECT c.cust_id, c.cust_last_name, SUM(s.amount_sold) AS spend FROM customers AS c JOIN sales AS s ON s.cust_id = c.cust_id GROUP BY c.cust_id, c.cust_last_name ORDER BY spend DESC, c.cust_id LIMIT 10"
+  },
+  {
+   "id": "sh-a37-promotion-category-effect",
+   "origin": "authored",
+   "sql": "SELECT pr.promo_category, COUNT(*) AS lines, SUM(s.amount_sold) AS dollars FROM sales AS s JOIN promotions AS pr ON s.promo_id = pr.promo_id GROUP BY pr.promo_category"
+  },
+  {
+   "id": "sh-a38-sales-without-cost-row",
+   "origin": "authored",
+   "sql": "SELECT s.prod_id, s.time_id, s.channel_id, s.promo_id FROM sales AS s LEFT JOIN costs AS c ON s.prod_id = c.prod_id AND s.time_id = c.time_id AND s.channel_id = c.channel_id AND s.promo_id = c.promo_id WHERE c.prod_id IS NULL"
+  },
+  {
+   "id": "sh-a39-fiscal-versus-calendar-year",
+   "origin": "authored",
+   "sql": "SELECT calendar_year, fiscal_year, COUNT(*) AS days FROM times GROUP BY calendar_year, fiscal_year"
+  },
+  {
+   "id": "sh-a40-demographics-rollup",
+   "origin": "authored",
+   "sql": "SELECT education, occupation, COUNT(*) AS customers FROM supplementary_demographics GROUP BY ROLLUP (education, occupation)"
+  },
+  {
+   "id": "sh-a41-profits-lines-by-channel",
+   "origin": "authored",
+   "sql": "SELECT p.channel_id, COUNT(*) AS lines, SUM(p.total_cost) AS cost FROM (SELECT s.channel_id, s.cust_id, s.prod_id, s.promo_id, s.time_id, c.unit_cost, c.unit_price, s.amount_sold, s.quantity_sold, c.unit_cost * s.quantity_sold AS total_cost FROM costs AS c, sales AS s WHERE c.prod_id = s.prod_id AND c.time_id = s.time_id AND c.channel_id = s.channel_id AND c.promo_id = s.promo_id) AS p GROUP BY p.channel_id"
+  },
+  {
+   "id": "sh-a42-profits-view-by-category",
+   "origin": "authored",
+   "sql": "SELECT pr.prod_category, SUM(v.amount_sold - v.total_cost) AS profit FROM profits AS v JOIN products AS pr ON v.prod_id = pr.prod_id GROUP BY pr.prod_category"
+  }
+ ]
+}

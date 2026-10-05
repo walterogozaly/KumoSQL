@@ -1,0 +1,1225 @@
+{
+ "about": "Authored query pairs on Oracle Sales History for tools/sample_db_bench.py. label: 'equivalent' or 'different' under the declared keys minus 'drop' (not_null:T.c, pk:T, fk:T.c). A 'different' pair carries a witness: 'real' (the two queries already differ on the SH data) or a small database (missing columns are completed with legal values) that satisfies the remaining declarations and separates them. 'sibling' names the pair it negates. The fact tables sales and costs have no declared key (upstream declares none: sales' own comment says its rows are identified by the combination of all foreign keys, which is not a constraint), so pairs that would need one are labelled different. Most fact-table pairs filter the fact table to channel 9 (2,074 sales rows) or one day so that the real-data check stays small.",
+ "pairs": [
+  {
+   "id": "sh-fk-join-elimination-product",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "sales.prod_id is NOT NULL and references products' key",
+   "left": "SELECT s.prod_id, s.amount_sold FROM sales AS s JOIN products AS p ON s.prod_id = p.prod_id WHERE s.channel_id = 9",
+   "right": "SELECT prod_id, amount_sold FROM sales WHERE channel_id = 9"
+  },
+  {
+   "id": "sh-fk-join-elimination-product-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "sh-fk-join-elimination-product",
+   "drop": [
+    "fk:sales.prod_id"
+   ],
+   "why": "without the foreign key a sale may name a product that does not exist",
+   "left": "SELECT s.prod_id, s.amount_sold FROM sales AS s JOIN products AS p ON s.prod_id = p.prod_id WHERE s.channel_id = 9",
+   "right": "SELECT prod_id, amount_sold FROM sales WHERE channel_id = 9",
+   "witness": {
+    "sales": [
+     {
+      "prod_id": 7,
+      "channel_id": 9
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-fk-join-elimination-product-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "sh-fk-join-elimination-product",
+   "drop": [
+    "pk:products"
+   ],
+   "why": "without products' primary key two products may share an id and the sale joins both",
+   "left": "SELECT s.prod_id, s.amount_sold FROM sales AS s JOIN products AS p ON s.prod_id = p.prod_id WHERE s.channel_id = 9",
+   "right": "SELECT prod_id, amount_sold FROM sales WHERE channel_id = 9",
+   "witness": {
+    "products": [
+     {
+      "prod_id": 7
+     },
+     {
+      "prod_id": 7
+     }
+    ],
+    "sales": [
+     {
+      "prod_id": 7,
+      "channel_id": 9
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-fk-join-elimination-product-without-not-null",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "sh-fk-join-elimination-product",
+   "drop": [
+    "not_null:sales.prod_id"
+   ],
+   "why": "a sale with no product joins nothing",
+   "left": "SELECT s.prod_id, s.amount_sold FROM sales AS s JOIN products AS p ON s.prod_id = p.prod_id WHERE s.channel_id = 9",
+   "right": "SELECT prod_id, amount_sold FROM sales WHERE channel_id = 9",
+   "witness": {
+    "sales": [
+     {
+      "prod_id": null,
+      "channel_id": 9
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-fk-join-elimination-time",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "sales.time_id is NOT NULL and references times' DATE key",
+   "left": "SELECT s.prod_id, s.amount_sold FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9",
+   "right": "SELECT prod_id, amount_sold FROM sales WHERE channel_id = 9"
+  },
+  {
+   "id": "sh-fk-join-elimination-time-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "sh-fk-join-elimination-time",
+   "drop": [
+    "fk:sales.time_id"
+   ],
+   "why": "without the foreign key a sale may name a day that is not in times",
+   "left": "SELECT s.prod_id, s.amount_sold FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9",
+   "right": "SELECT prod_id, amount_sold FROM sales WHERE channel_id = 9",
+   "witness": {
+    "sales": [
+     {
+      "time_id": "2020-01-05",
+      "channel_id": 9
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-fk-join-elimination-time-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "sh-fk-join-elimination-time",
+   "drop": [
+    "pk:times"
+   ],
+   "why": "without times' primary key two rows may share a day and the sale joins both",
+   "left": "SELECT s.prod_id, s.amount_sold FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9",
+   "right": "SELECT prod_id, amount_sold FROM sales WHERE channel_id = 9",
+   "witness": {
+    "times": [
+     {
+      "time_id": "2020-01-05"
+     },
+     {
+      "time_id": "2020-01-05"
+     }
+    ],
+    "sales": [
+     {
+      "time_id": "2020-01-05",
+      "channel_id": 9
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-snowflake-chain-elimination",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "both hops are NOT NULL foreign keys to a primary key: sales to customers, customers to countries",
+   "left": "SELECT s.prod_id, s.amount_sold FROM sales AS s JOIN customers AS c ON s.cust_id = c.cust_id JOIN countries AS k ON c.country_id = k.country_id WHERE s.channel_id = 9",
+   "right": "SELECT prod_id, amount_sold FROM sales WHERE channel_id = 9"
+  },
+  {
+   "id": "sh-snowflake-chain-without-customer-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "sh-snowflake-chain-elimination",
+   "drop": [
+    "fk:sales.cust_id"
+   ],
+   "why": "without sales' foreign key a sale may name a customer that does not exist",
+   "left": "SELECT s.prod_id, s.amount_sold FROM sales AS s JOIN customers AS c ON s.cust_id = c.cust_id JOIN countries AS k ON c.country_id = k.country_id WHERE s.channel_id = 9",
+   "right": "SELECT prod_id, amount_sold FROM sales WHERE channel_id = 9",
+   "witness": {
+    "sales": [
+     {
+      "cust_id": 5,
+      "channel_id": 9
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-snowflake-chain-without-country-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "sh-snowflake-chain-elimination",
+   "drop": [
+    "fk:customers.country_id"
+   ],
+   "why": "without customers' foreign key a customer may name a country that does not exist",
+   "left": "SELECT s.prod_id, s.amount_sold FROM sales AS s JOIN customers AS c ON s.cust_id = c.cust_id JOIN countries AS k ON c.country_id = k.country_id WHERE s.channel_id = 9",
+   "right": "SELECT prod_id, amount_sold FROM sales WHERE channel_id = 9",
+   "witness": {
+    "customers": [
+     {
+      "cust_id": 5,
+      "country_id": 777
+     }
+    ],
+    "sales": [
+     {
+      "cust_id": 5,
+      "channel_id": 9
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-snowflake-chain-without-country-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "sh-snowflake-chain-elimination",
+   "drop": [
+    "pk:countries"
+   ],
+   "why": "without countries' primary key two countries may share an id and the customer joins both",
+   "left": "SELECT s.prod_id, s.amount_sold FROM sales AS s JOIN customers AS c ON s.cust_id = c.cust_id JOIN countries AS k ON c.country_id = k.country_id WHERE s.channel_id = 9",
+   "right": "SELECT prod_id, amount_sold FROM sales WHERE channel_id = 9",
+   "witness": {
+    "countries": [
+     {
+      "country_id": 7
+     },
+     {
+      "country_id": 7
+     }
+    ],
+    "customers": [
+     {
+      "cust_id": 5,
+      "country_id": 7
+     }
+    ],
+    "sales": [
+     {
+      "cust_id": 5,
+      "channel_id": 9
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-customer-country-join-elimination",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "customers.country_id is NOT NULL and references countries' key",
+   "left": "SELECT c.cust_id, c.cust_last_name FROM customers AS c JOIN countries AS k ON c.country_id = k.country_id WHERE c.cust_year_of_birth = 1960",
+   "right": "SELECT cust_id, cust_last_name FROM customers WHERE cust_year_of_birth = 1960"
+  },
+  {
+   "id": "sh-customer-country-join-elimination-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "sh-customer-country-join-elimination",
+   "drop": [
+    "fk:customers.country_id"
+   ],
+   "why": "without the foreign key a customer may name a country that does not exist",
+   "left": "SELECT c.cust_id, c.cust_last_name FROM customers AS c JOIN countries AS k ON c.country_id = k.country_id WHERE c.cust_year_of_birth = 1960",
+   "right": "SELECT cust_id, cust_last_name FROM customers WHERE cust_year_of_birth = 1960",
+   "witness": {
+    "customers": [
+     {
+      "cust_id": 5,
+      "country_id": 777,
+      "cust_year_of_birth": 1960
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-customer-country-join-elimination-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "sh-customer-country-join-elimination",
+   "drop": [
+    "pk:countries"
+   ],
+   "why": "without countries' primary key two countries may share an id",
+   "left": "SELECT c.cust_id, c.cust_last_name FROM customers AS c JOIN countries AS k ON c.country_id = k.country_id WHERE c.cust_year_of_birth = 1960",
+   "right": "SELECT cust_id, cust_last_name FROM customers WHERE cust_year_of_birth = 1960",
+   "witness": {
+    "countries": [
+     {
+      "country_id": 7
+     },
+     {
+      "country_id": 7
+     }
+    ],
+    "customers": [
+     {
+      "cust_id": 5,
+      "country_id": 7,
+      "cust_year_of_birth": 1960
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-costs-product-join-elimination",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "costs.prod_id is NOT NULL and references products' key",
+   "left": "SELECT c.prod_id, c.unit_cost FROM costs AS c JOIN products AS p ON c.prod_id = p.prod_id WHERE c.channel_id = 9",
+   "right": "SELECT prod_id, unit_cost FROM costs WHERE channel_id = 9"
+  },
+  {
+   "id": "sh-costs-product-join-elimination-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "sh-costs-product-join-elimination",
+   "drop": [
+    "fk:costs.prod_id"
+   ],
+   "why": "without the foreign key a cost row may name a product that does not exist",
+   "left": "SELECT c.prod_id, c.unit_cost FROM costs AS c JOIN products AS p ON c.prod_id = p.prod_id WHERE c.channel_id = 9",
+   "right": "SELECT prod_id, unit_cost FROM costs WHERE channel_id = 9",
+   "witness": {
+    "costs": [
+     {
+      "prod_id": 7,
+      "channel_id": 9
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-left-join-on-primary-key",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "supplementary_demographics.cust_id is its primary key: the left join adds no row and no column is read",
+   "left": "SELECT c.cust_id, c.cust_last_name FROM customers AS c LEFT JOIN supplementary_demographics AS d ON c.cust_id = d.cust_id WHERE c.cust_year_of_birth = 1960",
+   "right": "SELECT cust_id, cust_last_name FROM customers WHERE cust_year_of_birth = 1960"
+  },
+  {
+   "id": "sh-left-join-on-primary-key-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "sh-left-join-on-primary-key",
+   "drop": [
+    "pk:supplementary_demographics"
+   ],
+   "why": "without the primary key a customer may have two demographics rows",
+   "left": "SELECT c.cust_id, c.cust_last_name FROM customers AS c LEFT JOIN supplementary_demographics AS d ON c.cust_id = d.cust_id WHERE c.cust_year_of_birth = 1960",
+   "right": "SELECT cust_id, cust_last_name FROM customers WHERE cust_year_of_birth = 1960",
+   "witness": {
+    "customers": [
+     {
+      "cust_id": 5,
+      "cust_year_of_birth": 1960
+     }
+    ],
+    "supplementary_demographics": [
+     {
+      "cust_id": 5
+     },
+     {
+      "cust_id": 5
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-left-join-to-fact-fan-out",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "sh-left-join-on-primary-key",
+   "why": "a customer has many sales: the left join to the fact table repeats the customer",
+   "left": "SELECT c.cust_id FROM customers AS c LEFT JOIN sales AS s ON s.cust_id = c.cust_id WHERE c.cust_year_of_birth = 1960",
+   "right": "SELECT cust_id FROM customers WHERE cust_year_of_birth = 1960",
+   "witness": "real"
+  },
+  {
+   "id": "sh-left-join-promotion-on-key",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "promotions.promo_id is its primary key: the left join keeps every sale once",
+   "left": "SELECT s.prod_id, s.amount_sold FROM sales AS s LEFT JOIN promotions AS pr ON s.promo_id = pr.promo_id WHERE s.channel_id = 9",
+   "right": "SELECT prod_id, amount_sold FROM sales WHERE channel_id = 9"
+  },
+  {
+   "id": "sh-left-join-promotion-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "sh-left-join-promotion-on-key",
+   "drop": [
+    "pk:promotions"
+   ],
+   "why": "without promotions' primary key two rows may share an id and the sale is repeated",
+   "left": "SELECT s.prod_id, s.amount_sold FROM sales AS s LEFT JOIN promotions AS pr ON s.promo_id = pr.promo_id WHERE s.channel_id = 9",
+   "right": "SELECT prod_id, amount_sold FROM sales WHERE channel_id = 9",
+   "witness": {
+    "promotions": [
+     {
+      "promo_id": 3
+     },
+     {
+      "promo_id": 3
+     }
+    ],
+    "sales": [
+     {
+      "promo_id": 3,
+      "channel_id": 9
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-self-join-on-primary-key",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "a join of a table with itself on its primary key returns each row once",
+   "left": "SELECT a.prod_id, a.prod_name FROM products AS a JOIN products AS b ON a.prod_id = b.prod_id",
+   "right": "SELECT prod_id, prod_name FROM products"
+  },
+  {
+   "id": "sh-self-join-on-primary-key-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "sh-self-join-on-primary-key",
+   "drop": [
+    "pk:products"
+   ],
+   "why": "without the primary key two products may share an id",
+   "left": "SELECT a.prod_id, a.prod_name FROM products AS a JOIN products AS b ON a.prod_id = b.prod_id",
+   "right": "SELECT prod_id, prod_name FROM products",
+   "witness": {
+    "products": [
+     {
+      "prod_id": 7
+     },
+     {
+      "prod_id": 7
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-self-join-on-category",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "sh-self-join-on-primary-key",
+   "why": "a category holds many products: the join repeats each product",
+   "left": "SELECT a.prod_id, a.prod_name FROM products AS a JOIN products AS b ON a.prod_category = b.prod_category",
+   "right": "SELECT prod_id, prod_name FROM products",
+   "witness": "real"
+  },
+  {
+   "id": "sh-sales-join-costs-on-all-keys",
+   "category": "join elimination",
+   "label": "different",
+   "why": "2,804 real sales have no costs row for their product, day, channel and promotion (the profits view drops them)",
+   "left": "SELECT s.prod_id, s.amount_sold FROM sales AS s JOIN costs AS c ON s.prod_id = c.prod_id AND s.time_id = c.time_id AND s.channel_id = c.channel_id AND s.promo_id = c.promo_id",
+   "right": "SELECT prod_id, amount_sold FROM sales",
+   "witness": "real"
+  },
+  {
+   "id": "sh-sales-left-join-costs-no-key",
+   "category": "join elimination",
+   "label": "different",
+   "why": "costs declares no key: two cost rows with the same product, day, channel and promotion repeat the sale (the real data has none, so only a legal database separates the pair)",
+   "left": "SELECT s.prod_id, s.amount_sold FROM sales AS s LEFT JOIN costs AS c ON s.prod_id = c.prod_id AND s.time_id = c.time_id AND s.channel_id = c.channel_id AND s.promo_id = c.promo_id WHERE s.channel_id = 9",
+   "right": "SELECT prod_id, amount_sold FROM sales WHERE channel_id = 9",
+   "witness": {
+    "costs": [
+     {
+      "prod_id": 7,
+      "time_id": "2020-01-05",
+      "channel_id": 9,
+      "promo_id": 1
+     },
+     {
+      "prod_id": 7,
+      "time_id": "2020-01-05",
+      "channel_id": 9,
+      "promo_id": 1
+     }
+    ],
+    "sales": [
+     {
+      "prod_id": 7,
+      "time_id": "2020-01-05",
+      "channel_id": 9,
+      "promo_id": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-fact-row-distinct-without-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "why": "the sales rows are all different on the real data (the table's comment says all foreign keys together identify a row) but no key is declared, so a legal database may repeat a row",
+   "left": "SELECT DISTINCT prod_id, cust_id, time_id, channel_id, promo_id FROM sales WHERE channel_id = 9",
+   "right": "SELECT prod_id, cust_id, time_id, channel_id, promo_id FROM sales WHERE channel_id = 9",
+   "witness": {
+    "sales": [
+     {
+      "prod_id": 7,
+      "cust_id": 5,
+      "time_id": "2020-01-05",
+      "channel_id": 9,
+      "promo_id": 1
+     },
+     {
+      "prod_id": 7,
+      "cust_id": 5,
+      "time_id": "2020-01-05",
+      "channel_id": 9,
+      "promo_id": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-distinct-on-product-key",
+   "category": "DISTINCT removal",
+   "label": "equivalent",
+   "why": "prod_id is the primary key",
+   "left": "SELECT DISTINCT prod_id, prod_name FROM products",
+   "right": "SELECT prod_id, prod_name FROM products"
+  },
+  {
+   "id": "sh-distinct-on-product-key-without-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "sh-distinct-on-product-key",
+   "drop": [
+    "pk:products"
+   ],
+   "why": "without the primary key two products may be identical",
+   "left": "SELECT DISTINCT prod_id, prod_name FROM products",
+   "right": "SELECT prod_id, prod_name FROM products",
+   "witness": {
+    "products": [
+     {
+      "prod_id": 7
+     },
+     {
+      "prod_id": 7
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-distinct-not-on-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "sh-distinct-on-product-key",
+   "why": "a category holds many products",
+   "left": "SELECT DISTINCT prod_category FROM products",
+   "right": "SELECT prod_category FROM products",
+   "witness": "real"
+  },
+  {
+   "id": "sh-distinct-on-time-key",
+   "category": "DISTINCT removal",
+   "label": "equivalent",
+   "why": "time_id, a DATE, is the primary key",
+   "left": "SELECT DISTINCT time_id, calendar_year FROM times WHERE calendar_year = 2021",
+   "right": "SELECT time_id, calendar_year FROM times WHERE calendar_year = 2021"
+  },
+  {
+   "id": "sh-distinct-on-time-key-without-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "sh-distinct-on-time-key",
+   "drop": [
+    "pk:times"
+   ],
+   "why": "without the primary key two rows may repeat a day",
+   "left": "SELECT DISTINCT time_id, calendar_year FROM times WHERE calendar_year = 2021",
+   "right": "SELECT time_id, calendar_year FROM times WHERE calendar_year = 2021",
+   "witness": {
+    "times": [
+     {
+      "time_id": "2020-01-05",
+      "calendar_year": 2021
+     },
+     {
+      "time_id": "2020-01-05",
+      "calendar_year": 2021
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-distinct-through-key-join",
+   "category": "DISTINCT removal",
+   "label": "equivalent",
+   "why": "cust_id is customers' key and the join to countries' key adds no repeat",
+   "left": "SELECT DISTINCT c.cust_id, c.cust_last_name FROM customers AS c JOIN countries AS k ON c.country_id = k.country_id WHERE c.cust_year_of_birth = 1960",
+   "right": "SELECT c.cust_id, c.cust_last_name FROM customers AS c JOIN countries AS k ON c.country_id = k.country_id WHERE c.cust_year_of_birth = 1960"
+  },
+  {
+   "id": "sh-distinct-through-key-join-without-customer-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "sh-distinct-through-key-join",
+   "drop": [
+    "pk:customers"
+   ],
+   "why": "without customers' primary key two customers may be identical",
+   "left": "SELECT DISTINCT c.cust_id, c.cust_last_name FROM customers AS c JOIN countries AS k ON c.country_id = k.country_id WHERE c.cust_year_of_birth = 1960",
+   "right": "SELECT c.cust_id, c.cust_last_name FROM customers AS c JOIN countries AS k ON c.country_id = k.country_id WHERE c.cust_year_of_birth = 1960",
+   "witness": {
+    "customers": [
+     {
+      "cust_id": 5,
+      "country_id": 7,
+      "cust_year_of_birth": 1960
+     },
+     {
+      "cust_id": 5,
+      "country_id": 7,
+      "cust_year_of_birth": 1960
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-distinct-through-key-join-without-country-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "sh-distinct-through-key-join",
+   "drop": [
+    "pk:countries"
+   ],
+   "why": "without countries' primary key two countries may share an id and the customer repeats",
+   "left": "SELECT DISTINCT c.cust_id, c.cust_last_name FROM customers AS c JOIN countries AS k ON c.country_id = k.country_id WHERE c.cust_year_of_birth = 1960",
+   "right": "SELECT c.cust_id, c.cust_last_name FROM customers AS c JOIN countries AS k ON c.country_id = k.country_id WHERE c.cust_year_of_birth = 1960",
+   "witness": {
+    "countries": [
+     {
+      "country_id": 7
+     },
+     {
+      "country_id": 7
+     }
+    ],
+    "customers": [
+     {
+      "cust_id": 5,
+      "country_id": 7,
+      "cust_year_of_birth": 1960
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-distinct-after-fact-fan-out",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "sh-distinct-through-key-join",
+   "why": "a product has many sales: the join repeats the product's key",
+   "left": "SELECT DISTINCT p.prod_id FROM products AS p JOIN sales AS s ON s.prod_id = p.prod_id WHERE s.channel_id = 9",
+   "right": "SELECT p.prod_id FROM products AS p JOIN sales AS s ON s.prod_id = p.prod_id WHERE s.channel_id = 9",
+   "witness": "real"
+  },
+  {
+   "id": "sh-group-by-dependent-column",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "prod_category is determined by the primary key prod_id",
+   "left": "SELECT p.prod_id, p.prod_name, SUM(s.amount_sold) AS revenue FROM sales AS s JOIN products AS p ON s.prod_id = p.prod_id WHERE s.channel_id = 9 GROUP BY p.prod_id, p.prod_name, p.prod_category",
+   "right": "SELECT p.prod_id, p.prod_name, SUM(s.amount_sold) AS revenue FROM sales AS s JOIN products AS p ON s.prod_id = p.prod_id WHERE s.channel_id = 9 GROUP BY p.prod_id, p.prod_name"
+  },
+  {
+   "id": "sh-group-by-dependent-column-without-key",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "sh-group-by-dependent-column",
+   "drop": [
+    "pk:products"
+   ],
+   "why": "without the primary key one product id may carry two categories and form two groups",
+   "left": "SELECT p.prod_id, p.prod_name, SUM(s.amount_sold) AS revenue FROM sales AS s JOIN products AS p ON s.prod_id = p.prod_id WHERE s.channel_id = 9 GROUP BY p.prod_id, p.prod_name, p.prod_category",
+   "right": "SELECT p.prod_id, p.prod_name, SUM(s.amount_sold) AS revenue FROM sales AS s JOIN products AS p ON s.prod_id = p.prod_id WHERE s.channel_id = 9 GROUP BY p.prod_id, p.prod_name",
+   "witness": {
+    "products": [
+     {
+      "prod_id": 7,
+      "prod_category": "a"
+     },
+     {
+      "prod_id": 7,
+      "prod_category": "b"
+     }
+    ],
+    "sales": [
+     {
+      "prod_id": 7,
+      "channel_id": 9,
+      "amount_sold": 10
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-group-by-independent-column",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "sh-group-by-dependent-column",
+   "why": "a channel is sold under several promotions: grouping by promo_id too splits the channel",
+   "left": "SELECT channel_id, SUM(amount_sold) AS dollars FROM sales GROUP BY channel_id, promo_id",
+   "right": "SELECT channel_id, SUM(amount_sold) AS dollars FROM sales GROUP BY channel_id",
+   "witness": "real"
+  },
+  {
+   "id": "sh-group-by-day-and-its-month",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "calendar_month_desc is determined by the primary key time_id",
+   "left": "SELECT t.time_id, SUM(s.amount_sold) AS dollars FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9 GROUP BY t.time_id, t.calendar_month_desc",
+   "right": "SELECT t.time_id, SUM(s.amount_sold) AS dollars FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9 GROUP BY t.time_id"
+  },
+  {
+   "id": "sh-group-by-day-and-its-month-without-key",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "sh-group-by-day-and-its-month",
+   "drop": [
+    "pk:times"
+   ],
+   "why": "without times' primary key one day may carry two month labels and form two groups",
+   "left": "SELECT t.time_id, SUM(s.amount_sold) AS dollars FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9 GROUP BY t.time_id, t.calendar_month_desc",
+   "right": "SELECT t.time_id, SUM(s.amount_sold) AS dollars FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9 GROUP BY t.time_id",
+   "witness": {
+    "times": [
+     {
+      "time_id": "2020-01-05",
+      "calendar_month_desc": "a"
+     },
+     {
+      "time_id": "2020-01-05",
+      "calendar_month_desc": "b"
+     }
+    ],
+    "sales": [
+     {
+      "time_id": "2020-01-05",
+      "channel_id": 9,
+      "amount_sold": 10
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-pushdown-sum-through-times",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "SUM of sums: summing per day first and joining the day to its month gives the same monthly totals",
+   "left": "SELECT t.calendar_month_desc, SUM(s.amount_sold) AS dollars FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9 GROUP BY t.calendar_month_desc",
+   "right": "SELECT t.calendar_month_desc, SUM(a.dollars) AS dollars FROM (SELECT time_id, SUM(amount_sold) AS dollars FROM sales WHERE channel_id = 9 GROUP BY time_id) AS a JOIN times AS t ON a.time_id = t.time_id GROUP BY t.calendar_month_desc"
+  },
+  {
+   "id": "sh-pushdown-count-through-times",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "COUNT pushed below the join becomes a SUM of counts",
+   "left": "SELECT t.calendar_year, COUNT(*) AS lines FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9 GROUP BY t.calendar_year",
+   "right": "SELECT t.calendar_year, SUM(a.lines) AS lines FROM (SELECT time_id, COUNT(*) AS lines FROM sales WHERE channel_id = 9 GROUP BY time_id) AS a JOIN times AS t ON a.time_id = t.time_id GROUP BY t.calendar_year"
+  },
+  {
+   "id": "sh-pushdown-max-through-times",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "MAX of per-day maxima is the maximum",
+   "left": "SELECT t.calendar_year, MAX(s.amount_sold) AS top FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9 GROUP BY t.calendar_year",
+   "right": "SELECT t.calendar_year, MAX(a.top) AS top FROM (SELECT time_id, MAX(amount_sold) AS top FROM sales WHERE channel_id = 9 GROUP BY time_id) AS a JOIN times AS t ON a.time_id = t.time_id GROUP BY t.calendar_year"
+  },
+  {
+   "id": "sh-pushdown-sum-through-products",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "sales summed per product before the join to the category",
+   "left": "SELECT p.prod_category, SUM(s.amount_sold) AS dollars FROM sales AS s JOIN products AS p ON s.prod_id = p.prod_id WHERE s.channel_id = 9 GROUP BY p.prod_category",
+   "right": "SELECT p.prod_category, SUM(a.dollars) AS dollars FROM (SELECT prod_id, SUM(amount_sold) AS dollars FROM sales WHERE channel_id = 9 GROUP BY prod_id) AS a JOIN products AS p ON a.prod_id = p.prod_id GROUP BY p.prod_category"
+  },
+  {
+   "id": "sh-pushdown-sum-through-customers-and-countries",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "sales summed per customer before the two snowflake joins",
+   "left": "SELECT k.country_region, SUM(s.amount_sold) AS dollars FROM sales AS s JOIN customers AS c ON s.cust_id = c.cust_id JOIN countries AS k ON c.country_id = k.country_id WHERE s.channel_id = 9 GROUP BY k.country_region",
+   "right": "SELECT k.country_region, SUM(a.dollars) AS dollars FROM (SELECT cust_id, SUM(amount_sold) AS dollars FROM sales WHERE channel_id = 9 GROUP BY cust_id) AS a JOIN customers AS c ON a.cust_id = c.cust_id JOIN countries AS k ON c.country_id = k.country_id GROUP BY k.country_region"
+  },
+  {
+   "id": "sh-pushdown-average-of-averages",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "sh-pushdown-sum-through-times",
+   "why": "an average of daily averages weights each day equally, not each sale",
+   "left": "SELECT t.calendar_month_desc, AVG(s.amount_sold) AS average FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9 GROUP BY t.calendar_month_desc",
+   "right": "SELECT t.calendar_month_desc, AVG(a.average) AS average FROM (SELECT time_id, AVG(amount_sold) AS average FROM sales WHERE channel_id = 9 GROUP BY time_id) AS a JOIN times AS t ON a.time_id = t.time_id GROUP BY t.calendar_month_desc",
+   "witness": "real"
+  },
+  {
+   "id": "sh-pushdown-count-distinct-of-daily-counts",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "sh-pushdown-sum-through-times",
+   "why": "a customer who buys on two days of a month is counted twice",
+   "left": "SELECT t.calendar_month_desc, COUNT(DISTINCT s.cust_id) AS customers FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9 GROUP BY t.calendar_month_desc",
+   "right": "SELECT t.calendar_month_desc, SUM(a.customers) AS customers FROM (SELECT time_id, COUNT(DISTINCT cust_id) AS customers FROM sales WHERE channel_id = 9 GROUP BY time_id) AS a JOIN times AS t ON a.time_id = t.time_id GROUP BY t.calendar_month_desc",
+   "witness": "real"
+  },
+  {
+   "id": "sh-pushdown-loses-the-fact-filter",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "sh-pushdown-sum-through-times",
+   "why": "the channel filter must stay below the pre-aggregation: dropped, every channel is summed",
+   "left": "SELECT t.calendar_year, SUM(s.amount_sold) AS dollars FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9 GROUP BY t.calendar_year",
+   "right": "SELECT t.calendar_year, SUM(a.dollars) AS dollars FROM (SELECT time_id, SUM(amount_sold) AS dollars FROM sales GROUP BY time_id) AS a JOIN times AS t ON a.time_id = t.time_id GROUP BY t.calendar_year",
+   "witness": "real"
+  },
+  {
+   "id": "sh-sum-through-key-join",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "the join to times neither drops nor repeats a sale: NOT NULL foreign key to a primary key",
+   "left": "SELECT SUM(s.amount_sold) AS total FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9",
+   "right": "SELECT SUM(amount_sold) AS total FROM sales WHERE channel_id = 9"
+  },
+  {
+   "id": "sh-sum-through-key-join-without-fk",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "sh-sum-through-key-join",
+   "drop": [
+    "fk:sales.time_id"
+   ],
+   "why": "without the foreign key a sale on a day not in times is lost to the join",
+   "left": "SELECT SUM(s.amount_sold) AS total FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9",
+   "right": "SELECT SUM(amount_sold) AS total FROM sales WHERE channel_id = 9",
+   "witness": {
+    "sales": [
+     {
+      "time_id": "2020-01-05",
+      "channel_id": 9,
+      "amount_sold": 10
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-sum-through-key-join-without-key",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "sh-sum-through-key-join",
+   "drop": [
+    "pk:times"
+   ],
+   "why": "without times' primary key a day listed twice counts the sale twice",
+   "left": "SELECT SUM(s.amount_sold) AS total FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9",
+   "right": "SELECT SUM(amount_sold) AS total FROM sales WHERE channel_id = 9",
+   "witness": {
+    "times": [
+     {
+      "time_id": "2020-01-05"
+     },
+     {
+      "time_id": "2020-01-05"
+     }
+    ],
+    "sales": [
+     {
+      "time_id": "2020-01-05",
+      "channel_id": 9,
+      "amount_sold": 10
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-sum-through-key-join-without-not-null",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "sh-sum-through-key-join",
+   "drop": [
+    "not_null:sales.time_id"
+   ],
+   "why": "a sale with no day joins nothing",
+   "left": "SELECT SUM(s.amount_sold) AS total FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9",
+   "right": "SELECT SUM(amount_sold) AS total FROM sales WHERE channel_id = 9",
+   "witness": {
+    "sales": [
+     {
+      "time_id": null,
+      "channel_id": 9,
+      "amount_sold": 10
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-count-through-key-join",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "the join to channels neither drops nor repeats a sale",
+   "left": "SELECT COUNT(*) AS lines FROM sales AS s JOIN channels AS ch ON s.channel_id = ch.channel_id WHERE s.promo_id = 350",
+   "right": "SELECT COUNT(*) AS lines FROM sales WHERE promo_id = 350"
+  },
+  {
+   "id": "sh-count-through-key-join-without-key",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "sh-count-through-key-join",
+   "drop": [
+    "pk:channels"
+   ],
+   "why": "without channels' primary key a channel listed twice counts the sale twice",
+   "left": "SELECT COUNT(*) AS lines FROM sales AS s JOIN channels AS ch ON s.channel_id = ch.channel_id WHERE s.promo_id = 350",
+   "right": "SELECT COUNT(*) AS lines FROM sales WHERE promo_id = 350",
+   "witness": {
+    "channels": [
+     {
+      "channel_id": 2
+     },
+     {
+      "channel_id": 2
+     }
+    ],
+    "sales": [
+     {
+      "channel_id": 2,
+      "promo_id": 350
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-count-not-null-column",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "amount_sold is NOT NULL",
+   "left": "SELECT COUNT(amount_sold) AS n FROM sales WHERE channel_id = 9",
+   "right": "SELECT COUNT(*) AS n FROM sales WHERE channel_id = 9"
+  },
+  {
+   "id": "sh-count-without-not-null",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "sh-count-not-null-column",
+   "drop": [
+    "not_null:sales.amount_sold"
+   ],
+   "why": "a sale may have no amount",
+   "left": "SELECT COUNT(amount_sold) AS n FROM sales WHERE channel_id = 9",
+   "right": "SELECT COUNT(*) AS n FROM sales WHERE channel_id = 9",
+   "witness": {
+    "sales": [
+     {
+      "channel_id": 9,
+      "amount_sold": null
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-count-nullable-column",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "sh-count-not-null-column",
+   "why": "17,506 of the 55,500 customers have no marital status",
+   "left": "SELECT COUNT(cust_marital_status) AS n FROM customers",
+   "right": "SELECT COUNT(*) AS n FROM customers",
+   "witness": "real"
+  },
+  {
+   "id": "sh-having-on-group-key",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "a HAVING on the grouping column is a WHERE",
+   "left": "SELECT channel_id, COUNT(*) AS n FROM sales GROUP BY channel_id HAVING channel_id > 2",
+   "right": "SELECT channel_id, COUNT(*) AS n FROM sales WHERE channel_id > 2 GROUP BY channel_id"
+  },
+  {
+   "id": "sh-filter-vs-conditional-count",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "sh-having-on-group-key",
+   "why": "a channel with no sale of more than one unit vanishes on the left and shows 0 on the right",
+   "left": "SELECT channel_id, COUNT(*) AS n FROM sales WHERE quantity_sold > 1 GROUP BY channel_id",
+   "right": "SELECT channel_id, COUNTIF(quantity_sold > 1) AS n FROM sales GROUP BY channel_id",
+   "witness": {
+    "sales": [
+     {
+      "channel_id": 2,
+      "quantity_sold": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-coalesce-not-null",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "prod_name is NOT NULL",
+   "left": "SELECT COALESCE(prod_name, 'none') AS n FROM products",
+   "right": "SELECT prod_name AS n FROM products"
+  },
+  {
+   "id": "sh-coalesce-nullable",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "sh-coalesce-not-null",
+   "why": "17,506 customers have no marital status",
+   "left": "SELECT COALESCE(cust_marital_status, 'none') AS n FROM customers",
+   "right": "SELECT cust_marital_status AS n FROM customers",
+   "witness": "real"
+  },
+  {
+   "id": "sh-is-not-null-on-not-null",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "prod_name is NOT NULL",
+   "left": "SELECT prod_id FROM products WHERE prod_name IS NOT NULL",
+   "right": "SELECT prod_id FROM products"
+  },
+  {
+   "id": "sh-is-not-null-on-nullable",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "sh-is-not-null-on-not-null",
+   "why": "17,506 customers have no marital status",
+   "left": "SELECT cust_id FROM customers WHERE cust_marital_status IS NOT NULL",
+   "right": "SELECT cust_id FROM customers",
+   "witness": "real"
+  },
+  {
+   "id": "sh-not-in-to-not-exists",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "costs.prod_id is NOT NULL, so the subquery has no NULL to poison NOT IN",
+   "left": "SELECT prod_id FROM products WHERE prod_id NOT IN (SELECT prod_id FROM costs WHERE channel_id = 9)",
+   "right": "SELECT p.prod_id FROM products AS p WHERE NOT EXISTS (SELECT 1 FROM costs AS c WHERE c.prod_id = p.prod_id AND c.channel_id = 9)"
+  },
+  {
+   "id": "sh-not-in-without-not-null",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "sh-not-in-to-not-exists",
+   "drop": [
+    "not_null:costs.prod_id"
+   ],
+   "why": "a NULL prod_id in costs makes NOT IN return no row",
+   "left": "SELECT prod_id FROM products WHERE prod_id NOT IN (SELECT prod_id FROM costs WHERE channel_id = 9)",
+   "right": "SELECT p.prod_id FROM products AS p WHERE NOT EXISTS (SELECT 1 FROM costs AS c WHERE c.prod_id = p.prod_id AND c.channel_id = 9)",
+   "witness": {
+    "costs": [
+     {
+      "prod_id": null,
+      "channel_id": 9
+     }
+    ],
+    "products": [
+     {
+      "prod_id": 7
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-not-in-nullable-outer-column",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "sh-not-in-to-not-exists",
+   "why": "a customer with no marital status is dropped by NOT IN (NULL NOT IN ... is not true) and kept by NOT EXISTS",
+   "left": "SELECT cust_id FROM customers WHERE cust_marital_status NOT IN (SELECT e.cust_marital_status FROM customers AS e WHERE e.cust_year_of_birth = 1999 AND e.cust_marital_status IS NOT NULL)",
+   "right": "SELECT c.cust_id FROM customers AS c WHERE NOT EXISTS (SELECT 1 FROM customers AS e WHERE e.cust_year_of_birth = 1999 AND e.cust_marital_status = c.cust_marital_status)",
+   "witness": "real"
+  },
+  {
+   "id": "sh-outer-to-inner-join",
+   "category": "outer join",
+   "label": "equivalent",
+   "why": "the WHERE rejects the NULL-extended rows, so the left join is an inner join",
+   "left": "SELECT c.cust_id, d.education FROM customers AS c LEFT JOIN supplementary_demographics AS d ON c.cust_id = d.cust_id WHERE d.occupation = 'Farming'",
+   "right": "SELECT c.cust_id, d.education FROM customers AS c JOIN supplementary_demographics AS d ON c.cust_id = d.cust_id WHERE d.occupation = 'Farming'"
+  },
+  {
+   "id": "sh-outer-to-inner-join-null-accepting",
+   "category": "outer join",
+   "label": "different",
+   "sibling": "sh-outer-to-inner-join",
+   "why": "the WHERE accepts NULL, so the 51,000 customers without a demographics row stay on the left",
+   "left": "SELECT c.cust_id, d.education FROM customers AS c LEFT JOIN supplementary_demographics AS d ON c.cust_id = d.cust_id WHERE d.occupation = 'Farming' OR d.occupation IS NULL",
+   "right": "SELECT c.cust_id, d.education FROM customers AS c JOIN supplementary_demographics AS d ON c.cust_id = d.cust_id WHERE d.occupation = 'Farming' OR d.occupation IS NULL",
+   "witness": "real"
+  },
+  {
+   "id": "sh-union-all-vs-distinct",
+   "category": "set operation",
+   "label": "different",
+   "why": "UNION ALL keeps every duplicate",
+   "left": "SELECT channel_id FROM sales UNION ALL SELECT channel_id FROM costs",
+   "right": "SELECT channel_id FROM sales UNION DISTINCT SELECT channel_id FROM costs",
+   "witness": "real"
+  },
+  {
+   "id": "sh-union-all-of-complementary-filters",
+   "category": "set operation",
+   "label": "equivalent",
+   "why": "amount_sold is NOT NULL, so each sale is on exactly one side",
+   "left": "SELECT cust_id FROM sales WHERE channel_id = 9 AND amount_sold > 100 UNION ALL SELECT cust_id FROM sales WHERE channel_id = 9 AND amount_sold <= 100",
+   "right": "SELECT cust_id FROM sales WHERE channel_id = 9"
+  },
+  {
+   "id": "sh-union-all-of-complementary-filters-without-not-null",
+   "category": "set operation",
+   "label": "different",
+   "sibling": "sh-union-all-of-complementary-filters",
+   "drop": [
+    "not_null:sales.amount_sold"
+   ],
+   "why": "a sale with no amount is on neither side",
+   "left": "SELECT cust_id FROM sales WHERE channel_id = 9 AND amount_sold > 100 UNION ALL SELECT cust_id FROM sales WHERE channel_id = 9 AND amount_sold <= 100",
+   "right": "SELECT cust_id FROM sales WHERE channel_id = 9",
+   "witness": {
+    "sales": [
+     {
+      "channel_id": 9,
+      "amount_sold": null
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-union-all-of-complementary-filters-nullable",
+   "category": "set operation",
+   "label": "different",
+   "sibling": "sh-union-all-of-complementary-filters",
+   "why": "17,506 customers have no marital status and are on neither side",
+   "left": "SELECT cust_id FROM customers WHERE cust_marital_status = 'married' UNION ALL SELECT cust_id FROM customers WHERE cust_marital_status <> 'married'",
+   "right": "SELECT cust_id FROM customers",
+   "witness": "real"
+  },
+  {
+   "id": "sh-intersect-to-in",
+   "category": "set operation",
+   "label": "equivalent",
+   "why": "prod_id is NOT NULL on both sides, so INTERSECT and IN agree on NULL",
+   "left": "SELECT prod_id FROM sales WHERE channel_id = 9 INTERSECT DISTINCT SELECT prod_id FROM costs WHERE channel_id = 9",
+   "right": "SELECT DISTINCT prod_id FROM sales WHERE channel_id = 9 AND prod_id IN (SELECT prod_id FROM costs WHERE channel_id = 9)"
+  },
+  {
+   "id": "sh-intersect-nullable",
+   "category": "set operation",
+   "label": "different",
+   "sibling": "sh-intersect-to-in",
+   "why": "INTERSECT treats two NULLs as equal and IN does not",
+   "left": "SELECT cust_marital_status FROM customers INTERSECT DISTINCT SELECT cust_marital_status FROM customers WHERE cust_year_of_birth > 1990",
+   "right": "SELECT DISTINCT cust_marital_status FROM customers WHERE cust_marital_status IN (SELECT cust_marital_status FROM customers WHERE cust_year_of_birth > 1990)",
+   "witness": "real"
+  },
+  {
+   "id": "sh-except-to-not-exists",
+   "category": "set operation",
+   "label": "equivalent",
+   "why": "cust_id is NOT NULL on both sides",
+   "left": "SELECT cust_id FROM customers EXCEPT DISTINCT SELECT cust_id FROM sales",
+   "right": "SELECT DISTINCT c.cust_id FROM customers AS c WHERE NOT EXISTS (SELECT 1 FROM sales AS s WHERE s.cust_id = c.cust_id)"
+  },
+  {
+   "id": "sh-in-to-exists",
+   "category": "subquery",
+   "label": "equivalent",
+   "why": "an IN subquery and the correlated EXISTS",
+   "left": "SELECT prod_id FROM products WHERE prod_id IN (SELECT prod_id FROM sales WHERE channel_id = 9)",
+   "right": "SELECT p.prod_id FROM products AS p WHERE EXISTS (SELECT 1 FROM sales AS s WHERE s.prod_id = p.prod_id AND s.channel_id = 9)"
+  },
+  {
+   "id": "sh-in-to-join-on-key",
+   "category": "subquery",
+   "label": "equivalent",
+   "why": "country_id is countries' primary key, so the join repeats no customer",
+   "left": "SELECT cust_id FROM customers WHERE country_id IN (SELECT country_id FROM countries WHERE country_region = 'Europe')",
+   "right": "SELECT c.cust_id FROM customers AS c JOIN countries AS k ON c.country_id = k.country_id WHERE k.country_region = 'Europe'"
+  },
+  {
+   "id": "sh-in-to-join-without-key",
+   "category": "subquery",
+   "label": "different",
+   "sibling": "sh-in-to-join-on-key",
+   "drop": [
+    "pk:countries"
+   ],
+   "why": "without countries' primary key two European rows with one id repeat the customer",
+   "left": "SELECT cust_id FROM customers WHERE country_id IN (SELECT country_id FROM countries WHERE country_region = 'Europe')",
+   "right": "SELECT c.cust_id FROM customers AS c JOIN countries AS k ON c.country_id = k.country_id WHERE k.country_region = 'Europe'",
+   "witness": {
+    "countries": [
+     {
+      "country_id": 7,
+      "country_region": "Europe"
+     },
+     {
+      "country_id": 7,
+      "country_region": "Europe"
+     }
+    ],
+    "customers": [
+     {
+      "cust_id": 5,
+      "country_id": 7
+     }
+    ]
+   }
+  },
+  {
+   "id": "sh-in-to-join-on-fact",
+   "category": "subquery",
+   "label": "different",
+   "sibling": "sh-in-to-join-on-key",
+   "why": "a product has many sales: the join repeats it",
+   "left": "SELECT prod_id FROM products WHERE prod_id IN (SELECT prod_id FROM sales WHERE channel_id = 9)",
+   "right": "SELECT p.prod_id FROM products AS p JOIN sales AS s ON s.prod_id = p.prod_id WHERE s.channel_id = 9",
+   "witness": "real"
+  },
+  {
+   "id": "sh-window-filter-on-partition-key",
+   "category": "window",
+   "label": "equivalent",
+   "why": "a filter on the partition column keeps whole partitions, so the ranks do not change",
+   "left": "SELECT prod_id, prod_category, r FROM (SELECT prod_id, prod_category, RANK() OVER (PARTITION BY prod_category ORDER BY prod_list_price DESC) AS r FROM products) AS t WHERE prod_category = 'Golf'",
+   "right": "SELECT prod_id, prod_category, RANK() OVER (PARTITION BY prod_category ORDER BY prod_list_price DESC) AS r FROM products WHERE prod_category = 'Golf'"
+  },
+  {
+   "id": "sh-window-filter-on-other-column",
+   "category": "window",
+   "label": "different",
+   "sibling": "sh-window-filter-on-partition-key",
+   "why": "a filter on prod_id removes rows from the partitions before they are ranked",
+   "left": "SELECT prod_id, prod_category, r FROM (SELECT prod_id, prod_category, RANK() OVER (PARTITION BY prod_category ORDER BY prod_list_price DESC) AS r FROM products) AS t WHERE prod_id > 100",
+   "right": "SELECT prod_id, prod_category, RANK() OVER (PARTITION BY prod_category ORDER BY prod_list_price DESC) AS r FROM products WHERE prod_id > 100",
+   "witness": "real"
+  }
+ ]
+}
