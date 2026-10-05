@@ -33,6 +33,7 @@ Five BigQuery constructs that real queries use were either rejected or misread, 
 - `WITH(a AS 1, a + 1)`, which names a value and uses it. The `a` inside it is not counted as a column of any table.
 - `FROM t, t.tags tag WITH OFFSET pos`, which numbers the items of an array column.
 - `STRUCT<>()`, which the parser used to read as a "not equal" comparison. BigQuery rejects it, so KumoSQL now refuses it too.
+- `MATCH_RECOGNIZE (...)`, BigQuery's pattern-matching clause, which stopped the parser at its first word. It is read in every spelling BigQuery accepts, and KumoSQL refuses the ones it rejects. See [MATCH_RECOGNIZE](../match-recognize.md).
 
 Where BigQuery itself refuses a form (a filtered aggregate inside a window, or next to `ORDER BY`), KumoSQL declines it as well. The provers say "unknown" for the new forms rather than guess. Each example was first checked with a free BigQuery dry run. The evidence is a handful of small queries, not a broad measurement. The full guide lists the details and the two operator-precedence misreads that another workstream owns.
 

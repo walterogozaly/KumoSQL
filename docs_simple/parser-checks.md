@@ -24,7 +24,7 @@ Some proofs the benchmarks counted are gone, because they rested on a text BigQu
 
 - It checks the text a prover receives. A step that prints a tree and proves the printed text is checked on that text.
 - It does not check counterexamples, only proofs.
-- Constructs it does not know (such as `LATERAL` and `PIVOT`) and other dialects are unchecked, which means sqlglot's reading is trusted as before.
+- Constructs it does not know (such as `LATERAL` and `PIVOT`) and other dialects are unchecked, which means sqlglot's reading is trusted as before. The exception is BigQuery's `MATCH_RECOGNIZE` clause: a proof over a query that uses it is always refused ([MATCH_RECOGNIZE](match-recognize.md)).
 - The random expressions show the tables are right; they do not measure how often real queries are misread.
 
 The [full reference](../docs/parser-checks.md) has the misreads found, the numbers, how the cases were triaged and the commands.

@@ -8,6 +8,8 @@ function sqlglot does not know are kept as their own text.
 ``TABLE`` ("Expecting )"), so the model was reported unparseable and everything it read was lost. Here the argument becomes a
 :data:`TABLE_ARGUMENT` call holding the table, so the table is read like any other and the SQL prints back unchanged.
 
+``MATCH_RECOGNIZE (...)`` is read by :mod:`kumosql.match_recognize` (see ``docs/match-recognize.md``).
+
 ``x LIKE ALL UNNEST(array)`` (and ``LIKE SOME``), an aggregate with a ``WHERE`` filter inside its parentheses (``COUNT(* WHERE c)``),
 the ``WITH(a AS 1, a + 1)`` expression and ``t.arr elem WITH OFFSET off`` are read the same way, each into nodes sqlglot already
 has or a marker call that prints back as written. ``STRUCT<>()``, which sqlglot reads as the comparison ``STRUCT <> ()``, is refused.

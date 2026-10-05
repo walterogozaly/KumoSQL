@@ -6,6 +6,8 @@ None of these checks uses the network. Calling a prover or a rewrite from Python
 
 Two queries are equivalent when they return the same results under the comparison's rules. Usually that means the same rows with the same duplicate counts, ignoring unspecified row order. Column names, types, ordering, and declared data guarantees can also matter; read the check's assumptions.
 
+Queries that use BigQuery's `MATCH_RECOGNIZE` pattern-matching clause are never called equivalent, even to themselves; see [MATCH_RECOGNIZE](match-recognize.md).
+
 Suppose you replace `WHERE 1 = 1` with no WHERE clause. A checker can establish that the removed condition never filtered anything. More complicated changes need stronger reasoning.
 
 ## The different kinds of checks
