@@ -673,7 +673,15 @@ _INTERVAL_PARTS = {"YEAR", "MONTH", "DAY", "HOUR", "MINUTE", "SECOND", "MILLISEC
 
 
 def extract(typer, node: exp.Extract, scope, ctes) -> T:
-    source = typer.expr(node.expression, scope, ctes)
+    zoned = node.expression
+    if isinstance(zoned, exp.AtTimeZone):  # EXTRACT(part FROM timestamp AT TIME ZONE zone) takes a TIMESTAMP only
+        if isinstance(zoned.args.get("zone"), exp.Expression):
+            typer.expr(zoned.args["zone"], scope, ctes)
+        source = typer.expr(zoned.this, scope, ctes)
+        if source.type is None or source.type.kind != "TIMESTAMP":
+            return UNKNOWN
+    else:
+        source = typer.expr(node.expression, scope, ctes)
     part = node.this.name.upper() if isinstance(node.this, exp.Expression) else str(node.this).upper()
     if source.type is None or source.lit is not None:
         return UNKNOWN
