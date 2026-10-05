@@ -706,23 +706,32 @@ class Translator:
                 cond = conj(cond, self.pred(filter_where, scope)[0])
             arg = call.this
             distinct = False
+            arguments = list(call.args.get("expressions") or [])
             if isinstance(arg, exp.Distinct):
                 distinct = True
-                if len(arg.expressions) != 1:
-                    raise Unsupported("aggregate over several DISTINCT arguments")
-                arg = arg.expressions[0]
-            if call.args.get("expressions") and not isinstance(call, exp.Count):
+                arguments = list(arg.expressions) + arguments
+                arg = arguments[0] if arguments else None
+                arguments = arguments[1:]
+            if arguments and not isinstance(call, exp.Count):
                 raise Unsupported(f"{func} with extra arguments")
             for k in ("order", "limit", "ignore_nulls", "respect_nulls", "having_max"):
                 if call.args.get(k):
                     raise Unsupported(f"{func} modifiers")
-            if func == "COUNT" and (arg is None or isinstance(arg, exp.Star)):
+            if func == "COUNT" and not arguments and (arg is None or isinstance(arg, exp.Star)):
                 if distinct:
                     raise Unsupported("COUNT(DISTINCT *)")
                 value = None
             elif func == "COUNTIF":
                 t, f = self.pred(arg, scope)
                 value = BoolV(t, f)
+            elif arguments:
+                # COUNT([DISTINCT] a, b) counts the rows (distinct pairs) where every argument is non-NULL
+                # (MySQL, Spark, Calcite). The pair is a strict function of its arguments, so it is NULL
+                # when any of them is; the function is uninterpreted, so a proof holds for the injective one.
+                parts = [arg] + arguments
+                if any(isinstance(a, exp.Star) or _has_aggregate(a) for a in parts):
+                    raise Unsupported("COUNT over several arguments with a star or an aggregate")
+                value = self._fn(f"TUPLE{len(parts)}", [self.value(a, scope) for a in parts], True, None)
             else:
                 if _has_aggregate(arg):
                     raise Unsupported("nested aggregate")
