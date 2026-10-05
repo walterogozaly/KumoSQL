@@ -73,7 +73,7 @@ branch lost its only aggregate and went from one row to a row per input row) and
 About 8,000 template cases over the aggregate, distinct and set, outer-join, grouping and window, and scalar
 generators fired about 70 rules and found nothing else.
 
-The set-operation sweep ([#518](https://github.com/walterogozaly/KumoSQL/issues/518)) found eight more, all fixed with
+The set-operation sweep ([#518](https://github.com/walterogozaly/KumoSQL/issues/518)) found nine more, all fixed with
 regression tests:
 
 - `merge_same_source` and `set_operation_to_exists` unwrapped the parentheses of an operand and lost an `ORDER BY` /
@@ -98,6 +98,9 @@ regression tests:
   query equal to its fields as plain columns. `output_names` did the same for `X EXCEPT DISTINCT <empty>`, which became a `SELECT DISTINCT` of two columns. Both now decline an
   operand with `AS STRUCT` or `AS VALUE` (`tests/test_set_operation_struct_kind.py`). DuckDB cannot run this rewrite, so the harness reports it as unchecked; found by
   asking whether each shape-changing rule keeps `SELECT AS STRUCT` (`kind`) in mind.
+- `distribute_over_constant_union` (`literal_fold_rules`) read a union of constant rows through an `ORDER BY` / `LIMIT` /
+  `OFFSET` on the union or on the parentheses of a branch, so `SELECT UPPER(x) FROM (SELECT 'a' AS x UNION ALL SELECT 'b'
+  ORDER BY x DESC LIMIT 1) AS d` became both rows (`tests/test_constant_union_tail.py`).
 
 One more is **open**: `algebraic_equivalence._union_all_branches` steps through every `Subquery`, so
 `((SELECT x FROM t) ORDER BY x LIMIT 1) UNION ALL ...` is read as all of `t` by everything built on it (`_aligned_branches`,
