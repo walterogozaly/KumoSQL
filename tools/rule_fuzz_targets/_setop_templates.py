@@ -1,0 +1,206 @@
+"""Set-operation templates for ``distinct_sets`` (issue #518).
+
+Parenthesized operands that keep their ORDER BY / LIMIT on the parentheses, mixed ALL / DISTINCT chains, EXCEPT ALL
+and INTERSECT ALL multiplicities, constant and empty branches, GROUP BY operands, derived set operations read by
+filters, joins, aggregates and membership tests, and the column-matching forms (BY NAME, CORRESPONDING). A template
+starting with ``@duckdb `` is read in the DuckDB dialect, because BigQuery has no INTERSECT ALL / EXCEPT ALL.
+"""
+
+PRED = "{t.x > 0|t.x IS NULL|t.y = 1|t.id < 3|t.s = 'a'|t.x = t.y|t.x IS NOT NULL}"
+PRED2 = "{t.x <= 0|t.x IS NOT NULL|t.y = 2|t.id >= 3|t.s <> 'a'|t.x <> t.y|t.x IS NULL}"
+TAIL = "{|ORDER BY 1 LIMIT 2|ORDER BY 1, 2 LIMIT 3|LIMIT 1 OFFSET 1}"
+CUT = "((SELECT t.x FROM t WHERE {t.x > 0|t.x IS NOT NULL|t.y = 1|t.x < 3}) ORDER BY t.x {|DESC} LIMIT {1|2})"
+ANYSET = "{UNION ALL|UNION DISTINCT|INTERSECT DISTINCT|EXCEPT DISTINCT}"
+ALLSET = "{UNION ALL|UNION DISTINCT|INTERSECT DISTINCT|EXCEPT DISTINCT|INTERSECT ALL|EXCEPT ALL}"
+DSET = "{UNION DISTINCT|INTERSECT DISTINCT|EXCEPT DISTINCT}"
+ONE = "SELECT {DISTINCT |}t.x FROM t WHERE {t.x > 0|t.x IS NULL|t.y = 1|t.x <= 2}"
+TWO = "SELECT {DISTINCT |}u.w FROM u WHERE {u.w > 0|u.w IS NULL|u.k = 1|u.w <= 2}"
+KEYS = "SELECT {DISTINCT |}u.k FROM u"
+D = "(SELECT t.x, t.y FROM t " + ANYSET + " SELECT u.w, u.k FROM u) AS d"
+D1 = "(SELECT t.x FROM t " + ANYSET + " SELECT u.w FROM u) AS d"
+CASE_KEY = "CASE WHEN u.k = 1 THEN u.w WHEN u.w = 1 THEN u.k END"
+
+SET_TEMPLATES = [
+    # tails on the parentheses of an operand
+    f"{CUT} {ANYSET} SELECT t.x FROM t WHERE {PRED2}",
+    f"SELECT t.x FROM t WHERE {PRED} {ANYSET} {CUT}",
+    f"{CUT} {ANYSET} SELECT u.w FROM u",
+    f"SELECT d.x FROM ({CUT} {ANYSET} SELECT u.w FROM u) AS d WHERE d.x {{> 0|IS NULL|<= 2}}",
+    f"SELECT d.x FROM (SELECT u.w FROM u {ANYSET} {CUT}) AS d WHERE d.x {{> 0|IS NULL|<= 2}}",
+    f"SELECT DISTINCT d.x FROM ({CUT} UNION ALL SELECT u.w FROM u) AS d",
+    f"SELECT t.y FROM t WHERE t.x {{IN|NOT IN}} ({CUT} UNION ALL SELECT u.k FROM u)",
+    f"SELECT t.y FROM t WHERE {{EXISTS|NOT EXISTS}} ({CUT} {ANYSET} SELECT u.k FROM u)",
+    # mixed ALL / DISTINCT chains, associativity
+    f"({ONE} {ANYSET} {TWO}) {ANYSET} {KEYS}",
+    f"{ONE} {ANYSET} ({TWO} {ANYSET} {KEYS})",
+    f"({ONE} UNION ALL {TWO}) {ANYSET} {KEYS}",
+    f"{ONE} {ANYSET} ({TWO} UNION ALL {KEYS})",
+    f"({ONE} UNION DISTINCT {TWO}) UNION ALL {KEYS}",
+    f"SELECT t.x FROM t INTERSECT DISTINCT SELECT u.w FROM u INTERSECT DISTINCT SELECT u.k FROM u",
+    # ALL multiplicities (DuckDB dialect)
+    f"@duckdb {ONE} {ALLSET} {TWO}",
+    f"@duckdb ({ONE} {ALLSET} {TWO}) {ALLSET} {KEYS}",
+    f"@duckdb {ONE} {ALLSET} ({TWO} {ALLSET} {KEYS})",
+    "@duckdb SELECT t.x FROM t {INTERSECT ALL|EXCEPT ALL} SELECT DISTINCT t.y FROM t",
+    "@duckdb SELECT DISTINCT t.x FROM t {INTERSECT ALL|EXCEPT ALL} SELECT t.y FROM t",
+    "@duckdb SELECT t.x FROM t GROUP BY t.x {INTERSECT ALL|EXCEPT ALL} SELECT t.y FROM t",
+    "@duckdb SELECT t.x FROM t {INTERSECT ALL|EXCEPT ALL} SELECT t.y FROM t GROUP BY t.y",
+    f"@duckdb SELECT t.x FROM t EXCEPT ALL SELECT t.x FROM t WHERE {PRED2}",
+    "@duckdb SELECT t.x FROM t EXCEPT ALL SELECT t.x FROM t",
+    "@duckdb SELECT COUNT(*) AS c FROM t {INTERSECT ALL|EXCEPT ALL|UNION ALL} SELECT COUNT(*) AS c FROM u",
+    "@duckdb SELECT d.x FROM (SELECT t.x FROM t {INTERSECT ALL|EXCEPT ALL} SELECT u.w FROM u) AS d WHERE d.x {> 0|IS NULL}",
+    "@duckdb SELECT DISTINCT d.x FROM (SELECT t.x FROM t {INTERSECT ALL|EXCEPT ALL} SELECT u.w FROM u) AS d",
+    "@duckdb SELECT d.x, d.x AS z FROM (SELECT t.x FROM t {INTERSECT ALL|EXCEPT ALL} SELECT u.w FROM u) AS d",
+    "@duckdb SELECT d.x FROM (SELECT t.x FROM t WHERE t.y = 1 {INTERSECT ALL|EXCEPT ALL} SELECT u.w FROM u) AS d WHERE d.x > 0",
+    # constant and empty branches
+    f"SELECT t.x FROM t WHERE FALSE {ANYSET} SELECT u.w FROM u",
+    f"SELECT t.x FROM t {ANYSET} SELECT u.w FROM u WHERE FALSE",
+    f"SELECT t.x FROM t {ANYSET} SELECT u.w FROM u WHERE {{1 = 0|NULL|u.k IS NULL AND u.k IS NOT NULL}}",
+    f"SELECT {{1|NULL|2}} AS x {ANYSET} SELECT t.x FROM t",
+    f"SELECT t.x FROM t {ANYSET} SELECT {{1|NULL|CAST(1 AS INT64)}}",
+    f"SELECT t.x FROM t {ANYSET} (SELECT {{1|NULL}} UNION ALL SELECT {{1|2|NULL}})",
+    "SELECT t.x FROM t {EXCEPT DISTINCT|INTERSECT DISTINCT} SELECT t.x FROM t WHERE FALSE",
+    "SELECT t.x FROM t {EXCEPT DISTINCT|INTERSECT DISTINCT} SELECT t.x FROM t WHERE t.x IS NULL AND t.x IS NOT NULL",
+    "SELECT t.x FROM t EXCEPT DISTINCT SELECT t.x FROM t WHERE 1 = {0|1}",
+    "SELECT t.x FROM t EXCEPT DISTINCT (SELECT t.x FROM t LIMIT 0)",
+    "SELECT t.x FROM t EXCEPT DISTINCT (SELECT t.x FROM t ORDER BY t.x LIMIT 0 OFFSET 1)",
+    "SELECT t.x FROM t EXCEPT DISTINCT (SELECT t.x FROM t GROUP BY t.x HAVING FALSE)",
+    "SELECT t.x FROM t EXCEPT DISTINCT (SELECT COUNT(*) FROM t HAVING FALSE)",
+    "SELECT t.x FROM t EXCEPT DISTINCT (SELECT t.x FROM t WHERE t.x IN (SELECT u.k FROM u WHERE FALSE))",
+    "SELECT t.x FROM t EXCEPT DISTINCT (SELECT t.x FROM t WHERE EXISTS (SELECT 1 FROM u WHERE FALSE))",
+    "SELECT SUM(t.x) AS s FROM t EXCEPT DISTINCT (SELECT SUM(t.x) FROM t WHERE FALSE)",
+    f"SELECT SUM(t.x) AS s FROM t {DSET} (SELECT SUM(t.x) FROM t WHERE {PRED})",
+    f"SELECT COUNT(*) AS c FROM t {DSET} (SELECT COUNT(*) FROM t WHERE {PRED})",
+    f"SELECT COUNT(*) AS c, 1 AS o FROM t WHERE {PRED} {{EXCEPT DISTINCT|INTERSECT DISTINCT|UNION ALL}} SELECT COUNT(*), 1 FROM t WHERE {PRED2}",
+    # EXCEPT / INTERSECT of the same query, whatever the aliases
+    "SELECT t.x, t.y FROM t EXCEPT DISTINCT SELECT t2.x, t2.y FROM t AS t2",
+    "SELECT t.x AS a, t.y FROM t {EXCEPT DISTINCT|EXCEPT ALL} SELECT t2.x, t2.y AS b FROM t AS t2",
+    "SELECT t.x, 1 AS c FROM t EXCEPT DISTINCT SELECT t2.x, CAST(1 AS INT64) AS c FROM t AS t2",
+    f"SELECT t.x FROM t WHERE {PRED} EXCEPT DISTINCT SELECT t2.x FROM t AS t2 WHERE {PRED.replace('t.', 't2.')}",
+    f"SELECT t.x FROM t WHERE {PRED} EXCEPT DISTINCT SELECT t.x FROM t WHERE {PRED}",
+    f"SELECT t.x FROM t WHERE {PRED} EXCEPT DISTINCT SELECT t.x FROM t WHERE ({PRED})",
+    "SELECT t.x FROM t WHERE RAND() < 0.5 EXCEPT DISTINCT SELECT t.x FROM t WHERE RAND() < 0.5",
+    "SELECT t.x FROM t WHERE t.y > 0 {INTERSECT DISTINCT|EXCEPT DISTINCT|UNION DISTINCT} SELECT t.x FROM t WHERE t.y > 0 ORDER BY t.x LIMIT 1",
+    "SELECT t.x FROM t WHERE t.y > 0 {INTERSECT DISTINCT|EXCEPT DISTINCT|UNION DISTINCT} (SELECT t.x FROM t ORDER BY t.x LIMIT 2)",
+    # same-source merges and EXISTS forms
+    f"SELECT t.x FROM t WHERE {PRED} UNION DISTINCT SELECT t.x FROM t WHERE {PRED2} UNION DISTINCT SELECT t.x FROM t WHERE t.y = 2",
+    f"SELECT t.x, t.y FROM t WHERE {PRED} {{INTERSECT DISTINCT|EXCEPT DISTINCT}} SELECT t.x, t.y FROM t WHERE t.x > 0",
+    f"SELECT t.x FROM t WHERE {PRED} {{INTERSECT DISTINCT|EXCEPT DISTINCT}} SELECT t.x FROM t WHERE t.y > 0",
+    f"SELECT t.x FROM t WHERE t.y > 0 {{INTERSECT DISTINCT|EXCEPT DISTINCT}} SELECT t.x FROM t WHERE {PRED}",
+    "SELECT t.x + 1 AS z FROM t WHERE t.x > 0 {INTERSECT DISTINCT|EXCEPT DISTINCT|UNION DISTINCT} SELECT t.x + 1 FROM t WHERE t.y > 0",
+    f"SELECT t.x, t.x FROM t WHERE {PRED} {{INTERSECT DISTINCT|EXCEPT DISTINCT|UNION DISTINCT}} SELECT t.x, t.y FROM t WHERE t.y > 0",
+    f"SELECT DISTINCT ON (t.y) t.x FROM t ORDER BY t.y, t.x {DSET} SELECT t.x FROM t",
+    f"SELECT t.x FROM t WHERE t.y > 0 {DSET} SELECT t.x FROM t TABLESAMPLE SYSTEM (50 PERCENT)",
+    "SELECT d.x FROM (SELECT t.x FROM t WHERE t.y > 0) AS d WHERE d.x > 0 {INTERSECT DISTINCT|EXCEPT DISTINCT|UNION DISTINCT} SELECT t.x FROM t WHERE t.y < 2",
+    f"SELECT t.id FROM t WHERE {{EXISTS|NOT EXISTS}} (SELECT 1 FROM p WHERE p.tid = t.id) {DSET} SELECT p.tid FROM p",
+    # GROUP BY operands of a DISTINCT set operation
+    f"SELECT t.x, t.y FROM t GROUP BY t.x, t.y {ANYSET} SELECT u.w, u.k FROM u",
+    f"SELECT t.x, t.y FROM t GROUP BY t.x, t.y {DSET} SELECT t.x, t.y FROM t WHERE {PRED}",
+    f"SELECT t.x, COUNT(*) AS c FROM t GROUP BY t.x {DSET} SELECT u.w, 1 FROM u",
+    f"SELECT t.x FROM t GROUP BY t.x HAVING COUNT(*) > 1 {DSET} SELECT u.w FROM u",
+    f"SELECT t.x FROM t GROUP BY t.x, t.y {DSET} SELECT u.w FROM u",
+    "SELECT t.x AS a, t.y AS b FROM t GROUP BY a, b {UNION DISTINCT|INTERSECT DISTINCT} SELECT u.w, u.k FROM u",
+    f"SELECT t.x FROM t GROUP BY t.x {DSET} SELECT u.w FROM u GROUP BY u.w",
+    # SELECT over a derived set operation
+    f"SELECT d.x AS x, d.y AS y FROM {D}",
+    f"SELECT DISTINCT d.x AS x, d.y AS y FROM {D}",
+    f"SELECT d.y AS y, d.x AS x FROM {D}",
+    f"SELECT d.* FROM {D}",
+    f"SELECT DISTINCT d.* FROM {D}",
+    f"SELECT d.x AS x, d.y AS y FROM {D} WHERE d.y {{> 0|IS NULL}}",
+    f"SELECT d.x AS a, d.y AS b FROM {D}",
+    f"SELECT d.x, d.y FROM {D} WHERE d.x > 0 {TAIL}",
+    f"SELECT d.x, d.y FROM {D} WHERE {{d.x = d.y|d.x + d.y > 2|d.x IS NULL OR d.y IS NULL}}",
+    f"SELECT d.x FROM {D} WHERE d.x > (SELECT MIN(u.k) FROM u)",
+    f"SELECT d.x FROM (SELECT t.x, t.y FROM t UNION ALL SELECT u.k, u.w FROM u) AS d WHERE d.y {{> 0|IS NULL|= d.x}}",
+    f"SELECT d.x FROM (SELECT DISTINCT t.x, t.y FROM t {ANYSET} SELECT u.w, u.k FROM u) AS d WHERE {{d.x > 0|d.y IS NULL}}",
+    f"SELECT d.x FROM (SELECT t.x, t.y FROM t JOIN u ON u.k = t.y {ANYSET} SELECT u.w, u.k FROM u) AS d WHERE d.x > 0",
+    f"SELECT d.x FROM (SELECT t.x, t.y FROM t {ANYSET} SELECT u.w, u.k FROM u WHERE u.k {{IN|NOT IN}} (SELECT p.tid FROM p)) AS d WHERE d.x > 0",
+    f"SELECT d.x FROM (SELECT t.x AS x, t.y AS y FROM t {ANYSET} SELECT u.k AS y, u.w AS x FROM u) AS d WHERE d.x > 0",
+    f"SELECT d.x FROM {D1} ORDER BY d.x {{|DESC}} LIMIT {{1|2}}",
+    f"SELECT d.x FROM {D1} ORDER BY d.x",
+    f"SELECT d.x FROM {D1} LEFT JOIN p ON p.tid = d.x",
+    f"SELECT d.x FROM t LEFT JOIN {D1} ON d.x = t.y",
+    f"SELECT DISTINCT d.x FROM t LEFT JOIN {D1} ON d.x = t.y WHERE d.x {{> 0|IS NULL}}",
+    f"SELECT d.x FROM {D1} QUALIFY ROW_NUMBER() OVER (ORDER BY d.x) = 1",
+    "SELECT d.x, d.y FROM (SELECT t.x, t.y FROM t INTERSECT DISTINCT SELECT t.y, t.x FROM t) AS d WHERE d.x = 1",
+    "SELECT d.x FROM (SELECT t.x, t.y FROM t EXCEPT DISTINCT SELECT t.y, t.x FROM t) AS d WHERE d.x = 1",
+    # set operations under aggregates
+    f"SELECT COUNT(*) AS c FROM {D1}",
+    f"SELECT COUNT(d.x) AS c, SUM(d.x) AS s FROM {D1}",
+    f"SELECT COUNT(DISTINCT d.x) AS c, MAX(d.x) AS s FROM {D1}",
+    f"SELECT d.x, COUNT(*) AS c FROM {D1} GROUP BY d.x",
+    f"SELECT MAX(d.x) AS m FROM (SELECT t.x FROM t GROUP BY t.x {{HAVING COUNT(*) = 1|HAVING COUNT(t.x) = 1|}} {ANYSET} SELECT u.w FROM u GROUP BY u.w) AS d",
+    f"SELECT SUM(DISTINCT d.x) FROM {D1}",
+    "SELECT SUM(d.x) FROM (SELECT t.x FROM t GROUP BY t.x) AS d",
+    "SELECT COUNT(d.x) FROM (SELECT t.x FROM t GROUP BY t.x) AS d",
+    f"SELECT AVG(d.x) FROM (SELECT DISTINCT t.x FROM t WHERE {PRED}) AS d",
+    "SELECT MAX(t.x) AS m FROM t WHERE t.y > 0",
+    # counted intersection
+    "SELECT d.x FROM (SELECT t.x FROM t GROUP BY t.x UNION ALL SELECT u.w FROM u GROUP BY u.w) AS d GROUP BY d.x HAVING COUNT(*) = {2|1|3}",
+    "SELECT d.x FROM (SELECT t.x FROM t GROUP BY t.x UNION ALL SELECT u.w FROM u GROUP BY u.w UNION ALL SELECT u.k FROM u GROUP BY u.k) AS d GROUP BY d.x HAVING COUNT(*) = {3|2}",
+    "SELECT d.x AS z FROM (SELECT t.x FROM t GROUP BY t.x UNION {ALL|DISTINCT} SELECT u.w FROM u GROUP BY u.w) AS d GROUP BY d.x HAVING COUNT(*) = 2",
+    f"SELECT d.x FROM (SELECT t.x FROM t WHERE {PRED} GROUP BY t.x UNION ALL SELECT u.w FROM u WHERE u.w > 0 GROUP BY u.w) AS d GROUP BY d.x HAVING COUNT(*) = 2",
+    "SELECT d.x FROM (SELECT t.x, t.y FROM t GROUP BY t.x, t.y UNION ALL SELECT u.w, u.k FROM u GROUP BY u.k, u.w) AS d GROUP BY d.x, d.y HAVING COUNT(*) = 2",
+    "SELECT d.x FROM (SELECT t.x, t.y FROM t GROUP BY t.x, t.y UNION ALL SELECT u.w, u.k FROM u GROUP BY u.k, u.w) AS d GROUP BY d.x HAVING COUNT(*) = 2",
+    # keyed joins over a derived DISTINCT
+    "SELECT d.x, u.v FROM (SELECT DISTINCT t.id AS x FROM t) AS d JOIN u ON u.k = d.x",
+    "SELECT d.x, p.n FROM (SELECT DISTINCT t.id AS x FROM t) AS d JOIN p ON p.id = d.x",
+    f"SELECT d.x, p.id FROM (SELECT DISTINCT t.id AS x, t.y AS y FROM t WHERE {PRED}) AS d JOIN p ON p.tid = d.y",
+    f"SELECT d.x, p.id FROM (SELECT DISTINCT t.id AS x, t.y AS y FROM t WHERE {PRED}) AS d JOIN p ON p.id = d.y",
+    "SELECT d.x, p.id FROM (SELECT DISTINCT t.id AS x FROM t) AS d JOIN p ON p.id = d.x AND p.tid {= d.x|IS NOT NULL}",
+    # splits over a derived union, IN / EXISTS over unions, CASE keys
+    "SELECT DISTINCT d.x, u.k FROM (SELECT t.y AS x FROM t UNION ALL SELECT u.w FROM u) AS d JOIN u ON u.k = d.x",
+    "SELECT DISTINCT d.x, u.k FROM (SELECT t.y AS x FROM t UNION DISTINCT SELECT u.w FROM u) AS d JOIN u ON u.k = d.x WHERE {u.w > 0|d.x IS NOT NULL}",
+    "SELECT DISTINCT d.x FROM (SELECT t.y AS x FROM t UNION ALL SELECT u.w FROM u) AS d JOIN (SELECT t.y AS z FROM t UNION ALL SELECT u.k FROM u) AS e ON e.z = d.x",
+    "SELECT DISTINCT d.x FROM (SELECT t.y AS x FROM t UNION ALL SELECT u.w FROM u) AS d WHERE d.x {> 0|IS NULL} {|ORDER BY d.x}",
+    "SELECT DISTINCT d.x FROM (SELECT t.y AS x FROM t UNION ALL SELECT u.w FROM u) AS d WHERE d.x IN (SELECT {u.k|u.w} FROM u UNION ALL SELECT p.tid FROM p)",
+    "SELECT t.x FROM t WHERE t.y {IN|NOT IN} (SELECT d.x FROM (SELECT u.k AS x FROM u UNION ALL SELECT u.w FROM u) AS d WHERE d.x {> 0|IS NOT NULL})",
+    "SELECT t.x FROM t WHERE {EXISTS|NOT EXISTS} (SELECT 1 FROM (SELECT u.k AS x FROM u UNION ALL SELECT u.w FROM u) AS d WHERE d.x = t.y)",
+    f"SELECT t.x FROM t WHERE t.y IN (SELECT {CASE_KEY} FROM u)",
+    "SELECT t.x FROM t WHERE t.y IN (SELECT CASE WHEN u.k = 1 THEN u.w WHEN u.w = 1 THEN u.k ELSE 0 END FROM u)",
+    f"SELECT t.x FROM t WHERE t.y NOT IN (SELECT {CASE_KEY} FROM u)",
+    "SELECT CASE WHEN t.y IN (SELECT u.k FROM u UNION ALL SELECT u.w FROM u) THEN 1 ELSE 0 END AS f FROM t",
+    "SELECT t.x FROM t WHERE (t.y IN (SELECT u.k FROM u UNION ALL SELECT u.w FROM u)) IS NOT TRUE",
+    f"SELECT t.x FROM t WHERE t.y IN (SELECT u.k FROM u {DSET} SELECT u.w FROM u)",
+    f"SELECT t.x FROM t WHERE t.y IN (SELECT u.k FROM u UNION ALL SELECT u.w FROM u UNION ALL SELECT p.tid FROM p) {TAIL}",
+    f"SELECT DISTINCT t.x FROM t JOIN u ON {{{CASE_KEY} = t.y|CASE WHEN u.k = 1 THEN u.w WHEN u.k = 1 THEN u.k END = t.y}}",
+    f"SELECT DISTINCT t.x FROM t JOIN (SELECT {CASE_KEY} AS c FROM u) AS d ON d.c = t.y",
+    "SELECT DISTINCT t.x FROM t JOIN (SELECT CASE WHEN u.k = 1 THEN u.w WHEN u.k = 1 AND u.w = 2 THEN 7 WHEN u.w = 2 THEN u.w END AS c, u.v FROM u) AS d ON d.c = t.y",
+    "SELECT DISTINCT t.x FROM t JOIN (SELECT CASE WHEN u.k = 1 THEN u.k WHEN u.w = 1 THEN 1 END AS c FROM u) AS d ON d.c = t.y",
+    f"SELECT t.x FROM t JOIN (SELECT {CASE_KEY} AS c FROM u) AS d ON d.c = t.y",
+    f"SELECT DISTINCT t.x FROM t JOIN (SELECT {CASE_KEY} AS c FROM u) AS d ON d.c = t.y OR t.x = 1",
+    f"SELECT DISTINCT t.x FROM t LEFT JOIN (SELECT {CASE_KEY} AS c FROM u) AS d ON d.c = t.y",
+    # column matching
+    "SELECT t.x FROM t UNION ALL BY NAME SELECT t.y AS x FROM t",
+    f"SELECT t.x, t.y FROM t {{UNION ALL|UNION DISTINCT|INTERSECT DISTINCT}} BY NAME SELECT t.y, t.x FROM t WHERE {PRED}",
+    "SELECT t.x, t.y FROM t UNION ALL BY NAME SELECT u.k AS y, u.w AS x FROM u",
+    "SELECT t.x, t.s FROM t UNION ALL BY NAME SELECT u.v AS s, u.w AS x FROM u",
+    "SELECT t.x FROM t {FULL|LEFT|INNER} {UNION ALL|UNION DISTINCT} CORRESPONDING SELECT t.y AS x, t.x AS z FROM t",
+    f"SELECT t.x, t.y FROM t {ANYSET} CORRESPONDING BY (x) SELECT u.w AS x, u.k AS q FROM u",
+    # different column types in the branches
+    "SELECT t.x FROM t UNION ALL SELECT t.f FROM t",
+    f"SELECT d.x FROM (SELECT t.x FROM t {ANYSET} SELECT t.f FROM t) AS d WHERE d.x {{> 0|= 1}}",
+    f"SELECT t.x FROM t {ANYSET} SELECT CAST(u.w AS FLOAT64) FROM u",
+    "SELECT d.x FROM (SELECT t.x FROM t UNION ALL SELECT CAST(u.w AS FLOAT64) FROM u) AS d WHERE d.x = 1",
+    f"SELECT d.x FROM (SELECT t.s AS x FROM t {ANYSET} SELECT u.v FROM u) AS d WHERE d.x {{= 'a'|IS NULL|> 'a'}}",
+    f"SELECT d.x FROM (SELECT t.x FROM t WHERE {PRED} {ANYSET} SELECT CAST(u.v AS INT64) FROM u) AS d WHERE d.x {{> 0|IS NULL}}",
+    "SELECT t.x FROM t WHERE ({t.x|t.x, t.y}) {IN|NOT IN} (SELECT u.w FROM u)",
+    # tails on the whole operation
+    f"(SELECT t.x FROM t) {ANYSET} (SELECT t.y FROM t) {{|ORDER BY 1 LIMIT 2|LIMIT 1 OFFSET 1}}",
+    f"SELECT x FROM ((SELECT t.x FROM t {TAIL}) {ANYSET} (SELECT u.w FROM u)) AS q",
+    f"SELECT x FROM ((SELECT t.x FROM t) {ANYSET} (SELECT u.w FROM u ORDER BY u.w LIMIT 1)) AS q",
+    f"SELECT x FROM ((SELECT t.x FROM t) {ANYSET} (SELECT u.w FROM u) ORDER BY 1 {{|DESC}} LIMIT {{1|2}}) AS q",
+    f"SELECT x FROM ((SELECT t.x FROM t) {ANYSET} (SELECT u.w FROM u) ORDER BY 1 LIMIT 2) AS q WHERE q.x {{> 0|IS NULL}}",
+    f"SELECT x FROM (((SELECT t.x FROM t) {ANYSET} (SELECT u.w FROM u)) ORDER BY 1 LIMIT 2) AS q {ANYSET} SELECT u.k FROM u",
+    "SELECT DISTINCT x FROM (((SELECT t.x FROM t) UNION ALL (SELECT u.w FROM u)) ORDER BY 1 LIMIT 2) AS q",
+    "SELECT t.id FROM t WHERE t.x IN (SELECT u.w FROM u UNION ALL SELECT u.k FROM u ORDER BY 1 LIMIT {0|1|2})",
+    "SELECT t.id FROM t WHERE {EXISTS|NOT EXISTS} (SELECT u.w FROM u UNION ALL SELECT u.k FROM u ORDER BY 1 LIMIT {0|1} OFFSET {0|1})",
+    # CTEs
+    f"WITH c AS (SELECT t.x FROM t {ANYSET} SELECT u.w FROM u) SELECT c.x FROM c WHERE c.x {{> 0|IS NULL}}",
+    f"WITH c AS (SELECT t.x FROM t), e AS (SELECT u.w AS x FROM u) SELECT c.x FROM c {ANYSET} SELECT e.x FROM e",
+    f"WITH t AS (SELECT u.w AS x, u.k AS y FROM u) SELECT t.x FROM t {ANYSET} SELECT t.y FROM t",
+    f"SELECT d.x FROM (SELECT t.x FROM t WHERE {PRED} UNION ALL SELECT t.x FROM t WHERE NOT ({PRED})) AS d",
+    # window operands
+    f"SELECT t.x, ROW_NUMBER() OVER (ORDER BY t.id) AS r FROM t {DSET} SELECT u.w, u.k FROM u",
+]

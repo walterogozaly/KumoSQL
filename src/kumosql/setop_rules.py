@@ -395,7 +395,8 @@ _sf_BLOCKERS = ("group", "having", "order", "limit", "offset", "qualify", "windo
 
 
 def _sf_unwrap(node: exp.Expression) -> exp.Expression:
-    while isinstance(node, (exp.Subquery, exp.Paren)) and not node.alias:
+    # ``((SELECT ..) ORDER BY k LIMIT 1)`` keeps its tail on the parentheses; stepping through them would drop the cut.
+    while isinstance(node, (exp.Subquery, exp.Paren)) and not node.alias and not any(node.args.get(k) for k in ("order", "limit", "offset", "pivots", "sample")):
         node = node.this
     return node
 

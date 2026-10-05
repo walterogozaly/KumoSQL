@@ -42,6 +42,8 @@ def _branches(node: exp.Expression) -> list[exp.Select] | None:
     if isinstance(node, exp.Paren):
         return _branches(node.this)
     if isinstance(node, exp.Subquery) and not node.alias:
+        if any(node.args.get(k) for k in _ROW_CLAUSES[:3] + ("pivots", "sample")):
+            return None  # ``((SELECT ..) ORDER BY k LIMIT 1)``: a filter pushed inside would run before the cut
         return _branches(node.this)
     if isinstance(node, _SET_OPERATIONS):
         if any(node.args.get(k) for k in _ROW_CLAUSES + ("by_name", "side", "kind", "on")):

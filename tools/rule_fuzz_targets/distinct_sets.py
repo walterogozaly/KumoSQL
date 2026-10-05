@@ -42,5 +42,16 @@ TEMPLATES = [
 ]
 
 
+from ._setop_templates import SET_TEMPLATES  # noqa: E402  (the set-operation shapes of issue #518)
+
+
 def cases(seed: int, count: int) -> list[dict]:
-    return expand(TEMPLATES, seed, count, "distinct_sets")
+    """A third of ``count`` from the DISTINCT / dedup-join templates above, the rest from the set-operation ones."""
+
+    old = expand(TEMPLATES, seed, count // 3, "distinct_sets")
+    new = expand(SET_TEMPLATES, seed + 1, count - len(old), "distinct_sets_ops")
+    for case in new:
+        if case["sql"].startswith("@duckdb "):  # BigQuery has no INTERSECT ALL / EXCEPT ALL
+            case["sql"] = case["sql"][len("@duckdb ") :]
+            case["dialect"] = "duckdb"
+    return old + new
