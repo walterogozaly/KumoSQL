@@ -133,3 +133,10 @@ When a proof tries several fallback rules, it keeps the earlier normalization re
 If a query returns two columns and a view returns twenty, returning the entire view cannot answer that query. KumoSQL skips that impossible candidate and still proves any proposed two-column projection. Stars whose width is not settled keep the existing checks. These changes reduce work; they do not relax proof acceptance.
 
 Python can clean up old objects on a different thread from the one using the solver. KumoSQL now keeps that automatic cleanup inside the solver lock as well, and restores the caller's cleanup setting afterwards. This addresses concurrent proof hangs without changing proof acceptance or increasing test timeouts.
+## Is this value in the array?
+
+`x IN UNNEST(arr)` asks whether a value is one of the items of an array. KumoSQL's prover now treats it the way it treats a membership test against a subquery, including BigQuery's three-valued answer (a NULL value against a non-empty array is "unknown", not "no"). A list written inline (`x IN UNNEST([1, 2])`) is the same as `x IN (1, 2)`.
+
+Example: `WHERE NOT 'sale' IN UNNEST(tags)` and `WHERE NOT EXISTS (SELECT 1 FROM UNNEST(tags) AS t WHERE t = 'sale')` are proved equal when `tags` is an array column of a stored table, because a stored array cannot contain NULL. The proof lists that fact as an assumption. If the value on the left can be NULL, or the array is built by an expression that might contain a NULL, the two are not the same and the prover says so (or says unknown). It also never treats "is in the array" as "the array is not empty".
+
+Limits: the evidence is the unit tests (each trap next to the pairs that are proved, and a DuckDB run of both sides on small data) and a few hand-written pairs. Struct arrays and values read out of structs are not covered here. Details and the exact conditions: [Full reference](../docs/provers.md#membership-over-unnest).
