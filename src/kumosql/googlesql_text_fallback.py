@@ -55,15 +55,15 @@ def _tokens(sql: str, dialect: str) -> list[_Tok] | None:
 
 
 def _pairs(tokens: list[_Tok]) -> dict[int, int] | None:
-    """Index of each ``(`` to the index of its ``)``; ``None`` when the parentheses do not balance."""
+    """Index of each ``(`` or ``[`` to the index of its closer; ``None`` when they do not balance."""
 
     stack: list[int] = []
     pairs: dict[int, int] = {}
     for i, t in enumerate(tokens):
-        if t.type == "L_PAREN":
+        if t.type in ("L_PAREN", "L_BRACKET"):
             stack.append(i)
-        elif t.type == "R_PAREN":
-            if not stack:
+        elif t.type in ("R_PAREN", "R_BRACKET"):
+            if not stack or tokens[stack[-1]].type != ("L_PAREN" if t.type == "R_PAREN" else "L_BRACKET"):
                 return None
             pairs[stack.pop()] = i
     return None if stack else pairs
@@ -151,7 +151,7 @@ def _aggregate_clauses(sql: str, dialect: str) -> str | None:
         return None
     spans: list[tuple[int, int, str]] = []
     for open_, close in pairs.items():
-        if open_ == 0:
+        if open_ == 0 or tokens[open_].type != "L_PAREN":
             continue
         before = tokens[open_ - 1]
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", before.text) or before.upper in _NOT_A_FUNCTION \
@@ -336,6 +336,7 @@ def _recursion_depth(sql: str, dialect: str) -> str | None:
 
 
 _MR_CLAUSES = frozenset({"PARTITION", "ORDER", "MEASURES", "PATTERN", "DEFINE", "AFTER", "ONE", "OPTIONS", "SUBSET", "ALL"})
+_MR_FOLLOWER = {"ONE": "ROW", "ALL": "ROWS", "AFTER": "MATCH"}  # keywords that start a clause only before these
 _MR_PATTERN_FUNCTIONS = frozenset({"FIRST", "LAST", "PREV", "NEXT", "MATCH_NUMBER", "CLASSIFIER", "MATCH_ROW_NUMBER"})
 
 
@@ -355,8 +356,8 @@ def _match_recognize(sql: str, dialect: str) -> str | None:
     """``rel MATCH_RECOGNIZE(PARTITION BY p MEASURES m AS name ...)``: one row per match, whose columns are the
     partition columns and then the measures. A measure that names no pattern variable is an ordinary aggregate over
     the relation's columns, so the clause becomes ``(SELECT p, m AS name FROM rel)``. A measure that names a pattern
-    variable (``A.x``, ``FIRST(x)``), a clause this does not know, or a partition key that is not a plain column
-    leaves the query unknown."""
+    variable other than as a column qualifier (``FIRST(x)``, ``CLASSIFIER()``) is a column of unknown type; a clause this
+    does not know, or a partition key that is not a plain column, leaves the query unknown."""
 
     tokens = _tokens(sql, dialect)
     pairs = _pairs(tokens) if tokens is not None else None
@@ -373,7 +374,8 @@ def _match_recognize(sql: str, dialect: str) -> str | None:
         if any(tokens[i].upper == "MATCH_RECOGNIZE" for i in range(body_open, body_close)):
             continue  # the innermost one first; this one is looked at again afterwards
         starts = [i for i in _direct(tokens, pairs, body_open, body_close)
-                  if tokens[i].upper.split(" ")[0] in _MR_CLAUSES]
+                  if tokens[i].upper.split(" ")[0] in _MR_CLAUSES and tokens[i - 1].upper != "AS"
+                  and _MR_FOLLOWER.get(tokens[i].upper, tokens[i + 1].upper) == tokens[i + 1].upper]
         names = [tokens[i].upper.split(" ")[0] for i in starts]
         if any(n in ("SUBSET", "ALL") for n in names) or "MEASURES" not in names or "DEFINE" not in names \
                 or "PATTERN" not in names or len(set(names)) != len(names):
@@ -392,18 +394,20 @@ def _match_recognize(sql: str, dialect: str) -> str | None:
         for lo, hi in _split_commas(tokens, pairs, begin_of["MEASURES"] + 1, end_of["MEASURES"]):
             if hi - lo < 3 or tokens[hi - 2].upper != "AS" or not re.fullmatch(r"[A-Za-z_]\w*", tokens[hi - 1].text):
                 return None
-            if any(tokens[i].upper in _MR_PATTERN_FUNCTIONS or tokens[i].upper == "SELECT" for i in range(lo, hi - 2)):
-                return None
+            name = tokens[hi - 1].text
             base = tokens[lo].start
             cuts = []
+            understood = not any(tokens[i].upper in _MR_PATTERN_FUNCTIONS or tokens[i].upper == "SELECT" for i in range(lo, hi - 2))
             for i in range(lo, hi - 2):
-                if tokens[i].upper in variables:
+                if understood and tokens[i].upper in variables:
                     # only the qualifier of a column (A.x) is understood: A.x has the type of the relation's column x
                     if i + 1 >= hi - 2 or tokens[i + 1].type != "DOT" or (i > lo and tokens[i - 1].type == "DOT"):
-                        return None
+                        understood = False
                     cuts.append((tokens[i].start - base, tokens[i + 1].end - base, ""))
-            expression = _cut(sql[base:tokens[hi - 2].start], cuts).strip()
-            measures.append(f"{expression} AS {tokens[hi - 1].text}")
+            if understood:
+                measures.append(f"{_cut(sql[base:tokens[hi - 2].start], cuts).strip()} AS {name}")
+            else:  # the column is there, its type is not known
+                measures.append(f"{UNKNOWN_FUNCTION}(NULL) AS {name}")
         keys = []
         if "PARTITION" in names:
             lo = begin_of["PARTITION"] + 1
@@ -435,10 +439,63 @@ def _match_recognize(sql: str, dialect: str) -> str | None:
     return None
 
 
+ANONYMOUS_PREFIX = "__kumo_anon"
+_AFTER_UNNEST_OK = frozenset({"WITH", "ON", "USING", "WHERE", "GROUP", "ORDER", "LIMIT", "HAVING", "QUALIFY", "UNION",
+                              "INTERSECT", "EXCEPT", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "CROSS", "WINDOW"})
+
+
+def _multiway_unnest(sql: str, dialect: str) -> str | None:
+    """``UNNEST(a AS x, b AS y, mode => "PAD") WITH OFFSET``: one column per array, each of its array's element type,
+    then the offset. Only the types matter, so it becomes an ``UNNEST`` of the one array of STRUCTs whose fields are
+    those columns, built from a cross product (``UNNEST(ARRAY(SELECT AS STRUCT e1 AS x, e2 AS y FROM UNNEST(a) AS e1,
+    UNNEST(b) AS e2))``): the same columns, in the same order, with the arrays' own scope. An array without an alias
+    that could be named by its last identifier (``T.arr``) leaves the query alone, as does an alias after the call."""
+
+    tokens = _tokens(sql, dialect)
+    pairs = _pairs(tokens) if tokens is not None else None
+    if tokens is None or pairs is None:
+        return None
+    spans: list[tuple[int, int, str]] = []
+    counter = 0
+    for u, t in enumerate(tokens[:-1]):
+        if t.upper != "UNNEST" or tokens[u + 1].type != "L_PAREN" or (u > 0 and tokens[u - 1].type == "DOT"):
+            continue
+        open_, close = u + 1, pairs[u + 1]
+        items = _split_commas(tokens, pairs, open_ + 1, close)
+        named_mode = [it for it in items if it[1] - it[0] >= 3 and tokens[it[0]].upper == "MODE" and tokens[it[0] + 1].text == "=>"]
+        arrays = [it for it in items if it not in named_mode]
+        aliased = [any(tokens[i].upper == "AS" for i in _direct(tokens, pairs, it[0] - 1, it[1])) for it in arrays]
+        if len(arrays) < 2 and not any(aliased) and not named_mode:
+            continue  # an ordinary UNNEST
+        if len(named_mode) > 1 or (named_mode and items[-1] != named_mode[0]) or not arrays or any(it[0] >= it[1] for it in items):
+            return None
+        after = tokens[close + 1] if close + 1 < len(tokens) else None
+        if after is not None and (after.upper == "AS" or after.type in ("VAR", "IDENTIFIER") and after.upper not in _AFTER_UNNEST_OK):
+            return None
+        parts, sources = [], []
+        for k, (lo, hi) in enumerate(arrays):
+            counter += 1
+            last_as = [i for i in _direct(tokens, pairs, lo - 1, hi) if tokens[i].upper == "AS"]
+            if last_as:
+                a = last_as[-1]
+                if a + 2 != hi or not re.fullmatch(r"[A-Za-z_]\w*", tokens[a + 1].text):
+                    return None
+                array, name = sql[tokens[lo].start:tokens[a].start].strip(), tokens[a + 1].text
+            else:
+                if tokens[hi - 1].type in ("VAR", "IDENTIFIER", "QUOTED_IDENTIFIER"):
+                    return None
+                array, name = sql[tokens[lo].start:tokens[hi - 1].end], f"{ANONYMOUS_PREFIX}{counter}"
+            parts.append(f"__kumo_e{counter} AS {name}")
+            sources.append(f"UNNEST({array}) AS __kumo_e{counter}")
+        spans.append((t.start, tokens[close].end, f"UNNEST(ARRAY(SELECT AS STRUCT {', '.join(parts)} FROM {', '.join(sources)}))"))
+    return _cut(sql, spans) if spans else None
+
+
 _REWRITES = (
     ("privacy clause", _privacy_clause),
     ("aggregate filter or group", _aggregate_clauses),
     ("recursion depth column", _recursion_depth),
+    ("multiway unnest", _multiway_unnest),
     ("match recognize", _match_recognize),
     ("quantified comparison over an array", _quantified_unnest),
     ("unknown cast type", _unknown_casts),
