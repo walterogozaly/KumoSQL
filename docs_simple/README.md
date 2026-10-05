@@ -51,6 +51,7 @@ This folder is the plain-language companion to [the full documentation](../docs/
 | Understand the test suites and their scores | [Evals](evals/README.md) |
 | Record a benchmark result | [Benchmark results format](benchmarks/README.md) |
 | Understand local BigQuery-to-DuckDB execution | [BigQuery on DuckDB](bigquery-on-duckdb.md) |
+| Understand the Python GoogleSQL evaluator | [GoogleSQL evaluator](gsql-eval.md) |
 | Find proposed public test material | [Public SQL sources](public-sql-evaluation-sources.md) |
 | Find more research leads | [Additional public SQL sources](additional-public-sql-sources.md) |
 

@@ -65,6 +65,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 | [BigQuery behaviour](bigquery-behavior-eval.md) | GoogleSQL compliance queries and edge cases; BigQuery Utils UDF tests run through the BigQuery to DuckDB translation | `googlesql-behavior`, `bigquery-edge-cases`, `bigquery-utils-udfs` |
 | [GoogleSQL type inference](googlesql-types.md) | The type checker's output column types against the types the GoogleSQL compliance tests print for each query; sqlglot's annotator as the baseline; a held-out split | `googlesql-types` |
 | [GoogleSQL compliance expected results](googlesql-expected-results.md) | The compliance tests' expected rows as an oracle for the BigQuery-to-DuckDB translation | `googlesql-expected-results` |
+| [GoogleSQL conformance](googlesql-conformance.md) | The pure-Python GoogleSQL evaluator on the compliance tests' expected results: exact, unsupported or mismatch | `googlesql-conformance` |
 | [SQLFluff rule fixtures](sqlfluff-fixtures.md) | Lint fail-to-fix pairs: semantic fixes proved, layout fixes checked, KumoSQL's formatter against them; KumoSQL's rewrite rules on the queries sqlfluff refuses to fix | `sqlfluff-semantic-fixes`, `sqlfluff-layout-fixes`, `sqlfluff-kumosql-formatter`, `sqlfluff-refusals` |
 
 ## Lineage, impact and Dataform
