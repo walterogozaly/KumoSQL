@@ -1608,7 +1608,18 @@ class _Analysis:
                 except Exception:
                     pruned = qualified
                 used: set[ColumnRef] = set()
-                masked_used = _masked_reads(
+                # A SELECT-list SQLX interpolation can generate arbitrary SQL. Its JavaScript
+                # arguments are not a complete description of the columns the expansion reads,
+                # so keep every visible parent opaque for dead-column analysis until compilation.
+                sqlx_projection = any(
+                    _TEMPLATE_TOKEN.fullmatch(column.name)
+                    and (select := column.find_ancestor(exp.Select)) is not None
+                    and in_select_list(column, select)
+                    for column in qualified.find_all(exp.Column)
+                )
+                if sqlx_projection:
+                    opaque_readers_of.update(upstream.get(writer, ()))
+                masked_used = set() if sqlx_projection else _masked_reads(
                     pipeline, writer, key, upstream.get(writer, ()), outputs, schema, qualified, template_reads
                 )
                 used.update(masked_used)
@@ -1996,7 +2007,11 @@ def _scan_lineage(
             if _TRANSFORM_RANK.get(kind, 0) > _TRANSFORM_RANK[transform]:
                 transform = kind
             continue
-        if item.name.split(".")[-1].strip('"`') == UNTRACED:
+        if _TEMPLATE_TOKEN.fullmatch(item.name.split(".")[-1].strip('"`')):
+            # A masked SQLX projection is an opaque expression, not a real source column
+            # and not a constant. Keep tracing its other visible leaves below/alongside it.
+            reason = reason or "sqlx_expression"
+        elif item.name.split(".")[-1].strip('"`') == UNTRACED:
             reason = reason or "subquery_predicate"  # a subquery predicate too nested to trace
         elif isinstance(item.source, exp.Table) and isinstance(item.source.this, exp.Func):
             # ``FROM dataset.fn(TABLE t, ...)``: the columns the function returns are not columns of a table named fn.
