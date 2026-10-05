@@ -192,6 +192,8 @@ def check_containment(
         try:
             nn = mr.not_null_columns(constraints)
             b1, b2 = mr._block(tree1, nn), mr._block(tree2, nn)
+            if b1.shape is not None or b2.shape is not None:  # an outer block's empty ``conjuncts`` would read as "no filter"
+                raise mr._Unsupported("outer join")
         except mr._Unsupported as error:
             unsupported = unsupported or str(error)
             return None

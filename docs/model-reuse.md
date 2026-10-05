@@ -41,7 +41,18 @@ What the proposer reads beyond select-project-join and rollups:
 
 The `COALESCE` fix matters for correctness: the prover currently proves `COUNT(*)` equal to a `SUM` of grouped counts even over an empty table, so before it five CUBE/ROLLUP rewrites were accepted and failed the random-database check (reported to the prover's soundness owners).
 
-Not read yet: unique/foreign-key joins, outer-join models, `INTERSECT ALL` and branchwise set-operation compensation, union compensation from base tables, correlated subqueries, injective group keys.
+Outer-join views are read since the matching in `src/kumosql/outer_join_views.py` (after Larson and Zhou, "View matching for outer-join views", VLDB 2005) was wired into `_candidates_for`. A block with a `LEFT`, `RIGHT` or `FULL` join, or a derived table that only renames columns and filters one table (`(SELECT x AS y FROM t WHERE f) AS d`), is read into a `Shape` (leaves, join steps with their `ON` conjuncts, `WHERE` conjuncts) and then into *terms*: each term is a set of tables whose rows are the matched combinations, NULL-extended on every other table (`a LEFT JOIN b ON p` has the terms `{a, b}` and `{a}`). A `WHERE` conjunct that cannot be TRUE on a NULL-extended table removes the terms without that table (the null-rejecting case), and `IS NULL` on a missing table's column is TRUE there. `compensate` then reads each query term from the view's term for the same tables: the view's predicates for the term must be among the query's (the rest is the residual), and every larger term must exist in both with the same extension condition, so the term's net rows are decided the same way. The terms are told apart in the view by a presence test, `col IS [NOT] NULL` on a plain view output that is never NULL where its table is present (declared `NOT NULL`, or rejected by every predicate of the view's terms with that table); when the residual itself is not TRUE on the other terms' rows no test is needed. The selection (`Compensation.predicate`) becomes the replacement's filter, and equalities are learned for reading one column as another only from `Compensation.common` (conjuncts true on every selected view row). Both sides must use the same set of tables for now. The proposer only proposes: the prover proves every rewrite and each is re-run on random databases. `containment` and `view_candidates` do not ask for shapes (`_block(..., shapes=True)` is only passed by the reuse engine) and keep refusing outer joins. On the development split this moves Doris `dim_left`/`dim_right`/`dim_full`/`outer_join` and the outer-union `outer` group (see the table below); the view that preserves the other side, a residual in `ON`, a residual on a column the view lacks, and a missing presence column all stay unrewritten.
+
+| Development split, `tools/mv_reuse_bench.py --source ...` | Before | After | Wrong |
+| --- | --- | --- | --- |
+| `doris` expected rewrites | 55/159 | 158/159 | 0 |
+| `outer-union` expected rewrites | 5/37 | 13/37 | 0 |
+| `outer-union:outer` | 1/14 | 9/14 | 0 |
+| `calcite` expected rewrites | 89/108 | 90/108 | 0 |
+
+Doris `fail` is not a proof that no rewrite exists: 6 cases it marks `fail` are rewritten and verified (a query `a LEFT JOIN b WHERE b.x = c` is an inner join, so a view that keeps the matched rows answers it). Held out is not touched here.
+
+Not read yet: unique/foreign-key joins, outer-join views with extra query tables, `INTERSECT ALL` and branchwise set-operation compensation, union compensation from base tables, correlated subqueries, injective group keys.
 
 ## Query containment
 

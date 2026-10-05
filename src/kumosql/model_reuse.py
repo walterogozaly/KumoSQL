@@ -34,6 +34,7 @@ from sqlglot.optimizer.merge_subqueries import merge_subqueries
 from sqlglot.optimizer.qualify import qualify
 
 from .ast_utils import captured_names, grouping_elements, inside as _inside
+from .outer_join_views import Leaf, Shape, Unreadable, compensate, read_shape
 from .smt_equivalence import SmtStatus, TableConstraints
 
 
@@ -69,6 +70,11 @@ class _Block:
     having: exp.Expression | None
     distinct: bool
     order: list[exp.Expression] = field(default_factory=list)
+    # an outer join or a derived table the block was read through (``conjuncts`` is then empty: the shape holds
+    # every ON, filter and WHERE condition); None for a plain inner-join block
+    shape: Shape | None = None
+    raw_outputs: list[exp.Expression] | None = None  # the select items as written, when ``outputs`` were resolved
+    not_null: Mapping[str, set[str]] = field(default_factory=dict)
 
     @property
     def is_aggregate(self) -> bool:
@@ -242,7 +248,21 @@ def _count_star_for_not_null(block: "_Block", not_null: Mapping[str, set[str]]) 
                 count.set("this", exp.Star())
 
 
-def _block(tree: exp.Expression, not_null: Mapping[str, set[str]] | None = None) -> _Block:
+def _needs_shape(tree: exp.Select) -> bool:
+    """Whether the FROM has an outer join or a derived table (which the plain reading refuses)."""
+
+    source = tree.args.get("from_") or tree.args.get("from")
+    joins = list(tree.args.get("joins") or [])
+    if source is not None and isinstance(source.this, exp.Subquery):
+        return True
+    return any(j.args.get("side") in ("LEFT", "RIGHT", "FULL") or isinstance(j.this, exp.Subquery) for j in joins)
+
+
+def _block(tree: exp.Expression, not_null: Mapping[str, set[str]] | None = None, *, shapes: bool = False) -> _Block:
+    """Read a SELECT. With ``shapes``, outer joins and filter-and-rename derived tables are read too, into a
+    block carrying a :class:`Shape`; the callers that only understand plain conjunct lists (containment,
+    view candidates) leave it off and get the plain refusal."""
+
     if not isinstance(tree, exp.Select):
         raise _Unsupported("not a plain SELECT (set operation, CTE or other statement)")
     if tree.args.get("with") or tree.args.get("limit") or tree.args.get("offset") or tree.args.get("qualify") or tree.args.get("windows"):
@@ -252,33 +272,54 @@ def _block(tree: exp.Expression, not_null: Mapping[str, set[str]] | None = None)
         raise _Unsupported("no FROM")
     tables: list[tuple[str, str]] = []
     conjuncts: list[exp.Expression] = []
-    relations = [source.this] + [j for j in tree.args.get("joins") or []]
-    for relation in relations:
-        join = relation if isinstance(relation, exp.Join) else None
-        table = join.this if join is not None else relation
-        if join is not None:
-            if join.args.get("side") or join.args.get("kind") not in (None, "INNER", "CROSS"):
-                raise _Unsupported("outer or special join")
-            if join.args.get("using"):
-                raise _Unsupported("USING join not resolved")
-            conjuncts += _split_and(join.args.get("on"))
-        if not isinstance(table, exp.Table) or isinstance(table.this, exp.Func):
-            raise _Unsupported("derived table or table function")
-        tables.append((table.alias_or_name, table.name))
-    conjuncts += _split_and(tree.args.get("where"))
+    shape: Shape | None = None
+    raw_outputs: list[exp.Expression] | None = None
+    checked: list[exp.Expression] = []  # conditions to screen for unsupported constructs
+    if shapes and _needs_shape(tree):
+        try:
+            shape, resolved = read_shape(tree)
+        except Unreadable as error:
+            raise _Unsupported(f"outer join or derived table not read: {error}") from error
+        raw_outputs = list(tree.expressions)
+        tables = [(leaf.alias, leaf.table) for leaf in shape.leaves]
+        checked = list(shape.where)
+        if shape.is_outer:
+            checked += [c for leaf in shape.leaves for c in leaf.filters] + [c for _, on in shape.steps for c in on]
+        else:  # inner joins of filtered tables: ordinary conjuncts
+            conjuncts = [c for leaf in shape.leaves for c in leaf.filters] + [c for _, on in shape.steps for c in on] + list(shape.where)
+            checked = list(conjuncts)
+            shape = None
+        tree = resolved
+    else:
+        relations = [source.this] + [j for j in tree.args.get("joins") or []]
+        for relation in relations:
+            join = relation if isinstance(relation, exp.Join) else None
+            table = join.this if join is not None else relation
+            if join is not None:
+                if join.args.get("side") or join.args.get("kind") not in (None, "INNER", "CROSS"):
+                    raise _Unsupported("outer or special join")
+                if join.args.get("using"):
+                    raise _Unsupported("USING join not resolved")
+                conjuncts += _split_and(join.args.get("on"))
+            if not isinstance(table, exp.Table) or isinstance(table.this, exp.Func):
+                raise _Unsupported("derived table or table function")
+            tables.append((table.alias_or_name, table.name))
+        conjuncts += _split_and(tree.args.get("where"))
+        checked = list(conjuncts)
     outputs = list(tree.expressions)
     group = grouping_elements(tree.args.get("group"))
     if tree.args.get("group") and tree.args["group"].args.get("totals") or any(isinstance(g, (exp.Rollup, exp.Cube)) and not g.expressions for g in group):
         raise _Unsupported("WITH ROLLUP, WITH CUBE or WITH TOTALS")
     having = tree.args["having"].this if tree.args.get("having") else None
-    parts = [*conjuncts, *outputs, *group] + ([having] if having is not None else [])
+    parts = [*checked, *outputs, *group] + ([having] if having is not None else [])
     for part in parts:
         for node in part.walk():
             if isinstance(node, _TOP_LEVEL_UNSUPPORTED) and not _allowed(node):
                 raise _Unsupported(f"unsupported construct: {type(node).__name__}")
     order = list(tree.args["order"].expressions) if tree.args.get("order") else []
-    block = _Block(tables, conjuncts, outputs, group, having, bool(tree.args.get("distinct")), order)
-    if not_null:
+    block = _Block(tables, conjuncts, outputs, group, having, bool(tree.args.get("distinct")), order, shape, raw_outputs, dict(not_null or {}))
+    # COUNT(col) of a NOT NULL column is COUNT(*) only where its table is never NULL-extended
+    if not_null and shape is None:
         _count_star_for_not_null(block, not_null)
     return block
 
@@ -487,13 +528,45 @@ def _conjunct_keys(node: exp.Expression | None) -> list[exp.Expression]:
     return _expand_conjuncts(_split_and(node))
 
 
+def _shape_of(block: _Block) -> Shape:
+    """The block's join shape: the one it was read through, or its tables inner-joined under its conjuncts."""
+
+    if block.shape is not None:
+        return block.shape
+    return Shape([Leaf(a, t) for a, t in block.tables], [("inner", []) for _ in block.tables[1:]], _expand_conjuncts(block.conjuncts))
+
+
+def _outer_compensation(query: _Block, model: _Block, model_in_query: dict[str, str]):
+    """How to read the query's rows from an outer-join model (see :mod:`outer_join_views`), in query aliases."""
+
+    outputs: dict[str, set[str]] = {}
+    for item in model.outputs:
+        inner = _inner(item)
+        if isinstance(inner, exp.Column) and inner.table:
+            outputs.setdefault(model_in_query.get(inner.table, inner.table), set()).add(inner.name)
+    try:
+        return compensate(_shape_of(query), _shape_of(model).renamed(model_in_query), key=_key, view_outputs=outputs, not_null=model.not_null)
+    except Unreadable:
+        return None
+
+
 def _candidates_for(query: _Block, model: _Block, names: list[str], model_name: str, mapping: dict[str, str]):
     model_in_query = {m: q for q, m in mapping.items()}  # model alias -> query alias
     extras = {alias for alias, _ in query.tables} - set(mapping)
-    model_conj = [_Rewriter._rename(c.copy(), model_in_query) for c in _expand_conjuncts(model.conjuncts)]
-    model_keys = {_key(c) for c in model_conj}
-    query_conj = _expand_conjuncts(query.conjuncts)
-    residual_all = [c for c in query_conj if _key(c) not in model_keys]
+    outer = query.shape is not None or model.shape is not None
+    if outer:
+        # outer-join matching reads the query's terms from the model's; both sides must use the same tables
+        compensation = None if extras else _outer_compensation(query, model, model_in_query)
+        if compensation is None:
+            return
+        model_conj = compensation.common
+        query_conj: list[exp.Expression] = []
+        residual_all = compensation.predicate
+    else:
+        model_conj = [_Rewriter._rename(c.copy(), model_in_query) for c in _expand_conjuncts(model.conjuncts)]
+        model_keys = {_key(c) for c in model_conj}
+        query_conj = _expand_conjuncts(query.conjuncts)
+        residual_all = [c for c in query_conj if _key(c) not in model_keys]
 
     model_renamed = _Block(
         [(model_in_query.get(a, a), t) for a, t in model.tables],
@@ -544,7 +617,7 @@ def _candidates_for(query: _Block, model: _Block, names: list[str], model_name: 
     # Variants of the residual filter: all of it, or only the part that can be read from the model.
     readable = [r for r in residual_all if rewriter.rewrite(r) is not None]
     residual_options = [("filter", residual_all)]
-    if len(readable) != len(residual_all):
+    if len(readable) != len(residual_all) and not outer:  # an outer-join selection is all or nothing
         residual_options.append(("filter-implied-dropped", readable))
 
     if not model.is_aggregate:
@@ -792,7 +865,7 @@ def _is_identity(select: exp.Expression, model_name: str, names: list[str]) -> b
 
 
 def _model_outputs(model_sql: str, schema: Mapping[str, Sequence[str]], dialect: str) -> tuple[_Block, list[str]]:
-    block = _block(_prepare(model_sql, schema, dialect))
+    block = _block(_prepare(model_sql, schema, dialect), shapes=True)
     return block, _output_names(block)
 
 
@@ -805,6 +878,7 @@ def _named_model_sql(block: _Block, names: list[str], prepared: exp.Expression, 
 
     simple = (
         isinstance(plain, exp.Select)
+        and block.raw_outputs is None  # read through derived tables or outer joins: use the resolved form
         and len(plain.expressions) == len(names)
         and not any(isinstance(n, exp.Star) for e in plain.expressions for n in e.walk())
         and not any(j.args.get("using") for j in plain.args.get("joins") or [])
@@ -813,7 +887,8 @@ def _named_model_sql(block: _Block, names: list[str], prepared: exp.Expression, 
     if simple:
         tree.set("expressions", [exp.alias_(_inner(item).copy(), name) for item, name in zip(plain.expressions, names)])
     else:
-        tree.set("expressions", [exp.alias_(_inner(item).copy(), name) for item, name in zip(block.outputs, names)])
+        written = block.raw_outputs if block.raw_outputs is not None else block.outputs
+        tree.set("expressions", [exp.alias_(_inner(item).copy(), name) for item, name in zip(written, names)])
     return tree.sql(dialect="postgres")
 
 
@@ -821,7 +896,7 @@ def _propose(query_tree: exp.Expression, model: _Block, names: list[str], model_
     """Candidates for one SELECT (prepared on its own); a shape the proposer does not read yields none."""
 
     try:
-        block = _block(query_tree, not_null)
+        block = _block(query_tree, not_null, shapes=True)
         yield from _candidates(block, model, names, model_name)
     except _Unsupported:
         return
@@ -936,7 +1011,7 @@ def rewrite_over_model(
     try:
         model_tree = _prepare(model_sql, schema, dialect)
         try:
-            model = _block(model_tree, nn)
+            model = _block(model_tree, nn, shapes=True)
             names = _output_names(model)
         except _Unsupported as error:
             # a model the proposer does not read can still answer the query as a whole or as a projection
@@ -965,7 +1040,7 @@ def rewrite_over_model(
     def whole() -> list[_Candidate]:
         out = []
         try:
-            query = _block(_prepare(query_sql, schema, dialect), nn)
+            query = _block(_prepare(query_sql, schema, dialect), nn, shapes=True)
         except _Unsupported as error:
             whole.reason = str(error)  # type: ignore[attr-defined]
             return out
@@ -992,6 +1067,11 @@ def rewrite_over_model(
             candidates.extend(whole())
         except _Unsupported as error:
             return ModelReuse("unsupported", str(error), model_columns=tuple(names))
+        if model.shape is not None:  # an outer-join model was once not read at all: keep its projection candidates
+            try:
+                candidates.extend(_projection_by_lineage(_prepare(query_sql, schema, dialect), model_tree, names, model_name))
+            except (_Unsupported, sqlglot.errors.SqlglotError):
+                pass
     if identity:
         candidates = [c for c in candidates if _is_identity(sqlglot.parse_one(c.sql, read="postgres"), model_name, names)]
     elif model is not None:
@@ -1169,7 +1249,7 @@ def check_replacement(
 
     try:
         model_tree = _prepare(model_sql, schema, dialect)
-        model = _block(model_tree, not_null_columns(constraints))
+        model = _block(model_tree, not_null_columns(constraints), shapes=True)
         names = _output_names(model)
         plain_model, plain_query = _plain(model_sql, schema, dialect), _plain(query_sql, schema, dialect)
     except _Unsupported as error:

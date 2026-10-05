@@ -184,10 +184,20 @@ def read_shape(select: exp.Select) -> tuple[Shape, exp.Select]:
             return exp.column(base, table=node.table)
         return node
 
+    def keep_name(item: exp.Expression) -> exp.Expression:
+        """A bare derived column read as its base column keeps the name it had in the output."""
+
+        done = item.transform(resolve)
+        if isinstance(item, exp.Column) and isinstance(done, exp.Column) and done.name != item.name:
+            return exp.alias_(done, item.name)
+        return done
+
     resolved = select.copy()
     for key in ("expressions", "where", "group", "having", "order"):
         value = resolved.args.get(key)
-        if isinstance(value, list):
+        if key == "expressions" and isinstance(value, list):
+            resolved.set(key, [keep_name(v) for v in value])
+        elif isinstance(value, list):
             resolved.set(key, [v.transform(resolve) for v in value])
         elif value is not None:
             resolved.set(key, value.transform(resolve))
@@ -308,14 +318,16 @@ def terms(shape: Shape) -> dict[frozenset, Term]:
 
     first = shape.leaves[0]
     current: dict[frozenset, list[exp.Expression]] = {frozenset([first.alias]): list(first.filters)}
+    seen = {first.alias}
     for leaf, (kind, on) in zip(shape.leaves[1:], shape.steps):
+        seen.add(leaf.alias)
+        for conjunct in on:
+            if not (tables_of(conjunct) <= seen):
+                raise Unreadable("an ON condition reads a table joined later")
         alone = {frozenset([leaf.alias]): list(leaf.filters)}
         inner: dict[frozenset, list[exp.Expression]] = {}
         for present, predicates in current.items():
             together = present | {leaf.alias}
-            for conjunct in on:
-                if not (tables_of(conjunct) <= together):
-                    raise Unreadable("an ON condition reads a table joined later")
             restricted = _restrict(on, together)
             if restricted is None:
                 continue
@@ -436,23 +448,37 @@ def compensate(
             column = presence_column(alias, v_terms, view_outputs.get(alias, set()), not_null, tables[alias], key)
             if column is not None:
                 presence[alias] = exp.column(column, table=alias)
-        test = _selector(wanted, set(v_terms), varying, presence)
+        if same_residual and _residual_implies(next(iter(residuals.values())), [set(view.aliases) - set(u) for u in v_terms if u not in wanted]):
+            test = exp.true()  # the residual alone is not TRUE on the other terms' rows
+        else:
+            test = _selector(wanted, set(v_terms), varying, presence)
         if test is None:
             return None
         if same_residual:
             predicate = list(next(iter(residuals.values()))) + ([test] if test is not None and not _is_true(test) else [])
         else:
-            disjuncts = []
+            # terms that share a residual are selected together (one presence test can cover several)
+            groups: dict[tuple, list[frozenset]] = {}
             for present in sorted(wanted, key=sorted):
-                own = _selector({present}, set(v_terms), varying, presence)
+                groups.setdefault(tuple(sorted(key(c) for c in residuals[present])), []).append(present)
+            disjuncts = []
+            for members in groups.values():
+                own = _selector(set(members), set(v_terms), varying, presence)
                 if own is None:
                     return None
-                parts = ([own] if not _is_true(own) else []) + residuals[present]
+                parts = ([own] if not _is_true(own) else []) + residuals[members[0]]
                 disjuncts.append(_and(parts) if parts else exp.true())
             predicate = [_or(disjuncts)]
     common_keys = set.intersection(*(set(_keys(v_all[s].join + (v_all[s].where or []), key)) for s in wanted))
     common = [c for k, c in _keys([c for s in wanted for c in v_all[s].join + (v_all[s].where or [])], key).items() if k in common_keys]
     return Compensation(predicate, common, sorted(wanted, key=sorted))
+
+
+def _residual_implies(residual: list[exp.Expression], missing_per_term: list[set]) -> bool:
+    """Whether, on the rows of each unwanted term (``missing`` = its NULL-extended tables), some conjunct
+    of the residual cannot be TRUE."""
+
+    return bool(residual) and all(any(rejected_tables(c) & missing for c in residual) for missing in missing_per_term)
 
 
 def _presence_test(alias: str, present: bool, presence: Mapping[str, exp.Expression]) -> exp.Expression | None:

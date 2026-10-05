@@ -10,6 +10,8 @@ The helper `rewrite_over_model` proposes a query reading the model and checks it
 
 For example, a model containing all orders with customer IDs might supply a query filtering those orders to one customer. A model that discarded a needed column cannot supply it.
 
+Outer joins work too. Suppose the model is `orders LEFT JOIN customers` (every order, with its customer when there is one). A query that wants only orders with a customer and a region of 'EU' can read the model, keeping the rows where the customer columns are present and the region matches. A query that wants the orders without a customer reads the other rows. A query that wants customers even when they have no order cannot be read from that model, because those rows were never kept, and KumoSQL says no rather than guess. Both the query and the model must join the same tables for now, and the model must expose a column that is never empty when its table is present, to tell the two kinds of row apart. The proof step is the same, so a wrong proposal is never returned. The full guide has the rules and the scores on the development split; they are not held-out numbers.
+
 ## 2. Is one result contained in another?
 
 Containment asks whether every row from query A is also returned by query B.
