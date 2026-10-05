@@ -629,6 +629,13 @@ REBUILT_FROM = "kq_rebuilt_from"
 _SUPPLIED: ContextVar[tuple[dict | None, str | None]] = ContextVar("kumosql_proof_columns_supplied", default=(None, None))
 
 
+_MAX_CHASE = 120  # derived tables are chased two steps at a time; a deeper pipeline is left unchecked
+
+
+class _TooDeep(_Undecided):
+    """The chain of derived tables is longer than the check follows (not a fact about the column, so never cached)."""
+
+
 class _Ambiguous(ValueError):
     """The independent reading finds a bare name in more than one source it can read."""
 
@@ -713,10 +720,31 @@ class _Origins:
     def __init__(self, reader: StatementReader, number):
         self.reader = reader
         self.number = number  # a FROM item of the reader's text -> its number, or None when the rewrite made it
+        self._memo: dict[int, list[tuple] | Exception] = {}
 
     def column(self, column: exp.Column, depth: int = 0) -> list[tuple]:
-        if depth > 24:
-            raise _Undecided("too many derived tables to chase")
+        """The leaves ``column`` reads. Each column is chased once (a pipeline of many layers reads the same columns
+        again and again); an answer that failed only because the chain was too deep is not kept."""
+
+        key = id(column)
+        if key in self._memo:
+            kept = self._memo[key]
+            if isinstance(kept, Exception):
+                raise kept
+            return list(kept)
+        if depth > _MAX_CHASE:
+            raise _TooDeep("too many derived tables to chase")
+        try:
+            leaves = self._chase(column, depth)
+        except _TooDeep:
+            raise
+        except (_Undecided, _Ambiguous) as exc:
+            self._memo[key] = exc
+            raise
+        self._memo[key] = leaves
+        return list(leaves)
+
+    def _chase(self, column: exp.Column, depth: int) -> list[tuple]:
         resolution = self.reader.resolve(column)
         status = resolution.status
         if status == AMBIGUOUS:
