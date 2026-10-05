@@ -188,6 +188,7 @@ EVAL_FILES = {
     "test_model_reuse_evals.py",
     "test_mv_workload_bench.py",
     "test_optimizer_bugs_bench.py",
+    "test_refutation_strength_eval.py",
     "test_output_properties.py",
     "test_pipeline_bench.py",
     "test_qed_benchmarks.py",

@@ -13,8 +13,8 @@ and runs both queries. It says the pair *differs* only when
 * each query returns the same bag when every table's rows are stored reversed, rotated and
   shuffled, so the difference never rests on a tie broken by position or an arbitrary pick.
 
-BigQuery SQL runs through :mod:`kumosql.bigquery_on_duckdb` (BigQuery's NULL order, guards that
-fail where BigQuery fails, results read as BigQuery returns them); a query with no faithful DuckDB
+BigQuery SQL runs through :mod:`kumosql.bigquery_on_duckdb` (sqlglot spells out BigQuery's NULL order, ``NULLS FIRST`` ascending, against DuckDB's default; guards that
+fail where BigQuery fails; results read as BigQuery returns them); a query with no faithful DuckDB
 reading cannot be judged, so nothing is confirmed for it. DuckDB SQL runs as written. MySQL SQL
 (the VeriEQL and Calcite-family evals) runs through :func:`kumosql.counterexample.to_duckdb`, the
 translation those evals already use as their oracle.
@@ -61,28 +61,6 @@ def duckdb_type(declared: str, dialect: str) -> str:
     from .bounded_equivalence import BColumn, _duck_type as bounded_type
 
     return bounded_type(BColumn("c", declared), bigquery=dialect == "bigquery")
-
-
-_SESSION_DIALECT = None
-
-
-def _session_dialect():
-    """DuckDB SQL written for a connection set up by :func:`kumosql.bigquery_on_duckdb.configure`.
-
-    sqlglot leaves out a ``NULLS FIRST``/``NULLS LAST`` that matches DuckDB's default (NULLs last), but
-    that connection sorts NULLs first ascending, so an explicit ``ASC NULLS LAST`` written in BigQuery
-    would be lost. This DuckDB dialect assumes the session's order instead and keeps it.
-    """
-
-    global _SESSION_DIALECT
-    if _SESSION_DIALECT is None:
-        from sqlglot.dialects.duckdb import DuckDB
-
-        class KumoBigQueryOrderDuckDB(DuckDB):
-            NULL_ORDERING = "nulls_are_small"
-
-        _SESSION_DIALECT = KumoBigQueryOrderDuckDB
-    return _SESSION_DIALECT
 
 
 def _normal(value: Any, digits: int | None) -> Any:
@@ -161,7 +139,7 @@ class Judge:
         if self.dialect == "bigquery":
             from .bigquery_on_duckdb import faithful
 
-            return faithful(self._renamed(sqlglot.parse_one(sql, read="bigquery"))).sql(dialect=_session_dialect())
+            return faithful(self._renamed(sqlglot.parse_one(sql, read="bigquery"))).sql(dialect="duckdb")
         from .counterexample import to_duckdb
 
         if renamed:
@@ -306,6 +284,64 @@ def positional(tables: Mapping[str, Sequence[Any]], schema: Mapping[str, Mapping
     return out
 
 
+def _filler(declared: str, dialect: str, serial: int) -> Any:
+    """A fresh non-NULL value of ``declared`` (distinct per ``serial``), or ``None`` when the type has no obvious one."""
+
+    kind = duckdb_type(declared, dialect).upper()
+    if kind.startswith(("TINYINT", "SMALLINT", "INT", "BIGINT", "HUGEINT", "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT")):
+        return 1_000_000 + serial
+    if kind.startswith(("VARCHAR", "TEXT", "STRING", "CHAR")):
+        return f"filler{serial}"
+    if kind.startswith(("DOUBLE", "FLOAT", "REAL", "DECIMAL", "NUMERIC")):
+        return float(1_000_000 + serial)
+    if kind.startswith("BOOL"):
+        return bool(serial % 2)
+    return None
+
+
+def completed(
+    tables: Mapping[str, Sequence[Any]],
+    schema: Mapping[str, Mapping[str, str]],
+    *,
+    dialect: str,
+    keys: Mapping[str, Sequence[Sequence[str]]] | None = None,
+    not_null: Mapping[str, Sequence[str]] | None = None,
+) -> dict[str, list]:
+    """``tables`` with the NOT NULL and key columns a dict row leaves out filled with fresh distinct values.
+
+    A solver's model lists only the columns a query reads. A column it leaves out is free, so the
+    database it describes can be completed in any legal way; the declared NOT NULL and key columns
+    must get a value (a key a distinct one) for the completed database to be legal. Other missing
+    columns stay NULL, and rows that are not dicts are left as they are.
+    """
+
+    by_lower = {t.lower(): t for t in schema}
+    required = {t.lower(): {c.lower() for c in cs} for t, cs in (not_null or {}).items()}
+    for t, ks in (keys or {}).items():
+        required.setdefault(t.lower(), set()).update(c.lower() for k in ks for c in k)
+    out: dict[str, list] = {}
+    serial = 0
+    for name, rows in tables.items():
+        table = by_lower.get(name.lower()) or by_lower.get(name.split(".")[-1].lower())
+        out[name] = list(rows)
+        if table is None:
+            continue
+        needs = required.get(table.lower(), set())
+        for i, row in enumerate(out[name]):
+            if not isinstance(row, Mapping):
+                continue
+            row = dict(row)
+            present = {k.lower() for k in row}
+            for column, declared in schema[table].items():
+                if column.lower() in needs and column.lower() not in present:
+                    serial += 1
+                    value = _filler(declared, dialect, serial)
+                    if value is not None:
+                        row[column] = value
+            out[name][i] = row
+    return out
+
+
 def witness_differs(
     left: str,
     right: str,
@@ -356,4 +392,5 @@ def replay_counterexample(
     if not isinstance(tables, Mapping):
         return False
     with Judge(left, right, schema, dialect=dialect, keys=keys, not_null=not_null, foreign_keys=foreign_keys) as judge:
-        return judge.verdict(positional(tables, schema)) is Verdict.DIFFERS
+        data = completed(tables, schema, dialect=dialect, keys=keys, not_null=not_null)
+        return judge.verdict(positional(data, schema)) is Verdict.DIFFERS
