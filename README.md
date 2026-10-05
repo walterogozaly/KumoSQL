@@ -612,6 +612,8 @@ python -m kumosql prove-sql-smt left.sql right.sql --schema schema.json
 
 **Equivalent under conditions.** A pair the provers cannot decide outright may be equal once a fact the queries never state holds: `id` is a non-NULL primary key, `customer_id` is never NULL, every order has a customer. With `conditional=True`, `--conditional` or **Compare queries**, they report a fourth verdict, `proven_conditionally`, listing the minimal NOT NULL, unique-key and foreign-key conditions the proof needs, each with a SQL check to run against the warehouse. It is a real proof under exactly those conditions and never counts as `proven_equivalent` ([docs/conditional-equivalence.md](docs/conditional-equivalence.md)).
 
+**Difference explanations.** When two queries are not equivalent, KumoSQL can name the rows they disagree on as a verified SQL predicate: "equivalent except when `status IS NULL`". It is opt-in (`"explain": true` on `POST /api/prove-queries`, `--explain-difference` on `prove-sql-equivalent` and `prove-sql-smt`, `--explain-differences` on `change-report`) and shown in **Compare queries** ([docs/difference-explanations.md](docs/difference-explanations.md)).
+
 **Saved equivalences across layers.** Tell KumoSQL that two tables hold the same data under different names ("column `amt` of `raw.orders` is column `amount` of `raw.orders_v2`") and the proofs use it, including many layers down a pipeline. In **Settings → Solver → Equivalent columns**, or with `python -m kumosql equivalence add raw.orders raw.orders_v2 amt=amount id=order_id --whole`, save the pair; list columns only (the listed columns hold the same rows, so it applies to queries that read nothing else from the second table) or tick *same rows* for the whole table. They are stored in the data folder (`equivalences.json`), never written to BigQuery, and used as an assumption that proofs list. Rewrite verification applies them automatically. **Compare tables** in the same page, `POST /api/prove-tables` and `python -m kumosql prove-tables LEFT RIGHT --project DIR` prove two models of a pipeline equivalent: models are matched layer by layer from the sources up, each match becoming a lemma for the layers above (so one declaration on a source ripples up through every layer built on it), and when the pipelines are cut at different places the models are inlined as derived tables and the flat queries compared. **Compare queries** (same page, `POST /api/prove-queries`) proves two pasted queries equivalent with the same declared keys, types and saved equivalences, and shows a counterexample database when they differ. Workspace and Changes list the assumptions a proof relied on under its checks.
 
 ## Algebraic prover and SQLSolver (no admin rights)
@@ -882,8 +884,8 @@ Every command prints `--help`.
 | `python -m kumosql.ui` | Local browser UI (`--project DIR`, `--git URL`, `--branch`, `--refresh`, `--jobs FILE`, `--port`, `--no-browser`) |
 | `python -m kumosql rewrite-sql` | Apply rules with verification, optional idempotence, planner and synthetic checks |
 | `python -m kumosql lift-subqueries` | Lift `FROM`/`JOIN` subqueries into CTEs (`--report` prints a summary) |
-| `python -m kumosql prove-sql-equivalent` | Structural equivalence proof for two queries, then the SMT prover; unwraps `CREATE TABLE/VIEW AS`; `--conditional` lists the facts that would make an unproven pair equivalent (exit 3) |
-| `python -m kumosql prove-sql-smt` | Z3 equivalence proof for two queries; `--conditional` as above |
+| `python -m kumosql prove-sql-equivalent` | Structural equivalence proof for two queries, then the SMT prover; unwraps `CREATE TABLE/VIEW AS`; `--conditional` lists the facts that would make an unproven pair equivalent (exit 3); `--explain-difference` prints "except when P" for a refuted pair |
+| `python -m kumosql prove-sql-smt` | Z3 equivalence proof for two queries; `--conditional` and `--explain-difference` as above |
 | `python -m kumosql prove-sql-sqlsolver` | Algebraic proof, then optional SQLSolver (`--backend`, `--check` tests the setup) |
 | `python -m kumosql refactor DIR [--protect M] [--editable M]` | Find simpler pipelines that keep the protected tables proved equivalent |
 | `python -m kumosql consolidate-tables DIR TARGET TABLE...` | Read-only preview: fold intermediate tables into the table that ends the chain, prove the rewritten table equivalent and print it (changes none of your files) |
@@ -896,7 +898,7 @@ Every command prints `--help`.
 | `python -m kumosql scopes` | Manage saved scopes (`list`, `add`, `remove`, `fields`, `refresh`) |
 | `python -m kumosql compare-outputs` | Generate SQL that compares pipeline outputs before and after a refactor |
 | `python -m kumosql dry-run` | BigQuery planning and schema check, no query execution |
-| `python -m kumosql change-report` | Report changes between two project snapshots |
+| `python -m kumosql change-report` | Report changes between two project snapshots; `--explain-differences` adds "except when P" to unproven rewrites |
 | `python -m kumosql ci-check` | Turn a change report into a check conclusion and comment |
 | `python -m kumosql evidence-summary` | Anonymized share of changed outputs that have useful evidence |
 | `kumosql-workflow-configs` | Dataform workflow configurations (production schedules) for a git repository (`URL [--project P]... [--location L] [--csv FILE]`) |

@@ -219,6 +219,7 @@ def build_change_report(
     scope: Scope | None = None,
     owned: tuple | None = None,
     overlaps: bool = True,
+    explain_differences: bool = False,
 ) -> dict[str, object]:
     """Compare two pipelines and return the documented ``report`` payload.
 
@@ -231,6 +232,10 @@ def build_change_report(
     checks and role, plus a coverage summary (see ``overlap_report``). It is
     advisory context; a comparison that fails is listed as unavailable inside
     that model's entry and changes nothing else. ``overlaps=False`` omits it.
+
+    ``explain_differences=True`` (off by default; it runs a search per unproven model) adds ``except_when``
+    (``{sql, atoms, tables, exact}``) to a modified query model whose rewrite is unproven when a verified
+    predicate P exists such that the two versions are equivalent except on rows where P holds.
     """
 
     costs = costs or {}
@@ -309,6 +314,12 @@ def build_change_report(
         change = {"model": name, "kind": kind, "verification": verification, "cost": cost, "consumers": readers}
         if delta:
             change["contract"] = delta
+        if explain_differences and kind == "modified" and verification["label"] == "unproven" and old.is_query and new.is_query and before != after:
+            from .difference_surface import except_when
+
+            found = except_when(before, after)
+            if found is not None:
+                change["except_when"] = found
         if owned is not None:  # (base, head) catalogs.owned(): a removed model is owned by what owned it before
             change["owned"] = key in owned[0 if kind == "removed" else 1]
         changes.append(change)
@@ -391,6 +402,10 @@ def change_report_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--head-source-schema", type=Path, metavar="FILE", help="Source schema JSON for the head snapshot")
     parser.add_argument("--scope", metavar="NAME", help="Saved scope that limits which existing tables are compared")
     parser.add_argument("--no-overlaps", action="store_true", help="Skip the already-done-elsewhere section")
+    parser.add_argument(
+        "--explain-differences", action="store_true",
+        help='For each unproven query rewrite, add the verified predicate P when the versions are "equivalent except when P"',
+    )
     parser.add_argument("--title", default="Change report")
     parser.add_argument("-o", "--output", type=Path, help="Write JSON here; stdout if omitted")
     args = parser.parse_args(argv)
@@ -417,6 +432,7 @@ def change_report_main(argv: list[str] | None = None) -> int:
         base, head, base_root=base_root, head_root=head_root, costs=costs,
         title=args.title, base_label=str(args.base), head_label=str(args.head),
         scope=scope, overlaps=not args.no_overlaps,
+        explain_differences=args.explain_differences,
     )
     text = json.dumps({"report": report}, indent=2)
     if args.output:
