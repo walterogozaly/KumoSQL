@@ -34,6 +34,7 @@ from .ir import (
     ONE,
     ZERO,
     Agg,
+    And,
     Arith,
     BoolV,
     Cmp,
@@ -318,14 +319,35 @@ def _date_of(day: int) -> datetime.date:
     return _EPOCH + datetime.timedelta(days=day)
 
 
-def _add_months(day: int, months: int) -> int | None:
+def _add_months(day: int, months: int, clamp: bool = False) -> int | None:
+    """The date `months` after `day`. A day missing from the target month (Jan 31 + 1 month) is clamped to the
+    month's last day where the dialect does that, otherwise the shift is not folded."""
+
     d = _date_of(day)
     total = d.year * 12 + (d.month - 1) + months
     year, month = divmod(total, 12)
     try:
         return (datetime.date(year, month + 1, d.day) - _EPOCH).days
     except ValueError:
-        return None  # the day does not exist in that month: engines differ (clamp or error)
+        pass
+    if not clamp or not 1 <= year <= 9998:
+        return None
+    following = datetime.date(year + 1, 1, 1) if month == 11 else datetime.date(year, month + 2, 1)
+    return (following - datetime.timedelta(days=1) - _EPOCH).days
+
+
+def _factor_disj(*branches):
+    """``disj`` of two-valued formulas with the conjuncts every branch shares pulled out:
+    (A and X) or (A and Y) is A and (X or Y). The shared equalities then sit outside the OR, where key elimination
+    can use them."""
+
+    parts = [list(b.args) if isinstance(b, And) else [b] for b in branches]
+    if len(parts) > 1:
+        shared = [c for c in parts[0] if all(c in rest for rest in parts[1:])]
+        if shared:
+            rests = [conj(*[c for c in rest if c not in shared]) for rest in parts]
+            return conj(*shared, disj(*rests))
+    return disj(*branches)
 
 
 def _number(text: str) -> Fraction:
@@ -338,6 +360,7 @@ class Translator:
         self.dialect = catalog.dialect
         self.exact = exact
         self.group_by_constants = group_by_constants
+        self.var_types: dict = {}  # output variable of a plain select -> declared type of the base column it copies
 
     # ---- entry ----------------------------------------------------------
 
@@ -508,7 +531,10 @@ class Translator:
             raise Unsupported("NATURAL, ASOF or other join methods")
         kind = (join.args.get("kind") or "").upper()
         side = (join.args.get("side") or "").upper()
-        if kind in ("SEMI", "ANTI", "STRAIGHT_JOIN") or kind not in ("", "INNER", "CROSS", "OUTER"):
+        if kind in ("SEMI", "ANTI"):
+            if side not in ("", "LEFT"):
+                raise Unsupported(f"{side} {kind} join")
+        elif kind == "STRAIGHT_JOIN" or kind not in ("", "INNER", "CROSS", "OUTER"):
             raise Unsupported(f"{kind} join")
         right = self.item_rows(join.this, outer, ctes)
         overlap = set(left.sources) & set(right.sources)
@@ -538,6 +564,12 @@ class Translator:
         on = join.args.get("on")
         if on is not None:
             on_t = conj(on_t, self.pred(on, scope)[0])
+        if kind in ("SEMI", "ANTI"):
+            # Each left row is kept (once) when some right row makes the ON condition TRUE (SEMI) or none does (ANTI).
+            # An UNKNOWN condition is not a match, so ANTI keeps the row. The right side's columns are not visible
+            # after the join.
+            match = Exists(nsum(right.vars, nmul(right.body, ind(on_t))))
+            return Rows(left.vars, nmul(left.body, ind(match if kind == "SEMI" else neg(match))), left.sources, using)
         if not side:
             if kind == "CROSS" and on is not None:
                 raise Unsupported("CROSS JOIN with ON")
@@ -614,6 +646,10 @@ class Translator:
             cond = self.pred(where.this, scope)[0] if where is not None else TRUE
             items = self.select_items(node, scope)
             out = tuple(SVar(fresh_id(), value_kind(v)) for _, v in items)
+            for o, (_, v) in zip(out, items):
+                declared = self._declared_type(v)
+                if declared:
+                    self.var_types[o] = declared
             body = nsum(rows.vars, nmul(rows.body, ind(cond), ind(conj(*[Same(Ref(o), v) for o, (_, v) in zip(out, items)]))))
             single = tuple(v for _, v in items) if _from(node) is None and cond == TRUE else None
             q = Query(out, body, [n for n, _ in items], single)
@@ -901,11 +937,12 @@ class Translator:
             return BoolV(t, f)
         if isinstance(e, exp.Extract):
             unit = e.this.name.upper() if isinstance(e.this, (exp.Var, exp.Identifier)) else e.this.sql().upper()
-            arg = self.value(e.expression, scope)
-            if isinstance(arg, Lit) and arg.kind == "date" and unit in ("YEAR", "MONTH", "DAY"):
-                d = _date_of(int(arg.value))
-                return Lit(Fraction(getattr(d, unit.lower())), "int")
-            return self._fn(f"EXTRACT_{unit}", [arg], True, "int")
+            return self._extract(unit, self.value(e.expression, scope))
+        if isinstance(e, (exp.Year, exp.Month, exp.Day)) and isinstance(e.this, exp.TsOrDsToDate):
+            # Spark's year(d) reads d through TsOrDsToDate; over a DATE value that is EXTRACT(YEAR FROM d).
+            arg = self.value(e.this, scope)
+            if value_kind(arg) == "date":
+                return self._extract(type(e).__name__.upper(), arg)
         if isinstance(e, (exp.DPipe,)):
             return self._fn("CONCAT", [self.value(e.this, scope), self.value(e.expression, scope)], self.dialect in ("mysql", "bigquery", "duckdb", "postgres", "calcite"), "str")
         if isinstance(e, exp.Concat):
@@ -916,6 +953,13 @@ class Translator:
             return self._fn("CONCAT", args, True, "str")
         if isinstance(e, (exp.DateAdd, exp.DateSub)):
             return self._date_shift(e, scope)
+        if isinstance(e, exp.TsOrDsToDate) and not e.args.get("format"):
+            folded = self._date_text(e.this)
+            if folded is not None:
+                return folded
+            inner = self.value(e.this, scope)
+            if value_kind(inner) == "date":
+                return inner  # already a DATE
         if isinstance(e, exp.Interval):
             raise Unsupported("INTERVAL value")
         if isinstance(e, exp.Window):
@@ -945,14 +989,20 @@ class Translator:
             return self._fn(uname, args, uname in _STRICT or name in _STRICT, None)
         raise Unsupported(f"expression {type(e).__name__}")
 
+    def _extract(self, unit, arg):
+        if isinstance(arg, Lit) and arg.kind == "date" and arg.value is not None and unit in ("YEAR", "MONTH", "DAY"):
+            d = _date_of(int(arg.value))
+            return Lit(Fraction(getattr(d, unit.lower())), "int")
+        return self._fn(f"EXTRACT_{unit}", [arg], True, "int")
+
     def _fn(self, name, args, strict, kind):
         return Fn(name, tuple(args), strict, kind)
 
     def _binary(self, e, scope):
-        a, b = self.value(e.this, scope), self.value(e.expression, scope)
         op = {exp.Add: "+", exp.Sub: "-", exp.Mul: "*", exp.Div: "/"}[type(e)]
         if isinstance(e.expression, exp.Interval) or isinstance(e.this, exp.Interval):
             return self._interval(e, scope, op)
+        a, b = self.value(e.this, scope), self.value(e.expression, scope)
         ka, kb = value_kind(a), value_kind(b)
         if ka in ("date", "time") or kb in ("date", "time") or ka == "str" or kb == "str":
             if ka in ("date",) and kb in ("int",) and op in "+-" and isinstance(a, Lit) and isinstance(b, Lit):
@@ -983,6 +1033,18 @@ class Translator:
         if not self.exact:
             return self._fn(f"ARITH{op}", [a, b], True, kind)
         return Arith(op, a, b, kind)
+
+    def _date_text(self, node):
+        """DATE('YYYY-MM-DD') and DATE('YYYY-MM-DD +08'), a date literal with an optional zone suffix, as a date value.
+
+        The date part names the date (Spark casts a zoned string to its local date); a suffix of any other shape, a
+        time of day or a non-literal stays unfolded."""
+
+        if not (isinstance(node, exp.Literal) and node.is_string):
+            return None
+        m = re.fullmatch(r"\s*(\d{4}-\d{1,2}-\d{1,2})(?:\s+[+-]\d{2}(?::?\d{2})?)?\s*", str(node.this))
+        day = _day_number(m.group(1)) if m else None
+        return Lit(Fraction(day), "date") if day is not None else None
 
     def _interval(self, e, scope, op):
         base, interval = (e.this, e.expression) if isinstance(e.expression, exp.Interval) else (e.expression, e.this)
@@ -1029,7 +1091,7 @@ class Translator:
                 return Lit(Fraction(day + 7 * n), "date")
             if unit in ("MONTH", "QUARTER", "YEAR"):
                 months = n * {"MONTH": 1, "QUARTER": 3, "YEAR": 12}[unit]
-                shifted = _add_months(day, months)
+                shifted = _add_months(day, months, clamp=self.dialect in ("mysql", "spark", "postgres", "duckdb", "bigquery"))
                 if shifted is None:
                     raise Unsupported("date arithmetic past the end of a month")
                 return Lit(Fraction(shifted), "date")
@@ -1054,11 +1116,45 @@ class Translator:
             return v
         if kind == "num" and src == "int" and not has_params and self.exact:
             return v
+        if kind == "num" and self.exact and self._widening_decimal_cast(v, target):
+            return v
         if kind == "int" and isinstance(v, Lit) and v.kind == "int":
             return v
         if kind == "str" and isinstance(v, Lit) and v.kind == "str" and not has_params:
             return v
         return self._fn(f"CAST_{target}", [v], True, kind)
+
+    def _declared_type(self, v):
+        """The declared type of the base-table column that `v` copies, if `v` is one (possibly through derived tables)."""
+
+        if isinstance(v, Col) and isinstance(v.tup, TVar):
+            return self.catalog.types.get(v.tup.table.lower(), {}).get(v.name.lower())
+        if isinstance(v, Ref):
+            return self.var_types.get(v.var)
+        return None
+
+    def _widening_decimal_cast(self, v, target: str) -> bool:
+        """CAST(col AS DECIMAL(p, s)) is the identity when the column's declared DECIMAL(p0, s0) or integer type fits:
+        s0 <= s and p0 - s0 <= p - s. Only a base-table column with a declared type is recognised."""
+
+        m = re.fullmatch(r"(?:DECIMAL|NUMERIC|DEC)\s*\(\s*(\d+)\s*(?:,\s*(\d+)\s*)?\)", target.strip())
+        if not m:
+            return False
+        p, sc = int(m.group(1)), int(m.group(2) or 0)
+        declared = self._declared_type(v)
+        if not declared:
+            return False
+        src = str(declared).upper().strip()
+        d = re.fullmatch(r"(?:DECIMAL|NUMERIC|DEC)\s*\(\s*(\d+)\s*(?:,\s*(\d+)\s*)?\)", src)
+        if d:
+            p0, s0 = int(d.group(1)), int(d.group(2) or 0)
+        else:
+            digits = {"TINYINT": 3, "SMALLINT": 5, "MEDIUMINT": 7, "INT": 10, "INTEGER": 10, "BIGINT": 19}
+            base = src.split("(")[0].strip()
+            if base not in digits:
+                return False
+            p0, s0 = digits[base], 0
+        return s0 <= sc and p0 - s0 <= p - sc
 
     def _case(self, e: exp.Case, scope):
         subject = e.this
@@ -1094,7 +1190,7 @@ class Translator:
             return conj(a[0], b[0]), disj(a[1], b[1])
         if isinstance(e, exp.Or):
             a, b = self.pred(e.this, scope), self.pred(e.expression, scope)
-            return disj(a[0], b[0]), conj(a[1], b[1])
+            return _factor_disj(a[0], b[0]), conj(a[1], b[1])
         if isinstance(e, exp.Not):
             t, f = self.pred(e.this, scope)
             return f, t

@@ -411,6 +411,7 @@ def _eliminate_keyed(t: Term, ctx: Ctx) -> Term | None:
         return None
     conjs = [f.f for f in t.factors if isinstance(f, NInd)]
     eq = None
+    best = None
     for y in tvars:
         info = ctx.catalog.info(y.table)
         if not info.keys:
@@ -429,12 +430,22 @@ def _eliminate_keyed(t: Term, ctx: Ctx) -> Term | None:
                     break
                 values.append(choice)
             else:
-                iota = Iota(y.table, tuple(key), tuple(values))
-                ctx.catalog.used_constraints = True
-                rest = [f for f in t.factors if f is not rel[0]]
-                new = tuple(subst(f, {y: iota}) for f in rest) + (NInd(InRel(iota)),)
-                return Term(tuple(v for v in t.vars if v != y), t.coef, new)
-    return None
+                # Two rows may fix each other's key (a child row and its parent): eliminate the one whose key is
+                # fixed by columns of other rows before one whose key needs a scalar variable (an output value), and
+                # the one with the shorter key (the parent) first, so both sides of a comparison keep the same rows
+                # however the join was written.
+                rank = (sum(isinstance(v, Ref) for v in values), len(key))
+                if best is None or rank < best[0]:
+                    best = (rank, y, key, values, rel[0])
+                break
+    if best is None:
+        return None
+    _, y, key, values, rel = best
+    iota = Iota(y.table, tuple(key), tuple(values))
+    ctx.catalog.used_constraints = True
+    rest = [f for f in t.factors if f is not rel]
+    new = tuple(subst(f, {y: iota}) for f in rest) + (NInd(InRel(iota)),)
+    return Term(tuple(v for v in t.vars if v != y), t.coef, new)
 
 
 def _pick_value(members: list, y: TVar):
