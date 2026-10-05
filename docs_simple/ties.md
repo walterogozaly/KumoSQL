@@ -23,6 +23,8 @@ for site in report.sites:
 
 Each place that can depend on ties (a window function, `LIMIT`, `ANY_VALUE`, `ARRAY_AGG` and similar) is called `deterministic` or `unknown`. `unknown` means no reason was found that the result is stable. It does not prove the result changes.
 
+Names can be confusing: in `SELECT value AS ts FROM events ORDER BY ts`, `ts` might mean the new name or the table's own `ts` column. When the answer matters and the query does not say, KumoSQL reports `unknown` instead of guessing.
+
 ## What the check does and does not show
 
 - It reads the query text and any declared keys; it runs no query and uses no data.

@@ -46,8 +46,10 @@ A site is `deterministic` for one of these reasons:
 
 Every other site is `unknown`, with `fix` saying what would pin it down: a known unique key to add to the `ORDER BY` when there is one, otherwise columns unique within each partition (or keeping every tied row with `RANK`). `unknown` does not prove the result changes; it says no reason was found that it can't.
 
+A name that is both a `SELECT` alias and a column (`SELECT value AS ts .. ORDER BY ts`) is read the way the query can mean it. An `OVER` clause and an aggregate's arguments only see the table's columns. In `ORDER BY`, `GROUP BY` and `QUALIFY` the name could be the alias or the column, so a verdict that depends on which one is `unknown`; without a schema a name counts as a column when the query reads it where aliases are not visible, or when a declared key or NOT NULL column names it. A `GROUP BY` name whose alias is an aggregate is always the column.
+
 A window nobody reads (a column a reader never uses) is not a site, and neither is a top-level `ORDER BY` without `LIMIT`: the result is a bag of rows, so presentation order does not change it.
 
 ## Checks
 
-`tests/test_tie_determinism.py` lists the verdicts for 50 queries without and with a declared key, and runs every query judged deterministic on DuckDB with its table's rows stored in every order (DuckDB on one thread breaks ties by storage order): each returns the same rows every time.
+`tests/test_tie_determinism.py` lists the verdicts for 50 queries without and with a declared key, replays queries whose alias shadows a column on DuckDB (the traps must be `unknown`, the harmless ones stay `deterministic`), and runs every query judged deterministic on DuckDB with its table's rows stored in every order (DuckDB on one thread breaks ties by storage order): each returns the same rows every time.

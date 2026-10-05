@@ -173,3 +173,75 @@ def test_deterministic_verdicts_hold_for_every_row_order_on_duckdb():
                 assert len(outputs) == 1, (sql, rows)
             checked += 1
     assert checked >= 40
+
+
+# A SELECT alias that is also a column name: `value AS ts` hides the real `ts` from ORDER BY, GROUP BY and QUALIFY,
+# but not from a window's OVER clause or an aggregate's arguments. Without a schema the analysis only knows the columns
+# the query reads, and it used to take every name that matched an alias for the alias.
+COMPOSITE = {"events": TableConstraints(not_null=frozenset({"user_id", "ts"}), keys=(("user_id", "ts"),))}
+# (query, constraints, rows on which two storage orders give different results)
+ALIAS_TRAPS = [
+    # the window orders by the column ts, but the output called ts is value: tied rows differ in it
+    (
+        "SELECT value AS ts, ts AS value FROM events QUALIFY ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts) = 1",
+        None, [(1, 1, 1, 5), (2, 1, 1, 6)],
+    ),
+    (
+        "SELECT value AS ts, ts AS value FROM events QUALIFY ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts) = 1",
+        KEYED, [(1, 1, 1, 5), (2, 1, 1, 6)],
+    ),
+    # ORDER BY ts is the alias (user_id) or the column; the second output differs between rows tied on the first
+    ("SELECT user_id AS ts, ts AS user_id FROM events ORDER BY ts LIMIT 1", None, [(1, 1, 1, 5), (2, 1, 2, 5)]),
+    ("SELECT user_id AS ts, ts AS user_id FROM events ORDER BY ts LIMIT 1", KEYED, [(1, 1, 1, 5), (2, 1, 2, 5)]),
+    # GROUP BY ts is the column, because an aggregate cannot be a group key
+    ("SELECT user_id, ANY_VALUE(value) AS ts FROM events GROUP BY user_id, ts", None, [(1, 1, 1, 5), (2, 1, 1, 6)]),
+    ("SELECT user_id, ANY_VALUE(value) AS ts FROM events GROUP BY user_id, ts", KEYED, [(1, 1, 1, 5), (2, 1, 1, 6)]),
+    # the window's ORDER BY id is the column id, not the key-looking alias of ts
+    (
+        "SELECT user_id, ts AS id FROM events QUALIFY ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY id) = 1",
+        COMPOSITE, [(1, 1, 1, 5), (1, 1, 2, 6)],
+    ),
+]
+# the same shapes where the alias hides nothing that matters: still deterministic
+ALIAS_SAFE = [
+    "SELECT value AS ts FROM events ORDER BY ts LIMIT 1",
+    "SELECT ts AS value FROM events ORDER BY value LIMIT 1",
+    "SELECT ts AS ts, value AS value FROM events ORDER BY ts, value LIMIT 1",
+    "SELECT user_id, ts AS value FROM events QUALIFY ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts) = 1",
+    "SELECT user_id, value AS ts FROM events QUALIFY ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY value) = 1",
+]
+
+
+def _storage_orders_differ(sql, rows):
+    duckdb = pytest.importorskip("duckdb")
+    from kumosql.bigquery_on_duckdb import configure
+
+    con = duckdb.connect()
+    con.execute("SET threads = 1")
+    configure(con)
+    con.execute("CREATE TABLE events (id BIGINT, user_id BIGINT, ts BIGINT, value BIGINT)")
+    duck = sqlglot.transpile(sql, read="bigquery", write="duckdb")[0]
+    outputs = set()
+    for order in itertools.permutations(rows):
+        con.execute("DELETE FROM events")
+        con.executemany("INSERT INTO events VALUES (?, ?, ?, ?)", list(order))
+        outputs.add(frozenset(_bag(con, duck).items()))
+    return len(outputs) > 1
+
+
+@pytest.mark.parametrize("sql, constraints, rows", ALIAS_TRAPS, ids=[str(i) for i in range(len(ALIAS_TRAPS))])
+def test_an_alias_that_shadows_a_column_is_not_taken_for_it(sql, constraints, rows):
+    assert _storage_orders_differ(sql, rows)  # the trap is real: DuckDB returns different rows
+    report = analyze(sql, constraints=constraints)
+    assert not report.unsupported, report.unsupported
+    assert not report.deterministic, [s.to_json() for s in report.sites]
+
+
+@pytest.mark.parametrize("sql", ALIAS_SAFE, ids=[str(i) for i in range(len(ALIAS_SAFE))])
+def test_shadowing_aliases_that_hide_nothing_keep_their_verdict(sql):
+    for constraints in (None, KEYED):  # (with ts a declared column, `ORDER BY ts` could mean either, so it is unknown)
+        assert analyze(sql, constraints=constraints).deterministic
+    rng = random.Random(3)
+    for _ in range(6):
+        rows = [(i, rng.choice([1, 2]), rng.choice([1, 2, None]), rng.choice([5, 6, None])) for i in rng.sample(range(1, 9), 3)]
+        assert not _storage_orders_differ(sql, rows), (sql, rows)

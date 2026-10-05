@@ -299,7 +299,8 @@ class _Analysis:
                         continue
                     qualifier = column.table.lower()
                     own = column.find_ancestor(exp.Select) is select
-                    if qualifier == alias or (own and not qualifier and len(sources) == 1 and column.name.lower() not in aliases | {alias}):
+                    name_ok = column.name.lower() != alias and (column.name.lower() not in aliases or _reads_source(column, select))
+                    if qualifier == alias or (own and not qualifier and len(sources) == 1 and name_ok):
                         add(name, column.name.lower())
                 if not inferred.get(name):
                     add(name, "kq_any")  # a table read only by COUNT(*) still needs a column
@@ -542,10 +543,30 @@ class _Analysis:
                 positions.append(int(key.this) - 1)
                 continue
             text = key.sql(dialect=self.dialect)
-            for index, (name, value) in enumerate(outputs):
-                if (isinstance(key, exp.Column) and not key.table and key.name.lower() == name) or value.sql(dialect=self.dialect) == text:
-                    positions.append(index)
+            by_text = [i for i, (_, value) in enumerate(outputs) if value.sql(dialect=self.dialect) == text]
+            if not (isinstance(key, exp.Column) and not key.table):
+                positions += by_text
+                continue
+            by_name = [i for i, (name, _) in enumerate(outputs) if name == key.name.lower()]
+            if by_name and isinstance(node, exp.Select) and self._alias_clash(node, key):
+                # the name is an alias of one output and a column that another output may hold: either may be meant
+                positions += [i for i in by_name if i in by_text]
+            else:
+                positions += by_name or by_text
         return positions
+
+    def _alias_clash(self, select: exp.Select, column: exp.Column) -> bool:
+        """Whether a bare name is both a select alias of some other expression and a source column of ``select``."""
+
+        name = column.name.lower()
+        if column.table or not self._is_source_column(select, column):
+            return False
+        for item in select.expressions:
+            if isinstance(item, exp.Alias) and item.alias.lower() == name:
+                inner = _bare(item.this)
+                if not (isinstance(inner, exp.Column) and inner.name.lower() == name):
+                    return True
+        return False
 
     # ----- aggregate sites
 
@@ -610,8 +631,16 @@ class _Analysis:
             if isinstance(item, exp.Literal) and not item.is_string and item.this.isdigit() and 1 <= int(item.this) <= len(select.expressions):
                 chosen = select.expressions[int(item.this) - 1]
                 keys.append(chosen.this if isinstance(chosen, exp.Alias) else chosen)
-            elif isinstance(item, exp.Column) and not item.table and item.name.lower() in outputs and not self._is_source_column(select, item):
-                keys.append(outputs[item.name.lower()])
+            elif isinstance(item, exp.Column) and not item.table and item.name.lower() in outputs:
+                chosen = outputs[item.name.lower()]
+                if chosen.find(exp.AggFunc, exp.AnyValue, exp.ArgMax, exp.ArgMin, exp.Window) is not None:
+                    keys.append(item)  # a group key cannot be an aggregate: the name is the source column
+                elif self._alias_clash(select, item):
+                    continue  # alias or source column, we cannot tell which: group by neither
+                elif self._is_source_column(select, item):
+                    keys.append(item)
+                else:
+                    keys.append(chosen)
             else:
                 keys.append(item)
         return keys
@@ -671,7 +700,9 @@ class _Analysis:
         resolved = []
         for e in exprs:
             e = _bare(e)
-            if isinstance(e, exp.Column) and not e.table and e.name.lower() in aliases and not self._is_source_column(select, e):
+            if isinstance(e, exp.Column) and self._alias_clash(select, e):
+                return None
+            if isinstance(e, exp.Column) and not e.table and e.name.lower() in aliases and not grouped_input and not self._is_source_column(select, e):
                 e = aliases[e.name.lower()]
             elif isinstance(e, exp.Literal) and not e.is_string and e.this.isdigit() and 1 <= int(e.this) <= len(select.expressions):
                 chosen = select.expressions[int(e.this) - 1]
@@ -895,6 +926,23 @@ class _Analysis:
                 return f"subquery {parent.alias}"
             current = parent
         return "query"
+
+
+def _reads_source(column: exp.Column, select: exp.Select) -> bool:
+    """Whether ``column`` sits where a SELECT alias is not visible, so a bare name there is a source column.
+
+    Select items, WHERE, join conditions, aggregate arguments and everything inside an ``OVER`` clause read the
+    FROM columns; only the select's own GROUP BY, HAVING, QUALIFY and ORDER BY may name an alias instead.
+    """
+
+    node = column.parent
+    while node is not None and node is not select:
+        if isinstance(node, (exp.Window, exp.AggFunc)):
+            return True
+        if node.parent is select and isinstance(node, (exp.Group, exp.Having, exp.Qualify, exp.Order)):
+            return False
+        node = node.parent
+    return True
 
 
 def _constant(node: exp.Expression | None) -> int | None:
