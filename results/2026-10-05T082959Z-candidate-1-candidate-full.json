@@ -1,0 +1,29 @@
+{
+  "job": "candidate-1",
+  "kind": "candidate",
+  "ref": "codex/stewardship-candidate-1",
+  "sha": "e684f164612b3ba94af5ed853b469071f0fd457b",
+  "leg": "candidate-full",
+  "mode": "full",
+  "status": "finished",
+  "exit": 1,
+  "seconds": 4261.0,
+  "workers": 4,
+  "notes": [],
+  "finished": "2026-10-05T08:29:58Z",
+  "machine": {
+    "system": "Linux",
+    "release": "6.18.40.1-microsoft-standard-WSL2",
+    "cpus": 6,
+    "python": "3.12.3"
+  },
+  "passed": 11645,
+  "failed": [
+    "tests/test_solver_threads.py::test_concurrent_cold_start_proves_in_every_thread[0]"
+  ],
+  "errors": [],
+  "skipped": 108,
+  "tests": 11754,
+  "known_failed": [],
+  "tail": "\n/usr/lib/python3.12/subprocess.py:1253: TimeoutExpired\n=============================== warnings summary ===============================\ntests/test_conditional_benchmark.py: 6 warnings\ntests/test_arcwise_bench.py: 147 warnings\ntests/test_singh_bedathur_benchmark.py: 6 warnings\ntests/test_spider2_bench.py: 4 warnings\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=661005) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\ntests/test_conditional_benchmark.py::test_singh_sample\ntests/test_conditional_benchmark.py::test_singh_sample\ntests/test_conditional_benchmark.py::test_singh_sample\ntests/test_conditional_benchmark.py::test_singh_sample\ntests/test_conditional_benchmark.py::test_singh_sample\ntests/test_conditional_benchmark.py::test_singh_sample\ntests/test_quite_bench.py::test_pinned_sample_has_no_wrong_proof\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=660999) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\ntests/test_sqlfluff_fixtures_bench.py::test_layout_fixes_and_kumosql_rules\ntests/test_sqlfluff_fixtures_bench.py::test_layout_fixes_and_kumosql_rules\ntests/test_sqlfluff_fixtures_bench.py::test_layout_fixes_and_kumosql_rules\ntests/test_sqlfluff_fixtures_bench.py::test_layout_fixes_and_kumosql_rules\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=660996) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\ntests/test_sample_db_oracle.py::test_the_date_key_pairs_are_refuted_with_counterexamples_that_replay\ntests/test_sample_db_oracle.py::test_the_date_key_pairs_are_refuted_with_counterexamples_that_replay\ntests/test_sqlfluff_refusals_bench.py::test_refusal_cases\ntests/test_sqlfluff_refusals_bench.py::test_refusal_cases\ntests/test_sqlfluff_fixtures_bench.py::test_semantic_fixes\ntests/test_sqlfluff_fixtures_bench.py::test_semantic_fixes\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=661002) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED tests/test_solver_threads.py::test_concurrent_cold_start_proves_in_every_thread[0]\n1 failed, 11645 passed, 1 skipped, 107 xfailed, 180 warnings in 3897.96s (1:04:57)"
+}
