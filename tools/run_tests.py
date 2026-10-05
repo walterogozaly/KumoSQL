@@ -68,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--target", action="append", default=[], help="a test file or test id this run is aiming at (repeatable); recorded in the test history")
     parser.add_argument("--pure", action="store_true", help="test against pure-Python sqlglot even if sqlglotc is installed")
     parser.add_argument("--install-compiled", action="store_true", help="pip install the sqlglotc that matches the installed sqlglot first")
+    parser.add_argument("--eval-cache", metavar="PATH", help="local SQLSolver sample-execution cache directory; 'off' forces fresh checks")
     parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 1, help="worker processes (default: all CPUs)")
     args, rest = parser.parse_known_args(argv)
 
@@ -76,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
 
         subprocess.call([sys.executable, "-m", "pip", "install", f"sqlglotc=={version('sqlglot')}"])
     env = dict(os.environ)
+    if args.eval_cache is not None:
+        env["KUMOSQL_EVAL_CACHE"] = args.eval_cache
     if args.label:
         env["KUMOSQL_TASK"] = args.label
     if args.target:
