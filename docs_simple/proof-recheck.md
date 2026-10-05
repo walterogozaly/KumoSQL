@@ -20,5 +20,5 @@ The tool also covers the fuzzing, rewrite, view-reuse, containment, dialect, pip
 
 - Surviving the search is evidence, not a proof. A database the search never builds can still hide a bug.
 - A difference can also come from the checking engine rather than the proof, for example a different rounding, so each one is reviewed by hand before it is called a bug.
-- Some proofs cannot be run on the checking engine (a function DuckDB lacks, a subquery shape it cannot execute); those are listed as not runnable, not as passed.
+- Some proofs cannot be run on the checking engine (a function DuckDB lacks, a subquery shape it cannot execute); those are listed as not runnable, not as passed. Three SQLSolver pairs that first fell into this group now run, after a small translation for DuckDB (a missing function, a subquery in a join condition, a `CASE` mixing numbers and text); the translation is written out in the reference and has tests that it still separates a deliberately broken copy.
 - It is a tool for developers. It changes no scores and no rules; the full reference covers the commands and the output.
