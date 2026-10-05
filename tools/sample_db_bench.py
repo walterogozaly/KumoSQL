@@ -540,6 +540,8 @@ class Adapter:
     #: True: the data is downloaded at run time (a licence that forbids committing it, or a size that does); such an
     #: adapter lives in ``DOWNLOADED``, is not part of a default run, and its tests skip when the download fails
     downloaded: bool = False
+    #: results-file text naming the pinned upstream files, for an adapter with too many to list one by one ("" lists them)
+    pins_summary: str = ""
 
     @property
     def folder(self) -> Path:
@@ -2388,6 +2390,8 @@ COMMAND = "python tools/sample_db_bench.py --write-results"
 
 def _pins_text(adapters: list[Adapter]) -> str:
     def pin(a: Adapter) -> str:
+        if a.pins_summary:
+            return a.pins_summary
         files = [u for u in a.upstream if u.licence != "the licence itself"]
         licence = files[0].licence.rsplit(" (", 1)[0]
         if len(files) == 1:

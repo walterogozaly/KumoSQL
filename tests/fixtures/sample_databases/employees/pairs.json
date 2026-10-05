@@ -1,0 +1,1050 @@
+{
+  "about": "Authored query pairs on Employees for tools/sample_db_bench.py. label: 'equivalent' or 'different' under the declared keys minus 'drop' (not_null:T.c, pk:T, fk:T.c). A 'different' pair carries a witness: 'real' (the two queries already differ on the Employees data) or a small database (missing columns are completed with legal values) that satisfies the remaining declarations and separates them. 'sibling' names the pair it negates. The database has one nullable column (titles.to_date) and composite keys with DATE columns (titles: emp_no, title, from_date; salaries: emp_no, from_date), so the key-dependent siblings are about those. Most queries carry a filter on emp_no so that their results on the 3.9 million real rows stay small; it is part of both sides of every pair.",
+  "pairs": [
+    {
+      "id": "emp-fk-join-elimination",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "dept_emp.emp_no is NOT NULL and references employees' key: every assignment joins exactly one employee",
+      "left": "SELECT de.emp_no, de.dept_no FROM dept_emp AS de JOIN employees AS e ON de.emp_no = e.emp_no WHERE de.emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, dept_no FROM dept_emp WHERE emp_no BETWEEN 10001 AND 10200"
+    },
+    {
+      "id": "emp-fk-join-elimination-without-fk",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "emp-fk-join-elimination",
+      "drop": [
+        "fk:dept_emp.emp_no"
+      ],
+      "why": "without the foreign key an assignment may name an employee that does not exist",
+      "left": "SELECT de.emp_no, de.dept_no FROM dept_emp AS de JOIN employees AS e ON de.emp_no = e.emp_no WHERE de.emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, dept_no FROM dept_emp WHERE emp_no BETWEEN 10001 AND 10200",
+      "witness": {
+        "dept_emp": [
+          {
+            "emp_no": 10100,
+            "dept_no": "d001",
+            "from_date": "1990-01-01",
+            "to_date": "1991-01-01"
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-fk-join-elimination-without-key",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "emp-fk-join-elimination",
+      "drop": [
+        "pk:employees"
+      ],
+      "why": "without employees' key two employees may share a number, and the join repeats the assignment",
+      "left": "SELECT de.emp_no, de.dept_no FROM dept_emp AS de JOIN employees AS e ON de.emp_no = e.emp_no WHERE de.emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, dept_no FROM dept_emp WHERE emp_no BETWEEN 10001 AND 10200",
+      "witness": {
+        "employees": [
+          {
+            "emp_no": 10100
+          },
+          {
+            "emp_no": 10100
+          }
+        ],
+        "dept_emp": [
+          {
+            "emp_no": 10100,
+            "dept_no": "d001"
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-fk-join-elimination-salaries",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "salaries.emp_no references employees' key and is NOT NULL, so each salary joins exactly one employee",
+      "left": "SELECT s.emp_no, s.from_date, s.salary FROM salaries AS s JOIN employees AS e ON s.emp_no = e.emp_no WHERE s.emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, from_date, salary FROM salaries WHERE emp_no BETWEEN 10001 AND 10200"
+    },
+    {
+      "id": "emp-fk-join-elimination-salaries-without-fk",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "emp-fk-join-elimination-salaries",
+      "drop": [
+        "fk:salaries.emp_no"
+      ],
+      "why": "without the foreign key a salary may belong to no employee",
+      "left": "SELECT s.emp_no, s.from_date, s.salary FROM salaries AS s JOIN employees AS e ON s.emp_no = e.emp_no WHERE s.emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, from_date, salary FROM salaries WHERE emp_no BETWEEN 10001 AND 10200",
+      "witness": {
+        "salaries": [
+          {
+            "emp_no": 10100,
+            "from_date": "1990-01-01",
+            "salary": 50000,
+            "to_date": "1991-01-01"
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-fk-join-two-parents",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "both parents are joined on their keys through NOT NULL foreign keys, so neither join changes the rows",
+      "left": "SELECT de.emp_no, de.dept_no FROM dept_emp AS de JOIN employees AS e ON de.emp_no = e.emp_no JOIN departments AS d ON de.dept_no = d.dept_no WHERE de.emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, dept_no FROM dept_emp WHERE emp_no BETWEEN 10001 AND 10200"
+    },
+    {
+      "id": "emp-fk-join-two-parents-one-fk-dropped",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "emp-fk-join-two-parents",
+      "drop": [
+        "fk:dept_emp.dept_no"
+      ],
+      "why": "without the foreign key to departments an assignment may name a department that does not exist",
+      "left": "SELECT de.emp_no, de.dept_no FROM dept_emp AS de JOIN employees AS e ON de.emp_no = e.emp_no JOIN departments AS d ON de.dept_no = d.dept_no WHERE de.emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, dept_no FROM dept_emp WHERE emp_no BETWEEN 10001 AND 10200",
+      "witness": {
+        "dept_emp": [
+          {
+            "emp_no": 10100,
+            "dept_no": "d999",
+            "from_date": "1990-01-01",
+            "to_date": "1991-01-01"
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-fk-join-manager-department",
+      "category": "join elimination",
+      "label": "equivalent",
+      "why": "dept_manager.dept_no is a NOT NULL foreign key (a string key) to departments",
+      "left": "SELECT dm.emp_no, dm.dept_no, dm.from_date FROM dept_manager AS dm JOIN departments AS d ON dm.dept_no = d.dept_no",
+      "right": "SELECT emp_no, dept_no, from_date FROM dept_manager"
+    },
+    {
+      "id": "emp-fk-join-manager-department-without-key",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "emp-fk-join-manager-department",
+      "drop": [
+        "pk:departments"
+      ],
+      "why": "without departments' key two departments may share a number, and the join repeats the manager row",
+      "left": "SELECT dm.emp_no, dm.dept_no, dm.from_date FROM dept_manager AS dm JOIN departments AS d ON dm.dept_no = d.dept_no",
+      "right": "SELECT emp_no, dept_no, from_date FROM dept_manager",
+      "witness": {
+        "departments": [
+          {
+            "dept_no": "d001",
+            "dept_name": "A"
+          },
+          {
+            "dept_no": "d001",
+            "dept_name": "B"
+          }
+        ],
+        "dept_manager": [
+          {
+            "emp_no": 10100,
+            "dept_no": "d001"
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-join-with-filter-on-parent",
+      "category": "join elimination",
+      "label": "different",
+      "sibling": "emp-fk-join-elimination",
+      "why": "the join is no longer the identity once the parent is filtered: assignments of male employees are lost",
+      "left": "SELECT de.emp_no, de.dept_no FROM dept_emp AS de JOIN employees AS e ON de.emp_no = e.emp_no WHERE de.emp_no BETWEEN 10001 AND 10200 AND e.gender = 'F'",
+      "right": "SELECT emp_no, dept_no FROM dept_emp WHERE emp_no BETWEEN 10001 AND 10200",
+      "witness": "real"
+    },
+    {
+      "id": "emp-left-join-parent-key",
+      "category": "outer join",
+      "label": "equivalent",
+      "why": "departments is joined on its primary key, so each assignment matches at most one row and none is lost",
+      "left": "SELECT de.emp_no, de.dept_no FROM dept_emp AS de LEFT JOIN departments AS d ON de.dept_no = d.dept_no WHERE de.emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, dept_no FROM dept_emp WHERE emp_no BETWEEN 10001 AND 10200"
+    },
+    {
+      "id": "emp-left-join-parent-key-without-key",
+      "category": "outer join",
+      "label": "different",
+      "sibling": "emp-left-join-parent-key",
+      "drop": [
+        "pk:departments"
+      ],
+      "why": "without departments' key a department number may repeat, and the left join repeats the assignment",
+      "left": "SELECT de.emp_no, de.dept_no FROM dept_emp AS de LEFT JOIN departments AS d ON de.dept_no = d.dept_no WHERE de.emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, dept_no FROM dept_emp WHERE emp_no BETWEEN 10001 AND 10200",
+      "witness": {
+        "departments": [
+          {
+            "dept_no": "d001",
+            "dept_name": "A"
+          },
+          {
+            "dept_no": "d001",
+            "dept_name": "B"
+          }
+        ],
+        "dept_emp": [
+          {
+            "emp_no": 10100,
+            "dept_no": "d001"
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-left-join-whole-composite-key",
+      "category": "outer join",
+      "label": "equivalent",
+      "why": "dept_manager is joined on both columns of its composite primary key (emp_no, dept_no): at most one match per row",
+      "left": "SELECT de.emp_no, de.dept_no FROM dept_emp AS de LEFT JOIN dept_manager AS dm ON dm.emp_no = de.emp_no AND dm.dept_no = de.dept_no",
+      "right": "SELECT emp_no, dept_no FROM dept_emp"
+    },
+    {
+      "id": "emp-left-join-part-of-composite-key",
+      "category": "outer join",
+      "label": "different",
+      "sibling": "emp-left-join-whole-composite-key",
+      "why": "dept_no is only part of dept_manager's key: a department with several managers repeats the assignment",
+      "left": "SELECT de.emp_no, de.dept_no FROM dept_emp AS de LEFT JOIN dept_manager AS dm ON dm.dept_no = de.dept_no WHERE de.emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, dept_no FROM dept_emp WHERE emp_no BETWEEN 10001 AND 10200",
+      "witness": "real"
+    },
+    {
+      "id": "emp-left-join-whole-composite-key-without-key",
+      "category": "outer join",
+      "label": "different",
+      "sibling": "emp-left-join-whole-composite-key",
+      "drop": [
+        "pk:dept_manager"
+      ],
+      "why": "without dept_manager's key the same (employee, department) may appear twice, with different dates",
+      "left": "SELECT de.emp_no, de.dept_no FROM dept_emp AS de LEFT JOIN dept_manager AS dm ON dm.emp_no = de.emp_no AND dm.dept_no = de.dept_no",
+      "right": "SELECT emp_no, dept_no FROM dept_emp",
+      "witness": {
+        "dept_manager": [
+          {
+            "emp_no": 10100,
+            "dept_no": "d001",
+            "from_date": "1990-01-01",
+            "to_date": "1991-01-01"
+          },
+          {
+            "emp_no": 10100,
+            "dept_no": "d001",
+            "from_date": "1992-01-01",
+            "to_date": "1993-01-01"
+          }
+        ],
+        "dept_emp": [
+          {
+            "emp_no": 10100,
+            "dept_no": "d001"
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-outer-to-inner-join",
+      "category": "outer join",
+      "label": "equivalent",
+      "why": "the filter rejects NULL, so the rows the left join pads are removed again and the join is an inner join",
+      "left": "SELECT e.emp_no, dm.from_date FROM employees AS e LEFT JOIN dept_manager AS dm ON dm.emp_no = e.emp_no WHERE dm.from_date > DATE '1990-01-01'",
+      "right": "SELECT e.emp_no, dm.from_date FROM employees AS e JOIN dept_manager AS dm ON dm.emp_no = e.emp_no WHERE dm.from_date > DATE '1990-01-01'"
+    },
+    {
+      "id": "emp-outer-to-inner-join-null-accepting",
+      "category": "outer join",
+      "label": "different",
+      "sibling": "emp-outer-to-inner-join",
+      "why": "the filter accepts the NULLs of unmatched employees, which the inner join does not produce",
+      "left": "SELECT e.emp_no, dm.from_date FROM employees AS e LEFT JOIN dept_manager AS dm ON dm.emp_no = e.emp_no WHERE dm.from_date > DATE '1990-01-01' OR dm.from_date IS NULL",
+      "right": "SELECT e.emp_no, dm.from_date FROM employees AS e JOIN dept_manager AS dm ON dm.emp_no = e.emp_no WHERE dm.from_date > DATE '1990-01-01' OR dm.from_date IS NULL",
+      "witness": "real"
+    },
+    {
+      "id": "emp-self-join-whole-key-titles",
+      "category": "self join",
+      "label": "equivalent",
+      "why": "the join is on all three columns of titles' primary key (emp_no, title, from_date), one DATE among them: each row meets only itself",
+      "left": "SELECT t1.emp_no, t1.title, t1.from_date FROM titles AS t1 JOIN titles AS t2 ON t1.emp_no = t2.emp_no AND t1.title = t2.title AND t1.from_date = t2.from_date WHERE t1.emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, title, from_date FROM titles WHERE emp_no BETWEEN 10001 AND 10200"
+    },
+    {
+      "id": "emp-self-join-part-of-key-titles",
+      "category": "self join",
+      "label": "different",
+      "sibling": "emp-self-join-whole-key-titles",
+      "why": "without from_date the join pairs two stints of the same title of one employee, so the row repeats",
+      "left": "SELECT t1.emp_no, t1.title, t1.from_date FROM titles AS t1 JOIN titles AS t2 ON t1.emp_no = t2.emp_no AND t1.title = t2.title WHERE t1.emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, title, from_date FROM titles WHERE emp_no BETWEEN 10001 AND 10200",
+      "witness": {
+        "titles": [
+          {
+            "emp_no": 10100,
+            "title": "Engineer",
+            "from_date": "1990-01-01",
+            "to_date": "1991-01-01"
+          },
+          {
+            "emp_no": 10100,
+            "title": "Engineer",
+            "from_date": "1992-01-01",
+            "to_date": "1993-01-01"
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-self-join-whole-key-salaries",
+      "category": "self join",
+      "label": "equivalent",
+      "why": "the join is on salaries' whole primary key (emp_no, from_date)",
+      "left": "SELECT s1.emp_no, s1.from_date, s1.salary FROM salaries AS s1 JOIN salaries AS s2 ON s1.emp_no = s2.emp_no AND s1.from_date = s2.from_date WHERE s1.emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, from_date, salary FROM salaries WHERE emp_no BETWEEN 10001 AND 10200"
+    },
+    {
+      "id": "emp-self-join-part-of-key-salaries",
+      "category": "self join",
+      "label": "different",
+      "sibling": "emp-self-join-whole-key-salaries",
+      "why": "emp_no alone is not salaries' key: an employee with several salary periods is paired with each of them",
+      "left": "SELECT s1.emp_no, s1.from_date, s1.salary FROM salaries AS s1 JOIN salaries AS s2 ON s1.emp_no = s2.emp_no WHERE s1.emp_no BETWEEN 10001 AND 10040",
+      "right": "SELECT emp_no, from_date, salary FROM salaries WHERE emp_no BETWEEN 10001 AND 10040",
+      "witness": "real"
+    },
+    {
+      "id": "emp-self-join-whole-key-without-key",
+      "category": "self join",
+      "label": "different",
+      "sibling": "emp-self-join-whole-key-salaries",
+      "drop": [
+        "pk:salaries"
+      ],
+      "why": "without salaries' key the same (employee, start date) may be stored twice",
+      "left": "SELECT s1.emp_no, s1.from_date, s1.salary FROM salaries AS s1 JOIN salaries AS s2 ON s1.emp_no = s2.emp_no AND s1.from_date = s2.from_date WHERE s1.emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, from_date, salary FROM salaries WHERE emp_no BETWEEN 10001 AND 10200",
+      "witness": {
+        "salaries": [
+          {
+            "emp_no": 10100,
+            "from_date": "1990-01-01",
+            "salary": 1
+          },
+          {
+            "emp_no": 10100,
+            "from_date": "1990-01-01",
+            "salary": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-distinct-on-key",
+      "category": "DISTINCT removal",
+      "label": "equivalent",
+      "why": "emp_no is employees' primary key, so no two rows are equal",
+      "left": "SELECT DISTINCT emp_no, last_name FROM employees",
+      "right": "SELECT emp_no, last_name FROM employees"
+    },
+    {
+      "id": "emp-distinct-on-non-key",
+      "category": "DISTINCT removal",
+      "label": "different",
+      "sibling": "emp-distinct-on-key",
+      "why": "last names repeat across employees",
+      "left": "SELECT DISTINCT last_name, gender FROM employees",
+      "right": "SELECT last_name, gender FROM employees",
+      "witness": "real"
+    },
+    {
+      "id": "emp-distinct-on-key-without-key",
+      "category": "DISTINCT removal",
+      "label": "different",
+      "sibling": "emp-distinct-on-key",
+      "drop": [
+        "pk:employees"
+      ],
+      "why": "without the primary key the same employee row may be stored twice",
+      "left": "SELECT DISTINCT emp_no, last_name FROM employees",
+      "right": "SELECT emp_no, last_name FROM employees",
+      "witness": {
+        "employees": [
+          {
+            "emp_no": 10100,
+            "last_name": "X"
+          },
+          {
+            "emp_no": 10100,
+            "last_name": "X"
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-distinct-on-composite-key-dept-emp",
+      "category": "DISTINCT removal",
+      "label": "equivalent",
+      "why": "(emp_no, dept_no) is dept_emp's primary key and these columns contain it",
+      "left": "SELECT DISTINCT dept_no, emp_no, from_date FROM dept_emp WHERE emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT dept_no, emp_no, from_date FROM dept_emp WHERE emp_no BETWEEN 10001 AND 10200"
+    },
+    {
+      "id": "emp-distinct-on-part-of-composite-key-dept-emp",
+      "category": "DISTINCT removal",
+      "label": "different",
+      "sibling": "emp-distinct-on-composite-key-dept-emp",
+      "why": "dept_no alone repeats: many employees work in a department",
+      "left": "SELECT DISTINCT dept_no FROM dept_emp WHERE emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT dept_no FROM dept_emp WHERE emp_no BETWEEN 10001 AND 10200",
+      "witness": "real"
+    },
+    {
+      "id": "emp-distinct-on-composite-key-titles",
+      "category": "DISTINCT removal",
+      "label": "equivalent",
+      "why": "titles' primary key is (emp_no, title, from_date): the DATE is a key column",
+      "left": "SELECT DISTINCT emp_no, title, from_date FROM titles WHERE emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, title, from_date FROM titles WHERE emp_no BETWEEN 10001 AND 10200"
+    },
+    {
+      "id": "emp-distinct-on-key-without-date-titles",
+      "category": "DISTINCT removal",
+      "label": "different",
+      "sibling": "emp-distinct-on-composite-key-titles",
+      "why": "without from_date two stints of the same title of one employee are equal rows",
+      "left": "SELECT DISTINCT emp_no, title FROM titles WHERE emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, title FROM titles WHERE emp_no BETWEEN 10001 AND 10200",
+      "witness": {
+        "titles": [
+          {
+            "emp_no": 10100,
+            "title": "Engineer",
+            "from_date": "1990-01-01",
+            "to_date": "1991-01-01"
+          },
+          {
+            "emp_no": 10100,
+            "title": "Engineer",
+            "from_date": "1992-01-01",
+            "to_date": "1993-01-01"
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-distinct-emp-from-date-titles",
+      "category": "DISTINCT removal",
+      "label": "different",
+      "sibling": "emp-distinct-on-composite-key-titles",
+      "why": "(emp_no, from_date) is not titles' key: the title is part of it, so one employee may start two titles on one day",
+      "left": "SELECT DISTINCT emp_no, from_date FROM titles WHERE emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, from_date FROM titles WHERE emp_no BETWEEN 10001 AND 10200",
+      "witness": {
+        "titles": [
+          {
+            "emp_no": 10100,
+            "title": "Engineer",
+            "from_date": "1990-01-01"
+          },
+          {
+            "emp_no": 10100,
+            "title": "Staff",
+            "from_date": "1990-01-01"
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-distinct-on-composite-key-salaries",
+      "category": "DISTINCT removal",
+      "label": "equivalent",
+      "why": "salaries' primary key is (emp_no, from_date)",
+      "left": "SELECT DISTINCT emp_no, from_date, salary FROM salaries WHERE emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, from_date, salary FROM salaries WHERE emp_no BETWEEN 10001 AND 10200"
+    },
+    {
+      "id": "emp-distinct-on-non-key-salaries",
+      "category": "DISTINCT removal",
+      "label": "different",
+      "sibling": "emp-distinct-on-composite-key-salaries",
+      "why": "an employee can be paid the same salary in two periods",
+      "left": "SELECT DISTINCT emp_no, salary FROM salaries WHERE emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, salary FROM salaries WHERE emp_no BETWEEN 10001 AND 10200",
+      "witness": {
+        "salaries": [
+          {
+            "emp_no": 10100,
+            "from_date": "1990-01-01",
+            "salary": 50000
+          },
+          {
+            "emp_no": 10100,
+            "from_date": "1991-01-01",
+            "salary": 50000
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-distinct-after-join-to-exists",
+      "category": "DISTINCT removal",
+      "label": "equivalent",
+      "why": "DISTINCT on the key of the outer table undoes the fan-out of the join: each employee once if any assignment exists",
+      "left": "SELECT DISTINCT e.emp_no, e.last_name FROM employees AS e JOIN dept_emp AS de ON de.emp_no = e.emp_no WHERE e.emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT e.emp_no, e.last_name FROM employees AS e WHERE e.emp_no BETWEEN 10001 AND 10200 AND EXISTS (SELECT 1 FROM dept_emp AS de WHERE de.emp_no = e.emp_no)"
+    },
+    {
+      "id": "emp-join-fan-out-without-distinct",
+      "category": "DISTINCT removal",
+      "label": "different",
+      "sibling": "emp-distinct-after-join-to-exists",
+      "why": "an employee with two department assignments appears twice in the join",
+      "left": "SELECT e.emp_no, e.last_name FROM employees AS e JOIN dept_emp AS de ON de.emp_no = e.emp_no WHERE e.emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT e.emp_no, e.last_name FROM employees AS e WHERE e.emp_no BETWEEN 10001 AND 10200 AND EXISTS (SELECT 1 FROM dept_emp AS de WHERE de.emp_no = e.emp_no)",
+      "witness": "real"
+    },
+    {
+      "id": "emp-count-not-null-column",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "titles.from_date is NOT NULL",
+      "left": "SELECT COUNT(from_date) FROM titles",
+      "right": "SELECT COUNT(*) FROM titles"
+    },
+    {
+      "id": "emp-count-nullable-column",
+      "category": "aggregation",
+      "label": "different",
+      "sibling": "emp-count-not-null-column",
+      "why": "titles.to_date is nullable (the one nullable column of the database)",
+      "left": "SELECT COUNT(to_date) FROM titles",
+      "right": "SELECT COUNT(*) FROM titles",
+      "witness": {
+        "titles": [
+          {
+            "emp_no": 10100,
+            "title": "Engineer",
+            "from_date": "1990-01-01",
+            "to_date": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-count-distinct-key",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "emp_no is employees' primary key",
+      "left": "SELECT COUNT(DISTINCT emp_no) FROM employees",
+      "right": "SELECT COUNT(*) FROM employees"
+    },
+    {
+      "id": "emp-count-distinct-non-key",
+      "category": "aggregation",
+      "label": "different",
+      "sibling": "emp-count-distinct-key",
+      "why": "emp_no repeats in salaries: one row per salary period",
+      "left": "SELECT COUNT(DISTINCT emp_no) FROM salaries",
+      "right": "SELECT COUNT(*) FROM salaries",
+      "witness": "real"
+    },
+    {
+      "id": "emp-group-by-dependent-column",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "hire_date depends on the key emp_no, so adding it to the grouping does not split a group",
+      "left": "SELECT e.emp_no, e.last_name, COUNT(*) AS n FROM employees AS e JOIN dept_emp AS de ON de.emp_no = e.emp_no WHERE e.emp_no BETWEEN 10001 AND 10200 GROUP BY e.emp_no, e.last_name, e.hire_date",
+      "right": "SELECT e.emp_no, e.last_name, COUNT(*) AS n FROM employees AS e JOIN dept_emp AS de ON de.emp_no = e.emp_no WHERE e.emp_no BETWEEN 10001 AND 10200 GROUP BY e.emp_no, e.last_name"
+    },
+    {
+      "id": "emp-group-by-independent-column",
+      "category": "aggregation",
+      "label": "different",
+      "sibling": "emp-group-by-dependent-column",
+      "why": "to_date does not depend on emp_no: an employee's salary periods end on different days",
+      "left": "SELECT s.emp_no, COUNT(*) AS n FROM salaries AS s WHERE s.emp_no BETWEEN 10001 AND 10200 GROUP BY s.emp_no, s.to_date",
+      "right": "SELECT s.emp_no, COUNT(*) AS n FROM salaries AS s WHERE s.emp_no BETWEEN 10001 AND 10200 GROUP BY s.emp_no",
+      "witness": "real"
+    },
+    {
+      "id": "emp-group-by-whole-key-is-identity",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "grouping by salaries' whole primary key makes each group one row, and the sum of one NOT NULL value is that value",
+      "left": "SELECT emp_no, from_date, SUM(salary) AS salary FROM salaries WHERE emp_no BETWEEN 10001 AND 10200 GROUP BY emp_no, from_date",
+      "right": "SELECT emp_no, from_date, salary FROM salaries WHERE emp_no BETWEEN 10001 AND 10200"
+    },
+    {
+      "id": "emp-group-by-part-of-key",
+      "category": "aggregation",
+      "label": "different",
+      "sibling": "emp-group-by-whole-key-is-identity",
+      "why": "one group per employee, not per salary period",
+      "left": "SELECT emp_no, SUM(salary) AS salary FROM salaries WHERE emp_no BETWEEN 10001 AND 10200 GROUP BY emp_no",
+      "right": "SELECT emp_no, salary FROM salaries WHERE emp_no BETWEEN 10001 AND 10200",
+      "witness": "real"
+    },
+    {
+      "id": "emp-having-on-group-key",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "a condition on the group key filters whole groups, before or after grouping",
+      "left": "SELECT dept_no, COUNT(*) AS n FROM dept_emp GROUP BY dept_no HAVING dept_no <> 'd005'",
+      "right": "SELECT dept_no, COUNT(*) AS n FROM dept_emp WHERE dept_no <> 'd005' GROUP BY dept_no"
+    },
+    {
+      "id": "emp-filter-vs-conditional-count",
+      "category": "aggregation",
+      "label": "different",
+      "sibling": "emp-having-on-group-key",
+      "why": "a department whose assignments have all ended is a group with count 0 in one query and no group in the other",
+      "left": "SELECT dept_no, COUNT(*) AS n FROM dept_emp WHERE to_date = DATE '9999-01-01' GROUP BY dept_no",
+      "right": "SELECT dept_no, COUNTIF(to_date = DATE '9999-01-01') AS n FROM dept_emp GROUP BY dept_no",
+      "witness": "real"
+    },
+    {
+      "id": "emp-filter-pushdown-through-group",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "a filter on the grouping column can run before the aggregate",
+      "left": "SELECT * FROM (SELECT emp_no, COUNT(*) AS n FROM salaries GROUP BY emp_no) WHERE emp_no = 10001",
+      "right": "SELECT emp_no, COUNT(*) AS n FROM salaries WHERE emp_no = 10001 GROUP BY emp_no"
+    },
+    {
+      "id": "emp-left-join-count-as-subquery",
+      "category": "aggregation",
+      "label": "equivalent",
+      "why": "grouping by departments' key keeps one row per department with its count of matches, as the correlated count does",
+      "left": "SELECT d.dept_no, COUNT(dm.emp_no) AS managers FROM departments AS d LEFT JOIN dept_manager AS dm ON dm.dept_no = d.dept_no GROUP BY d.dept_no",
+      "right": "SELECT d.dept_no, (SELECT COUNT(*) FROM dept_manager AS dm WHERE dm.dept_no = d.dept_no) AS managers FROM departments AS d"
+    },
+    {
+      "id": "emp-left-join-count-as-subquery-without-key",
+      "category": "aggregation",
+      "label": "different",
+      "sibling": "emp-left-join-count-as-subquery",
+      "drop": [
+        "pk:departments"
+      ],
+      "why": "without departments' key a department number may repeat: one query merges the two rows into one group, the other keeps both",
+      "left": "SELECT d.dept_no, COUNT(dm.emp_no) AS managers FROM departments AS d LEFT JOIN dept_manager AS dm ON dm.dept_no = d.dept_no GROUP BY d.dept_no",
+      "right": "SELECT d.dept_no, (SELECT COUNT(*) FROM dept_manager AS dm WHERE dm.dept_no = d.dept_no) AS managers FROM departments AS d",
+      "witness": {
+        "departments": [
+          {
+            "dept_no": "d001",
+            "dept_name": "A"
+          },
+          {
+            "dept_no": "d001",
+            "dept_name": "B"
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-in-to-exists",
+      "category": "subquery",
+      "label": "equivalent",
+      "why": "IN over a subquery is a semi join, as EXISTS is",
+      "left": "SELECT emp_no FROM employees WHERE emp_no IN (SELECT emp_no FROM dept_manager WHERE from_date > DATE '1990-01-01')",
+      "right": "SELECT e.emp_no FROM employees AS e WHERE EXISTS (SELECT 1 FROM dept_manager AS dm WHERE dm.emp_no = e.emp_no AND dm.from_date > DATE '1990-01-01')"
+    },
+    {
+      "id": "emp-in-to-join-fan-out",
+      "category": "subquery",
+      "label": "different",
+      "sibling": "emp-in-to-exists",
+      "why": "an employee in two departments is listed twice by the join and once by IN",
+      "left": "SELECT e.emp_no FROM employees AS e JOIN dept_emp AS de ON de.emp_no = e.emp_no WHERE e.emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no FROM employees WHERE emp_no BETWEEN 10001 AND 10200 AND emp_no IN (SELECT emp_no FROM dept_emp)",
+      "witness": "real"
+    },
+    {
+      "id": "emp-in-to-join-on-key",
+      "category": "subquery",
+      "label": "equivalent",
+      "why": "departments' key makes the join return at most one row per assignment, so it filters like IN",
+      "left": "SELECT de.emp_no FROM dept_emp AS de WHERE de.emp_no BETWEEN 10001 AND 10200 AND de.dept_no IN (SELECT dept_no FROM departments WHERE dept_name = 'Sales')",
+      "right": "SELECT de.emp_no FROM dept_emp AS de JOIN departments AS d ON d.dept_no = de.dept_no WHERE de.emp_no BETWEEN 10001 AND 10200 AND d.dept_name = 'Sales'"
+    },
+    {
+      "id": "emp-in-to-join-on-key-without-key",
+      "category": "subquery",
+      "label": "different",
+      "sibling": "emp-in-to-join-on-key",
+      "drop": [
+        "pk:departments"
+      ],
+      "why": "without departments' key two 'Sales' rows with one number repeat the assignment in the join",
+      "left": "SELECT de.emp_no FROM dept_emp AS de WHERE de.emp_no BETWEEN 10001 AND 10200 AND de.dept_no IN (SELECT dept_no FROM departments WHERE dept_name = 'Sales')",
+      "right": "SELECT de.emp_no FROM dept_emp AS de JOIN departments AS d ON d.dept_no = de.dept_no WHERE de.emp_no BETWEEN 10001 AND 10200 AND d.dept_name = 'Sales'",
+      "witness": {
+        "departments": [
+          {
+            "dept_no": "d001",
+            "dept_name": "Sales"
+          },
+          {
+            "dept_no": "d001",
+            "dept_name": "Sales"
+          }
+        ],
+        "dept_emp": [
+          {
+            "emp_no": 10100,
+            "dept_no": "d001"
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-not-in-to-not-exists",
+      "category": "subquery",
+      "label": "equivalent",
+      "why": "dept_manager.emp_no is NOT NULL, so NOT IN has no NULL to turn the answer unknown",
+      "left": "SELECT emp_no FROM employees WHERE emp_no NOT IN (SELECT emp_no FROM dept_manager)",
+      "right": "SELECT e.emp_no FROM employees AS e WHERE NOT EXISTS (SELECT 1 FROM dept_manager AS dm WHERE dm.emp_no = e.emp_no)"
+    },
+    {
+      "id": "emp-not-in-nullable",
+      "category": "subquery",
+      "label": "different",
+      "sibling": "emp-not-in-to-not-exists",
+      "why": "titles.to_date is nullable: one NULL makes NOT IN return nothing, while NOT EXISTS still returns the rows",
+      "left": "SELECT s.emp_no FROM salaries AS s WHERE s.emp_no < 10100 AND s.to_date NOT IN (SELECT t.to_date FROM titles AS t)",
+      "right": "SELECT s.emp_no FROM salaries AS s WHERE s.emp_no < 10100 AND NOT EXISTS (SELECT 1 FROM titles AS t WHERE t.to_date = s.to_date)",
+      "witness": {
+        "salaries": [
+          {
+            "emp_no": 10100,
+            "from_date": "1990-01-01",
+            "to_date": "1991-01-01"
+          }
+        ],
+        "titles": [
+          {
+            "emp_no": 10100,
+            "title": "Engineer",
+            "from_date": "1990-01-01",
+            "to_date": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-not-in-to-not-exists-date-column",
+      "category": "subquery",
+      "label": "equivalent",
+      "why": "both DATE columns are NOT NULL",
+      "left": "SELECT e.emp_no FROM employees AS e WHERE e.hire_date NOT IN (SELECT de.to_date FROM dept_emp AS de)",
+      "right": "SELECT e.emp_no FROM employees AS e WHERE NOT EXISTS (SELECT 1 FROM dept_emp AS de WHERE de.to_date = e.hire_date)"
+    },
+    {
+      "id": "emp-not-in-to-not-exists-date-column-without-not-null",
+      "category": "subquery",
+      "label": "different",
+      "sibling": "emp-not-in-to-not-exists-date-column",
+      "drop": [
+        "not_null:dept_emp.to_date"
+      ],
+      "why": "without NOT NULL on dept_emp.to_date a NULL end date empties the NOT IN",
+      "left": "SELECT e.emp_no FROM employees AS e WHERE e.hire_date NOT IN (SELECT de.to_date FROM dept_emp AS de)",
+      "right": "SELECT e.emp_no FROM employees AS e WHERE NOT EXISTS (SELECT 1 FROM dept_emp AS de WHERE de.to_date = e.hire_date)",
+      "witness": {
+        "employees": [
+          {
+            "emp_no": 10100,
+            "hire_date": "1990-01-01"
+          }
+        ],
+        "dept_emp": [
+          {
+            "emp_no": 10101,
+            "dept_no": "d001",
+            "to_date": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-exists-to-distinct-join",
+      "category": "subquery",
+      "label": "equivalent",
+      "why": "DISTINCT on departments' key turns the join back into a semi join",
+      "left": "SELECT d.dept_no FROM departments AS d WHERE EXISTS (SELECT 1 FROM dept_manager AS dm WHERE dm.dept_no = d.dept_no)",
+      "right": "SELECT DISTINCT d.dept_no FROM departments AS d JOIN dept_manager AS dm ON dm.dept_no = d.dept_no"
+    },
+    {
+      "id": "emp-exists-to-join-without-distinct",
+      "category": "subquery",
+      "label": "different",
+      "sibling": "emp-exists-to-distinct-join",
+      "why": "a department with two managers over time is listed twice by the join",
+      "left": "SELECT d.dept_no FROM departments AS d WHERE EXISTS (SELECT 1 FROM dept_manager AS dm WHERE dm.dept_no = d.dept_no)",
+      "right": "SELECT d.dept_no FROM departments AS d JOIN dept_manager AS dm ON dm.dept_no = d.dept_no",
+      "witness": "real"
+    },
+    {
+      "id": "emp-union-all-vs-distinct",
+      "category": "set operation",
+      "label": "different",
+      "why": "an employee in both tables is kept twice by UNION ALL and once by UNION DISTINCT",
+      "left": "SELECT emp_no FROM dept_emp WHERE emp_no BETWEEN 10001 AND 10200 UNION ALL SELECT emp_no FROM titles WHERE emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no FROM dept_emp WHERE emp_no BETWEEN 10001 AND 10200 UNION DISTINCT SELECT emp_no FROM titles WHERE emp_no BETWEEN 10001 AND 10200",
+      "witness": "real"
+    },
+    {
+      "id": "emp-union-all-of-complementary-filters",
+      "category": "set operation",
+      "label": "equivalent",
+      "why": "gender is NOT NULL, so the two filters split the table",
+      "left": "SELECT emp_no FROM employees WHERE gender = 'M' UNION ALL SELECT emp_no FROM employees WHERE gender <> 'M'",
+      "right": "SELECT emp_no FROM employees"
+    },
+    {
+      "id": "emp-union-all-of-complementary-filters-nullable",
+      "category": "set operation",
+      "label": "different",
+      "sibling": "emp-union-all-of-complementary-filters",
+      "why": "a title with a NULL to_date is in neither half",
+      "left": "SELECT emp_no FROM titles WHERE to_date > DATE '1995-01-01' UNION ALL SELECT emp_no FROM titles WHERE to_date <= DATE '1995-01-01'",
+      "right": "SELECT emp_no FROM titles",
+      "witness": {
+        "titles": [
+          {
+            "emp_no": 10100,
+            "title": "Engineer",
+            "from_date": "1990-01-01",
+            "to_date": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-intersect-to-in-on-not-null",
+      "category": "set operation",
+      "label": "equivalent",
+      "why": "INTERSECT DISTINCT is a de-duplicated semi join",
+      "left": "SELECT emp_no FROM dept_emp INTERSECT DISTINCT SELECT emp_no FROM dept_manager",
+      "right": "SELECT DISTINCT de.emp_no FROM dept_emp AS de WHERE de.emp_no IN (SELECT emp_no FROM dept_manager)"
+    },
+    {
+      "id": "emp-intersect-to-in-nullable",
+      "category": "set operation",
+      "label": "different",
+      "sibling": "emp-intersect-to-in-on-not-null",
+      "why": "INTERSECT treats two NULLs as equal and IN does not: titles.to_date is nullable",
+      "left": "SELECT to_date FROM titles INTERSECT DISTINCT SELECT to_date FROM salaries",
+      "right": "SELECT DISTINCT t.to_date FROM titles AS t WHERE t.to_date IN (SELECT to_date FROM salaries)",
+      "witness": {
+        "titles": [
+          {
+            "emp_no": 10100,
+            "title": "Engineer",
+            "from_date": "1990-01-01",
+            "to_date": null
+          }
+        ],
+        "salaries": [
+          {
+            "emp_no": 10100,
+            "from_date": "1990-01-01",
+            "to_date": "1991-01-01"
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-is-null-on-not-null",
+      "category": "NULL semantics",
+      "label": "equivalent",
+      "why": "employees.birth_date is NOT NULL",
+      "left": "SELECT emp_no FROM employees WHERE birth_date IS NULL",
+      "right": "SELECT emp_no FROM employees WHERE FALSE"
+    },
+    {
+      "id": "emp-is-null-on-nullable",
+      "category": "NULL semantics",
+      "label": "different",
+      "sibling": "emp-is-null-on-not-null",
+      "why": "titles.to_date may be NULL",
+      "left": "SELECT emp_no FROM titles WHERE to_date IS NULL",
+      "right": "SELECT emp_no FROM titles WHERE FALSE",
+      "witness": {
+        "titles": [
+          {
+            "emp_no": 10100,
+            "title": "Engineer",
+            "from_date": "1990-01-01",
+            "to_date": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-coalesce-on-not-null",
+      "category": "NULL semantics",
+      "label": "equivalent",
+      "why": "salaries.to_date is NOT NULL, so COALESCE returns it",
+      "left": "SELECT emp_no, COALESCE(to_date, DATE '9999-01-01') AS to_date FROM salaries WHERE emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, to_date FROM salaries WHERE emp_no BETWEEN 10001 AND 10200"
+    },
+    {
+      "id": "emp-coalesce-on-nullable",
+      "category": "NULL semantics",
+      "label": "different",
+      "sibling": "emp-coalesce-on-not-null",
+      "why": "titles.to_date may be NULL, which the COALESCE replaces by the open-ended sentinel",
+      "left": "SELECT emp_no, COALESCE(to_date, DATE '9999-01-01') AS to_date FROM titles WHERE emp_no BETWEEN 10001 AND 10200",
+      "right": "SELECT emp_no, to_date FROM titles WHERE emp_no BETWEEN 10001 AND 10200",
+      "witness": {
+        "titles": [
+          {
+            "emp_no": 10100,
+            "title": "Engineer",
+            "from_date": "1990-01-01",
+            "to_date": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-negated-comparison",
+      "category": "NULL semantics",
+      "label": "equivalent",
+      "why": "gender is NOT NULL, so NOT (a = b) and a <> b agree",
+      "left": "SELECT emp_no FROM employees WHERE NOT (gender = 'F')",
+      "right": "SELECT emp_no FROM employees WHERE gender <> 'F'"
+    },
+    {
+      "id": "emp-negated-comparison-nullable",
+      "category": "NULL semantics",
+      "label": "different",
+      "sibling": "emp-negated-comparison",
+      "why": "for a NULL to_date the negated comparison is unknown, so the row is dropped, while the second query keeps it",
+      "left": "SELECT emp_no FROM titles WHERE NOT (to_date = DATE '9999-01-01')",
+      "right": "SELECT emp_no FROM titles WHERE to_date <> DATE '9999-01-01' OR to_date IS NULL",
+      "witness": {
+        "titles": [
+          {
+            "emp_no": 10100,
+            "title": "Engineer",
+            "from_date": "1990-01-01",
+            "to_date": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-year-extract-vs-range",
+      "category": "DATE",
+      "label": "equivalent",
+      "why": "a year is the half-open range from its first day to the first day of the next year",
+      "left": "SELECT emp_no FROM employees WHERE EXTRACT(YEAR FROM hire_date) = 1990",
+      "right": "SELECT emp_no FROM employees WHERE hire_date >= DATE '1990-01-01' AND hire_date < DATE '1991-01-01'"
+    },
+    {
+      "id": "emp-year-extract-vs-closed-range",
+      "category": "DATE",
+      "label": "different",
+      "sibling": "emp-year-extract-vs-range",
+      "why": "the closed range includes the first day of 1991",
+      "left": "SELECT emp_no FROM employees WHERE EXTRACT(YEAR FROM hire_date) = 1990",
+      "right": "SELECT emp_no FROM employees WHERE hire_date >= DATE '1990-01-01' AND hire_date <= DATE '1991-01-01'",
+      "witness": {
+        "employees": [
+          {
+            "emp_no": 10100,
+            "hire_date": "1991-01-01"
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-between-dates-vs-comparisons",
+      "category": "DATE",
+      "label": "equivalent",
+      "why": "BETWEEN is inclusive at both ends",
+      "left": "SELECT emp_no, from_date FROM salaries WHERE emp_no BETWEEN 10001 AND 10200 AND from_date BETWEEN DATE '1990-01-01' AND DATE '1995-12-31'",
+      "right": "SELECT emp_no, from_date FROM salaries WHERE emp_no BETWEEN 10001 AND 10200 AND from_date >= DATE '1990-01-01' AND from_date <= DATE '1995-12-31'"
+    },
+    {
+      "id": "emp-between-dates-vs-exclusive",
+      "category": "DATE",
+      "label": "different",
+      "sibling": "emp-between-dates-vs-comparisons",
+      "why": "a salary that starts on 1995-12-31 is lost by the exclusive end",
+      "left": "SELECT emp_no, from_date FROM salaries WHERE emp_no BETWEEN 10001 AND 10200 AND from_date BETWEEN DATE '1990-01-01' AND DATE '1995-12-31'",
+      "right": "SELECT emp_no, from_date FROM salaries WHERE emp_no BETWEEN 10001 AND 10200 AND from_date >= DATE '1990-01-01' AND from_date < DATE '1995-12-31'",
+      "witness": {
+        "salaries": [
+          {
+            "emp_no": 10100,
+            "from_date": "1995-12-31",
+            "salary": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-open-ended-sentinel-day",
+      "category": "DATE",
+      "label": "equivalent",
+      "why": "the only day after 9998-12-31 and not after 9999-01-01 is 9999-01-01 itself",
+      "left": "SELECT emp_no, salary FROM salaries WHERE emp_no BETWEEN 10001 AND 10200 AND to_date = DATE '9999-01-01'",
+      "right": "SELECT emp_no, salary FROM salaries WHERE emp_no BETWEEN 10001 AND 10200 AND to_date > DATE '9998-12-31' AND to_date <= DATE '9999-01-01'"
+    },
+    {
+      "id": "emp-open-ended-sentinel-or-later",
+      "category": "DATE",
+      "label": "different",
+      "sibling": "emp-open-ended-sentinel-day",
+      "why": "DATE reaches 9999-12-31: a period ending in June 9999 is open-ended by the second test only",
+      "left": "SELECT emp_no, salary FROM salaries WHERE emp_no BETWEEN 10001 AND 10200 AND to_date = DATE '9999-01-01'",
+      "right": "SELECT emp_no, salary FROM salaries WHERE emp_no BETWEEN 10001 AND 10200 AND to_date >= DATE '9999-01-01'",
+      "witness": {
+        "salaries": [
+          {
+            "emp_no": 10100,
+            "from_date": "1990-01-01",
+            "to_date": "9999-06-01",
+            "salary": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "emp-window-filter-on-partition-key",
+      "category": "window",
+      "label": "equivalent",
+      "why": "a filter on the partition column removes whole partitions only, so the ranks inside the others are unchanged",
+      "left": "SELECT emp_no, dept_no, r FROM (SELECT emp_no, dept_no, RANK() OVER (PARTITION BY dept_no ORDER BY from_date) AS r FROM dept_emp) WHERE dept_no = 'd005' AND emp_no < 10100",
+      "right": "SELECT emp_no, dept_no, r FROM (SELECT emp_no, dept_no, RANK() OVER (PARTITION BY dept_no ORDER BY from_date) AS r FROM dept_emp WHERE dept_no = 'd005') WHERE emp_no < 10100"
+    },
+    {
+      "id": "emp-window-filter-on-other-column",
+      "category": "window",
+      "label": "different",
+      "sibling": "emp-window-filter-on-partition-key",
+      "why": "filtering on emp_no before ranking removes rows from the partitions and changes the ranks of the others",
+      "left": "SELECT emp_no, dept_no, r FROM (SELECT emp_no, dept_no, RANK() OVER (PARTITION BY dept_no ORDER BY from_date) AS r FROM dept_emp) WHERE emp_no < 10100",
+      "right": "SELECT emp_no, dept_no, RANK() OVER (PARTITION BY dept_no ORDER BY from_date) AS r FROM dept_emp WHERE emp_no < 10100",
+      "witness": "real"
+    }
+  ]
+}

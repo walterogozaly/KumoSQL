@@ -31,4 +31,6 @@ The data is never copied out of the upstream scripts: the harness reads the INSE
 
 Pagila's DDL and data are two files; `LICENSE.txt` of Pagila has the SHA-256 `516e7dac679ac1eeb62d5614b01c4e7318154e9a147377d6264954215997ff38`. Its rows are `COPY` blocks, which the harness reads (`read_copy`); `pagila-insert-data.sql` (19 MB, the same data as `INSERT`s) is not committed.
 
+Employees (`employees/`) is the exception: `datacharmer/test_db` at commit `e324b56193ca506ab7cc1ab143a9153d8c4535d7` is licensed Creative Commons Attribution-Share Alike 3.0 and is 167 MB, so **none of its files is committed**. `tools/sample_db_employees.py` downloads the 13 pinned files (each SHA-256 is listed there) into `$KUMOSQL_BENCH_DATA/sample-db-employees` and loads them into a DuckDB file; the folder has only `adapted/schema.sql`, `workload.json` and `pairs.json`, shared under the same licence, and `NOTICE.md`.
+
 Each file can be fetched again from `https://raw.githubusercontent.com/<repo>/<commit>/<file>`; the harness checks the SHA-256 on every run.

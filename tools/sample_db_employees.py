@@ -275,6 +275,11 @@ def make_adapter(b):
         upstream = tuple(
             b.Upstream(name, REPO, COMMIT, name, digest, LICENCE) for name, digest in FILES.items()
         )
+        pins_summary = (
+            f"Employees {REPO}@{COMMIT[:10]}, 13 files (employees.sql, objects.sql, the 8 load_*.dump scripts, the two checksum "
+            "test scripts and README.md; the SHA-256 of each is in tools/sample_db_employees.py), Creative Commons Attribution-Share Alike 3.0, "
+            "downloaded at run time and never committed"
+        )
         published_counts = {
             "employees": 300024,
             "departments": 9,
