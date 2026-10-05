@@ -1,12 +1,12 @@
-"""Open false proofs: ``_union_all_branches`` reads through the parentheses of a cut operand (issue #518).
+"""``_union_all_branches`` does not read through a cut operand of a UNION ALL (issue #518).
 
-``algebraic_equivalence._union_all_branches`` steps through every ``Subquery``, so ``((SELECT x FROM t) ORDER BY x LIMIT 1)
-UNION ALL ...`` is read as the select of ``t`` with the tail gone. Its callers (``_aligned_branches`` and with it
-``_distribute``, ``_prune_union_all``, the aggregate splits in ``aggregate_rules``) then work on all of ``t``. The fix is to
-return ``None`` for a ``Subquery`` with an ``order``, ``limit`` or ``offset``, as ``setop_rules._unwrap`` and
-``union_filter_rules._branches`` do; it is in the algebraic core, which this sweep did not edit, so the tests that show
-the bug are marked ``xfail(strict=True)``: the thread that fixes the function removes the marker (strict makes a fix
-that forgets to fail loudly). Every pair returns different rows (DuckDB, optimizer off).
+``algebraic_equivalence._union_all_branches`` used to step through every ``Subquery``, so ``((SELECT x FROM t) ORDER BY x LIMIT 1)
+UNION ALL ...`` was read as the select of ``t`` with the tail gone. Its callers (``_aligned_branches`` and with it
+``_distribute``, ``_prune_union_all``, the aggregate splits in ``aggregate_rules``) then worked on all of ``t``, and the prover
+proved the cut and the uncut query equal (also what the rule fuzzer found as a ``_distribute`` firing that returned one row
+more). It now returns ``None`` for a ``Subquery`` with a ``limit`` or ``offset``, as ``setop_rules._unwrap`` and
+``union_filter_rules._branches`` do; an ORDER BY alone keeps every row, so that parenthesis is still read through. Every
+cut pair returns different rows (DuckDB, optimizer off).
 """
 
 from collections import Counter
@@ -51,10 +51,9 @@ READERS = [
     pytest.param("SELECT SUM(d.x) AS s FROM ({union}) AS d", id="global-aggregate"),
     pytest.param("SELECT d.x FROM ({union}) AS d JOIN p ON p.tid = d.x", id="join"),
 ]
-TAILS = [" LIMIT 1", " ORDER BY x LIMIT 1"]
+TAILS = [" LIMIT 1", " ORDER BY x LIMIT 1", " LIMIT 1 OFFSET 1"]
 
 
-@pytest.mark.xfail(strict=True, reason="algebraic_equivalence._union_all_branches reads through a cut Subquery (issue #518)")
 @pytest.mark.parametrize("reader", READERS)
 @pytest.mark.parametrize("tail", TAILS)
 def test_a_cut_operand_of_a_union_all_is_not_the_whole_table(reader, tail):
@@ -63,6 +62,26 @@ def test_a_cut_operand_of_a_union_all_is_not_the_whole_table(reader, tail):
     skip_if_unparseable(cut, whole)
     assert _differ(cut, whole), "the database must separate the pair"
     assert not _proven(cut, whole)
+
+
+@pytest.mark.parametrize("reader", READERS)
+def test_a_cut_operand_on_the_right_or_inside_more_parentheses_is_not_the_whole_table(reader):
+    for cut, whole in (
+        ("SELECT w AS x FROM u UNION ALL ((SELECT x FROM t) ORDER BY x LIMIT 1)", "SELECT w AS x FROM u UNION ALL (SELECT x FROM t)"),
+        ("(((SELECT x FROM t) ORDER BY x LIMIT 1)) UNION ALL SELECT w FROM u", "(SELECT x FROM t) UNION ALL SELECT w FROM u"),
+    ):
+        cut, whole = reader.format(union=cut), reader.format(union=whole)
+        skip_if_unparseable(cut, whole)
+        assert _differ(cut, whole), "the database must separate the pair"
+        assert not _proven(cut, whole)
+
+
+@pytest.mark.parametrize("reader", READERS)
+def test_an_ordered_operand_is_still_read_through(reader):
+    plain = reader.format(union=f"{PLAIN} UNION ALL SELECT w FROM u")
+    ordered = reader.format(union="((SELECT x FROM t) ORDER BY x) UNION ALL SELECT w FROM u")
+    assert not _differ(plain, ordered)
+    assert _proven(plain, ordered)
 
 
 @pytest.mark.parametrize("reader", READERS)

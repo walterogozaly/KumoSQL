@@ -73,7 +73,7 @@ branch lost its only aggregate and went from one row to a row per input row) and
 About 8,000 template cases over the aggregate, distinct and set, outer-join, grouping and window, and scalar
 generators fired about 70 rules and found nothing else.
 
-The set-operation sweep ([#518](https://github.com/walterogozaly/KumoSQL/issues/518)) found nine more, all fixed with
+The set-operation sweep ([#518](https://github.com/walterogozaly/KumoSQL/issues/518)) found ten more, all fixed with
 regression tests:
 
 - `merge_same_source` and `set_operation_to_exists` unwrapped the parentheses of an operand and lost an `ORDER BY` /
@@ -102,10 +102,10 @@ regression tests:
   `OFFSET` on the union or on the parentheses of a branch, so `SELECT UPPER(x) FROM (SELECT 'a' AS x UNION ALL SELECT 'b'
   ORDER BY x DESC LIMIT 1) AS d` became both rows (`tests/test_constant_union_tail.py`).
 
-One more is **open**: `algebraic_equivalence._union_all_branches` steps through every `Subquery`, so
-`((SELECT x FROM t) ORDER BY x LIMIT 1) UNION ALL ...` is read as all of `t` by everything built on it (`_aligned_branches`,
-`_distribute`, `_prune_union_all`, the aggregate splits). The prover proves `SELECT d.x FROM (((SELECT x FROM t) LIMIT 1) UNION ALL
-SELECT w FROM u) AS d` equal to the same query without the `LIMIT`, also under `GROUP BY`, a global `SUM` and a join. The fix is
-one line in the algebraic core, which this sweep left alone: return `None` for a `Subquery` with an `order`, `limit` or `offset`.
-`tests/test_union_all_branches_tail.py` holds the witnesses as strict `xfail` tests (monkeypatching that function makes them
-pass); the thread that edits the core removes the markers.
+One more was found by reading and then seen by the fuzzer: `algebraic_equivalence._union_all_branches` stepped through every
+`Subquery`, so `((SELECT x FROM t) ORDER BY x LIMIT 1) UNION ALL ...` was read as all of `t` by everything built on it
+(`_aligned_branches`, `_distribute`, `_prune_union_all`, the aggregate splits). The prover proved `SELECT d.x FROM (((SELECT x FROM t)
+LIMIT 1) UNION ALL SELECT w FROM u) AS d` equal to the same query without the `LIMIT`, also under `GROUP BY`, a global `SUM` and a
+join, and the `_distribute` firing the `distinct_sets` target reported (one row more than the query) is the same bug. It now returns
+`None` for a `Subquery` with a `LIMIT` or `OFFSET` (an `ORDER BY` alone keeps every row and is still read through), as
+`setop_rules._unwrap` does (`tests/test_union_all_branches_tail.py`).
