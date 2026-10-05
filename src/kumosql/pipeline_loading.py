@@ -1052,7 +1052,7 @@ def load_sqlx_project(
     # Read every asset first: a ref() names an action wherever its config put it.
     known: dict[str, list[Target]] = {}
     renamed: dict[Target, tuple[str, ...]] = {}  # targets a project prefix or suffix changed -> as the config wrote them
-    computed_identities = False  # an asset's name, schema or database is computed: refs to unlisted names stay unresolved
+    computed_assets: list[dict] = []
 
     def read_asset(path: Path):
         relative = str(path.relative_to(root))
@@ -1096,21 +1096,28 @@ def load_sqlx_project(
         )
         # Declarations name an existing table: the project's prefix and suffix settings leave them alone.
         target = logical if kind == "declaration" else naming.apply(logical)
+        identity_diagnostic = None
         if computed_identity:
-            # A computed name is also what a ref() finds the action by, so it cannot be found at all; a computed database
-            # or schema leaves the name known, so refs still find the action (at the project defaults, the best guess).
-            diagnostics.append(PipelineDiagnostic(
+            identity_diagnostic = PipelineDiagnostic(
                 target.key, "dynamic_config",
                 f"its config {' and '.join(computed_identity)} is computed (a project variable or a call), so which table it "
                 "writes is not known" + ("; refs by name do not find it" if "name" in computed_identity else
                                          "; a placeholder spelling the expression stands in for it" if placed == computed_identity else
-                                         "; the project default stands in for it")))
+                                         "; the project default stands in for it"))
+            diagnostics.append(identity_diagnostic)
             if kind != "declaration":
                 kind = "unknown"
-            if "name" in computed_identity:
-                nonlocal computed_identities
-                computed_identities = True
-        if "name" not in computed_identity:
+            computed_assets.append({
+                "relative": relative.replace("\\", "/"),
+                "target": target,
+                "logical_name": None if "name" in computed_identity else (identity["name"] or stem),
+                "computed_identity": tuple(computed_identity),
+                "unresolved": not set(computed_identity).issubset(placed),
+                "declaration": kind == "declaration",
+                "diagnostic": identity_diagnostic,
+            })
+        identity_is_indexable = not computed_identity or set(computed_identity).issubset(placed)
+        if "name" not in computed_identity and identity_is_indexable:
             if target not in known.setdefault(logical.name, []):  # a JavaScript publish already listed it
                 known[logical.name].append(target)
             if target != logical:
@@ -1120,7 +1127,7 @@ def load_sqlx_project(
                 target.key, "dynamic_config",
                 "its config type is computed (a project variable or a call), so it is not read as a table: it may be incremental"))
         if kind == "declaration":
-            if "name" not in computed_identity:
+            if "name" not in computed_identity and identity_is_indexable:
                 sources[target.key] = target
             return None
         return relative, sections, config, kind, target
@@ -1180,7 +1187,8 @@ def load_sqlx_project(
 
         def plain_ref(match: re.Match[str]) -> str:
             try:
-                return _parse_ref_args(match.group("args"), default, known, names_may_be_missing=incomplete_js or computed_identities,
+                names_may_be_missing = incomplete_js or any(asset["unresolved"] for asset in computed_assets)
+                return _parse_ref_args(match.group("args"), default, known, names_may_be_missing=names_may_be_missing,
                                        logical=renamed, variables=naming.variables, placeholders=placeholders).sql()
             except ValueError:
                 return match.group(0)
@@ -1235,7 +1243,9 @@ def load_sqlx_project(
     js_sets_database = False
 
     def unknown_names() -> dict:
-        return {"names_may_be_missing": incomplete_js or computed_identities, "schema_settles": not js_sets_database,
+        unresolved_identities = [asset for asset in computed_assets if asset["unresolved"]]
+        sets_database = js_sets_database or any("database" in asset["computed_identity"] for asset in unresolved_identities)
+        return {"names_may_be_missing": incomplete_js or bool(unresolved_identities), "schema_settles": not sets_database,
                 "logical": renamed, "variables": naming.variables, "placeholders": placeholders}
 
     js_files: dict[str, str] = {}
@@ -1271,39 +1281,6 @@ def load_sqlx_project(
                 str(path.relative_to(root)), "js_declaration_dynamic",
                 "declares or names tables that cannot be read without running the code; refs to unlisted names were left unresolved"))
 
-    if incomplete_js and compiled_targets is None:
-        diagnostics.append(PipelineDiagnostic(
-            "", "compiled_graph_not_requested",
-            "the Dataform API fallback for computed declarations was not used: no Dataform repository is connected to this "
-            "load, so refs to unlisted names stay unresolved"))
-    if incomplete_js and compiled_targets is not None:
-        # Dataform's own compilation lists every action, which settles what the JavaScript could not.
-        try:
-            fetched = list(compiled_targets())
-            if not fetched:
-                raise _EmptyCompilation()
-        except Exception as exc:  # noqa: BLE001 - no credentials, offline, no matching repository: stay unresolved
-            reason = getattr(exc, "reason", None)
-            outcome = "was skipped" if getattr(exc, "attempted", True) is False else "was tried and failed"
-            detail = f" ({reason}): {exc}" if reason else f" ({type(exc).__name__})"
-            if isinstance(exc, _EmptyCompilation):
-                detail = " (empty_compilation): the compilation lists no actions"
-            diagnostics.append(PipelineDiagnostic(
-                "", "compiled_graph_unavailable",
-                f"the Dataform API fallback for computed declarations {outcome}{detail}; refs to unlisted names stay unresolved"))
-        else:
-            for (target_db, target_schema, target_name), is_declaration in fetched:
-                target = Target(target_db, target_schema, target_name)
-                if target not in known.setdefault(target.name, []):
-                    known[target.name].append(target)
-                if is_declaration:
-                    sources[target.key] = target
-            incomplete_js = False
-            diagnostics.append(PipelineDiagnostic(
-                "", "compiled_graph_read",
-                f"the Dataform API fallback for computed declarations read {len(fetched)} compiled actions "
-                f"({sum(1 for _, is_declaration in fetched if is_declaration)} declarations)"))
-
     known_targets: set[Target] = set()
     reads_output: list[tuple[str, Target]] = []  # (reading action, table it ref()s): checked against operations once all load
     pending = []
@@ -1327,6 +1304,102 @@ def load_sqlx_project(
                     pending.append(asset)
         except Exception as exc:  # noqa: BLE001 - one odd file must not fail the whole project
             unreadable(relative_js, exc)
+
+    fallback_needed = incomplete_js or any(asset["unresolved"] for asset in computed_assets)
+    if fallback_needed and compiled_targets is None:
+        diagnostics.append(PipelineDiagnostic(
+            "", "compiled_graph_not_requested",
+            "the Dataform API fallback for computed declarations or SQLX identities was not used: no Dataform repository is "
+            "connected to this load, so unresolved refs stay unresolved"))
+    if fallback_needed and compiled_targets is not None:
+        # Dataform's own compilation lists the actions JavaScript or SQLX config expressions could not identify.
+        try:
+            fetched = list(compiled_targets())
+            if not fetched:
+                raise _EmptyCompilation()
+        except Exception as exc:  # noqa: BLE001 - no credentials, offline, no matching repository: stay unresolved
+            reason = getattr(exc, "reason", None)
+            outcome = "was skipped" if getattr(exc, "attempted", True) is False else "was tried and failed"
+            detail = f" ({reason}): {exc}" if reason else f" ({type(exc).__name__})"
+            if isinstance(exc, _EmptyCompilation):
+                detail = " (empty_compilation): the compilation lists no actions"
+            diagnostics.append(PipelineDiagnostic(
+                "", "compiled_graph_unavailable",
+                f"the Dataform API fallback for computed declarations or SQLX identities {outcome}{detail}; "
+                "unresolved refs stay unresolved"))
+        else:
+            compiled = []
+            for action in fetched:
+                (target_db, target_schema, target_name), is_declaration = action
+                target = Target(target_db, target_schema, target_name)
+                canonical = getattr(action, "canonical_target", None)
+                if not (isinstance(canonical, tuple) and len(canonical) == 3
+                        and all(isinstance(part, str) for part in canonical)):
+                    canonical = None
+                file_path = getattr(action, "file_path", None)
+                compiled.append({
+                    "target": target,
+                    "is_declaration": bool(is_declaration),
+                    "canonical": Target(*canonical) if canonical else None,
+                    "file_path": file_path.replace("\\", "/").removeprefix("./") if isinstance(file_path, str) else None,
+                })
+
+            for asset in computed_assets:
+                relative = asset["relative"].removeprefix("./")
+                same_file = [item for item in compiled if item["file_path"] == relative
+                             and item["is_declaration"] == asset["declaration"]]
+                candidates = same_file
+                if not candidates and asset["logical_name"] is not None:
+                    name = asset["logical_name"]
+                    candidates = [item for item in compiled if item["is_declaration"] == asset["declaration"]
+                                  and (item["target"].name == name
+                                       or (item["canonical"] is not None and item["canonical"].name == name))]
+                if len(candidates) != 1:
+                    continue  # no source file or unique name match: do not guess which action this config describes
+
+                item = candidates[0]
+                target = item["target"]
+                canonical = item["canonical"]
+                logical = canonical or Target(
+                    target.database, target.schema, asset["logical_name"] or target.name)
+                previous = asset["target"]
+                for key in {asset["logical_name"], previous.name} - {None}:
+                    if key in known:
+                        known[key] = [candidate for candidate in known[key] if candidate != previous]
+                        if not known[key]:
+                            known.pop(key)
+                if sources.get(previous.key) == previous:
+                    sources.pop(previous.key)
+                if previous in renamed:
+                    renamed.pop(previous)
+                if target not in known.setdefault(logical.name, []):
+                    known[logical.name].append(target)
+                if target != logical:
+                    renamed[target] = (logical.database, logical.schema, logical.name)
+                if asset["declaration"]:
+                    sources[target.key] = target
+                for index, pending_asset in enumerate(pending):
+                    if (pending_asset[4] == previous
+                            and pending_asset[0].replace("\\", "/").removeprefix("./") == relative):
+                        pending[index] = (*pending_asset[:4], target)
+                if asset["diagnostic"] in diagnostics:
+                    diagnostics.remove(asset["diagnostic"])
+                asset["target"] = target
+                asset["unresolved"] = False
+
+            for item in compiled:
+                target = item["target"]
+                if target not in known.setdefault(target.name, []):
+                    known[target.name].append(target)
+                if item["is_declaration"]:
+                    sources[target.key] = target
+            incomplete_js = False
+            js_sets_database = False
+            diagnostics.append(PipelineDiagnostic(
+                "", "compiled_graph_read",
+                f"the Dataform API fallback for computed declarations read {len(fetched)} compiled actions "
+                f"({sum(1 for item in compiled if item['is_declaration'])} declarations)"))
+
     known_targets.update(target for targets in known.values() for target in targets)
     for asset in pending:
         try:

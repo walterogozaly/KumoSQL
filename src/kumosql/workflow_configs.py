@@ -52,6 +52,23 @@ class WorkflowConfigError(RuntimeError):
         self.status = status
 
 
+class CompiledActionTarget(tuple):
+    """A two-item ``(target, is_declaration)`` value with optional source identity metadata."""
+
+    def __new__(
+        cls,
+        target: tuple[str, str, str],
+        is_declaration: bool,
+        *,
+        file_path: str | None = None,
+        canonical_target: tuple[str, str, str] | None = None,
+    ) -> CompiledActionTarget:
+        value = super().__new__(cls, (target, is_declaration))
+        value.file_path = file_path
+        value.canonical_target = canonical_target
+        return value
+
+
 class CompiledGraphUnavailable(WorkflowConfigError):
     """The compilation behind a repository could not be read. ``reason`` is one of ``no_projects``, ``no_credentials``,
     ``no_repository``, ``no_compilation`` and ``api_error``; ``attempted`` says whether Dataform was contacted at all.
@@ -276,8 +293,21 @@ def _compiled_actions(repo: str) -> list[tuple[tuple[str, str, str], bool]]:
     for action in actions:
         target = action.get("target") if isinstance(action, dict) else None
         if isinstance(target, dict) and isinstance(target.get("name"), str):
-            targets.append(((str(target.get("database") or ""), str(target.get("schema") or ""), target["name"]),
-                            isinstance(action.get("declaration"), dict)))
+            canonical = action.get("canonicalTarget")
+            canonical_target = None
+            if isinstance(canonical, dict) and isinstance(canonical.get("name"), str):
+                canonical_target = (
+                    str(canonical.get("database") or ""),
+                    str(canonical.get("schema") or ""),
+                    canonical["name"],
+                )
+            file_path = action.get("filePath")
+            targets.append(CompiledActionTarget(
+                (str(target.get("database") or ""), str(target.get("schema") or ""), target["name"]),
+                isinstance(action.get("declaration"), dict),
+                file_path=file_path if isinstance(file_path, str) else None,
+                canonical_target=canonical_target,
+            ))
     return targets
 
 

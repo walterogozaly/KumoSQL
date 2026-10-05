@@ -33,11 +33,11 @@ Dataform's `${ref("name")}` resolves to the action or declaration with that name
 
 When Google credentials are available, KumoSQL also reads Dataform workflow configurations. A model gets a production-schedule marker when an active configuration selects it, directly or through dependencies. Here, active production means a scheduled, enabled configuration using the release named `production`.
 
-## Tables that only JavaScript can name
+## Tables whose names or locations need Dataform to work them out
 
-Some Dataform projects list their source tables with JavaScript that only Dataform can run, for example a loop over a list the code builds. KumoSQL cannot read those names from the files, so it asks Dataform itself, when it can: it looks for the Dataform repository that matches your connected git repository, using the Google Cloud projects you chose on the BigQuery page, starting in one region (`us-central1` unless you set another) and then trying the others, and with your Google credentials. If that works, the names resolve and lineage shows the real source tables. Either way the load says what happened: it read the compilation, it was not asked because no repository is connected, or it could not be read and why (no projects chosen, no credentials, no matching repository in any region, no compilation yet, or an error from Dataform). The message never names your projects or tables.
+Some Dataform projects list source tables with JavaScript that only Dataform can run, such as a loop over a list the code builds. A `.sqlx` file can also compute its `name`, `schema` or `database`. If project settings do not settle that value and KumoSQL cannot represent it with a stable local placeholder, KumoSQL asks Dataform for the project's latest compilation if it can: it looks for the Dataform repository that matches your connected git repository, using the Google Cloud projects you chose on the BigQuery page, starting in one region (`us-central1` unless you set another) and then trying the others, with your Google credentials. If the compilation has a matching source file (or one unambiguous static name), KumoSQL uses its real target so lineage points to the real table. Otherwise, that identity stays unresolved. The load says what happened: it read the compilation, it was not asked because no repository is connected, or it could not be read and why (no projects chosen, no credentials, no matching repository in any region, no compilation yet, or an error from Dataform). The message never names your projects or tables.
 
-Limit: the answer is Dataform's latest compilation, which can differ from the commit you loaded. The [full guide](../docs/dataform-repositories.md) lists each reason and the test that covers them.
+Limit: the answer is Dataform's latest compilation, which can differ from the commit you loaded. The [full guide](../docs/dataform-repositories.md) lists each reason and explains how actions are matched.
 
 ## What KumoSQL will not guess
 
@@ -53,7 +53,7 @@ Three more things it handles the way Dataform does:
 
 More of the same, from the later rounds of the audit:
 
-- If a table's name, schema or database is computed, KumoSQL does not pretend to know which table it is. The same goes for a `ref("f" + "eed")` that is built from pieces: it stays unresolved instead of being read as two separate names.
+- Without a matching Dataform compilation, if a table's name, schema or database is computed, KumoSQL does not pretend to know which table it is. The same goes for a `ref("f" + "eed")` that is built from pieces: it stays unresolved instead of being read as two separate names.
 - A table whose dataset is written as a call into your own `includes/` code, such as `functions.baseSchema("ga4")`, is still not a dataset KumoSQL can name, but it can tell two such tables apart by the text of the call. Two tables called `event` in datasets built by `baseSchema("ga4")` and `productSchema("ga4")` stay two tables, and a `ref` written with the same call finds the right one. A `ref` whose call matches no table is left unresolved rather than guessed, because the call could produce any dataset. A dataset taken from a local variable is still unreadable.
 - Settings such as a table-name prefix or a dataset suffix rename every table Dataform builds (not the declared source tables). KumoSQL applies them, so the names in lineage and impact match what Dataform creates. For example, with a prefix `t` and a suffix `sbx`, a table `a` in dataset `ds` is `ds_sbx.t_a`. Your `ref("a")` still finds it.
 - A reference to something that does not exist, or that is spelled with the wrong capital letters, is reported, because Dataform would refuse the project. KumoSQL still loads it so the rest can be analysed.
