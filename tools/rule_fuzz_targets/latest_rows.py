@@ -1,4 +1,5 @@
-"""The first (or latest) row of each group: ``latest_row_rules`` and ``rank_interchange``.
+"""The first (or latest) row of each group: ``latest_row_rules`` (and ``rank_interchange``, once that rule is merged: its firings are
+checked by the same templates).
 
 Templates over ``t(id, x, y, ..)`` with declared keys that sometimes make ``(x, y)`` a total order and sometimes
 leave ties, nullable and NOT NULL order columns, both directions and NULL placements, and the near misses
