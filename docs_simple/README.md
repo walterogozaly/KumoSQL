@@ -34,6 +34,7 @@ This folder is the plain-language companion to [the full documentation](../docs/
 | Learn what a query guarantees about its rows | [Output properties](output-properties.md) |
 | Find results that change when rows tie | [Ties](ties.md) |
 | Use keys and other data guarantees in a proof | [Constraint-dependent rewrites](constraint-rewrites.md) |
+| Save a query relationship with its scope and evidence | [Saved query relationships](relation-declarations.md) |
 | Check incremental updates | [Incremental models](incremental.md) |
 | Understand join size estimates | [Join ordering](joinorder.md) |
 | Work on the UI's data endpoints | [UI roadmap](ui-roadmap.md) |

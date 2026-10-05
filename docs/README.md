@@ -26,6 +26,7 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Output properties](output-properties.md) | Never-NULL columns, unique keys and row bounds, inferred without running a query |
 | [Ties and nondeterministic results](ties.md) | Windows, LIMITs and aggregates whose result can depend on how tied rows are ordered, and what would pin them down |
 | [Constraint-dependent rewrites](constraint-rewrites.md) | Rewrites that hold only under declared NOT NULL columns, keys and foreign keys |
+| [Query-to-query relation declarations](relation-declarations.md) | Versioned relation premises with named output alignment, provenance and applicability scope |
 | [Incremental models](incremental.md) | Whether an incremental run equals a full refresh |
 | [Join ordering and cardinality](joinorder.md) | Sub-join size estimates and join orders, in pure Python |
 | [UI roadmap](ui-roadmap.md) | The JSON each graph, cost and change view reads |
