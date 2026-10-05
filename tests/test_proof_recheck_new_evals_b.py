@@ -243,3 +243,13 @@ def test_targeted_test_data_mutant_pairs_run_over_the_suite_schema():
     for case in cases:
         if case is not None:
             assert all(name.startswith("src__") for name in case.tables) and case.meta["results"] == "bigquery"
+
+
+def test_numeric_pair_without_a_faithful_duckdb_reading_is_unrunnable_not_a_difference():
+    # CAST(CAST(n AS BIGNUMERIC) AS NUMERIC) is the identity in BigQuery; the DuckDB translation narrows it to DECIMAL(38, 5)
+    adapter = nb.ADAPTERS["numeric-traps"]
+    item = next(i for i in adapter.items() if i["pair"] == "numeric-bignumeric-roundtrip")
+    case = adapter.case(item)
+    assert case is not None and case.meta["faithful"] is False
+    record = engine.recheck(case, budget=20, seconds=20)
+    assert record["verdict"] == "unrunnable"

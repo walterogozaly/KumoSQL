@@ -168,6 +168,13 @@ class NumericTraps(Adapter):
             sides.append(text)
             faithful = faithful and ok
         columns = [_bq_column(c, nt.TYPES["t"][c]) for c in nt.SCHEMA["t"]]
+        if not faithful:
+            # no faithful DuckDB reading exists (BIGNUMERIC has 38 fractional digits, DuckDB's DECIMAL tops out at scale 38 with
+            # 38 digits in all, and the translation narrows it); a difference there is the translation, not the proof
+            from recheck.new_evals_b_suites import _unrunnable
+
+            return _unrunnable(self.name, item["pair"], case.left, case.right, item["held_out"],
+                               {"unrunnable": "no faithful DuckDB reading of the pair (BIGNUMERIC)", "faithful": False})
         meta = {"label": case.label, "verdict": report.verdict if report is not None else None, "assumptions": list(result.assumptions),
                 "faithful": faithful, "numeric": "special" if item["special"] else "finite"}
         if not item["special"]:
