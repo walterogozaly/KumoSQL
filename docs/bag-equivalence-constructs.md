@@ -31,6 +31,6 @@ The `GROUPING SETS` rewrite and `FILTER` are read now, but several Calcite pairs
 
 ## Measured effect
 
-`python tools/uexpr_bench.py calcite spark --trials 20` with 0 wrong: the SQLSolver Calcite suite went from 172 to 180 of 232 pairs proved (pairs 4, 5, 34, 68, 93, 98, 157, 223 are new) and the Spark suite from 104 to 114 of 123 (46, 52, 53, 56, 57, 118, 119, 121, 122, 126). TPC-H and TPC-C are unchanged. The must-not-prove pairs (Calcite 100, Spark 50, 60, 61) stay unproven.
+`python tools/uexpr_bench.py calcite spark --trials 20` with 0 wrong: the SQLSolver Calcite suite went from 172 to between 180 and 182 of 232 pairs proved (pairs 4, 5, 34, 68, 93, 98, 157, 223 are new) and the Spark suite from 104 to between 114 and 116 of 123 (46, 52, 53, 54, 56, 57, 118, 119, 121, 122, 126). TPC-H and TPC-C are unchanged. The must-not-prove pairs (Calcite 100, Spark 50, 60, 61) stay unproven.
 
 The count of proved pairs can differ by a pair or two between runs: whether a proof is found depends on the numbering of the fresh variables, which depends on how many queries the process has already translated.
