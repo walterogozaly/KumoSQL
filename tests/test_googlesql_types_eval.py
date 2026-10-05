@@ -23,7 +23,7 @@ SPEC.loader.exec_module(ev)
 FLOOR_EXACT = 14755
 # sqlglot 26.0.0, the oldest the project allows, cannot parse BY NAME / CORRESPONDING modes, ARRAY_ZIP's named
 # arguments, GRAPH_TABLE and aggregate WHERE filters; those queries are unknown there, so its floor is lower. Still 0 wrong.
-FLOOR_EXACT_OLD_SQLGLOT = 10732
+FLOOR_EXACT_OLD_SQLGLOT = 13364
 # sqlglotc (the compiled sqlglot) raises a TypeError parsing `value.(pkg.extension)`, a PROTO extension access; those
 # four queries have no types there, 3 exact BigQuery columns fewer than the interpreted parser gives.
 COMPILED_SQLGLOT_SHORTFALL = 3
