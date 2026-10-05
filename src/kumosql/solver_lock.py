@@ -10,6 +10,7 @@ It is re-entrant, so a prover that calls another (or a rule that uses Z3) does n
 from __future__ import annotations
 
 import functools
+import gc
 import threading
 
 try:
@@ -26,7 +27,20 @@ def serialized(function):
     @functools.wraps(function)
     def locked(*args, **kwargs):
         with SOLVER_LOCK:
-            return function(*args, **kwargs)
+            # Cyclic Z3 terms from a completed proof can otherwise be collected
+            # by a different Python thread while this thread uses the context.
+            restore_gc = gc.isenabled()
+            if restore_gc:
+                gc.disable()
+            try:
+                return function(*args, **kwargs)
+            finally:
+                if restore_gc:
+                    try:
+                        if gc.get_count()[0] >= gc.get_threshold()[0]:
+                            gc.collect()
+                    finally:
+                        gc.enable()
 
     return locked
 

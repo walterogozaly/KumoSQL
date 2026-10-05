@@ -10,7 +10,7 @@ KumoSQL now reads each query a second time with its own small parser, built from
 
 - **A second reading.** For BigQuery, MySQL, PostgreSQL and DuckDB, the grouping of operators, `NOT`, `NULL` tests, `BETWEEN`, `IN`, `CASE`, `DESC` and `DISTINCT` must match sqlglot's tree. Some text a database simply rejects (BigQuery refuses `a > 10 IS TRUE`) and is declined for that reason. Text in a dialect it has no table for, or syntax it does not know, is left as it was read.
 - **A round trip.** sqlglot prints its tree and reads it back; the grouping must come back the same.
-- **Several sqlglot versions.** A tool reads the same queries under sqlglot 26.0.0, 30.20.0, 30.21.0 and the compiled build and lists any that differ.
+- **Two builds of the supported version.** An optional tool reads the same queries under normal and compiled SQLGlot 30.21.0 and lists any that differ. Routine CI runs the full suite once on the compiled build; older version comparisons in the reference are historical.
 
 ## Does the second reading itself get checked?
 

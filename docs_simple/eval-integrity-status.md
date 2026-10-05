@@ -14,4 +14,10 @@ The fixes that are in place:
 - **Broken input.** A rewrite that leaves a cut-off query untouched is no longer labelled trusted, and a rewrite of a query BigQuery would reject (a column its subquery does not have, or `HAVING` with no grouping) is no longer called proven. The check only catches those two cases.
 - **Random testing.** The pairs are fixed before any proof is tried, and a proof of a query against an identical copy of itself no longer counts toward the floors.
 
+## Held-out evidence, checked on October 5
+
+A `held_out` label does not by itself mean those examples were unseen during development. QED, R-Bot, SQLSolver and cost recommendations have no protected split; the VeriEQL conditional sample has none, and some numeric examples were inspected while developing the rules. Singh conditional and SQL-RewriteBench retain clean splits. Splitting already inspected examples into groups afterwards would not make them unseen.
+
+Adding fresh evidence requires an unused, labelled source and a recorded baseline. Checking actual BigQuery savings also requires an authorized billing project and a suitable workload; local DuckDB checks cannot stand in for that measurement. The [full status update](../docs/eval-integrity-status.md#held-out-status-update-for-615-2026-10-05) records the source and access gaps. No scores or corpus labels change in this documentation update.
+
 Limits: a few things were found but left to the evals that own them. The full page lists each finding and its state. No benchmark score changed because of these fixes.
