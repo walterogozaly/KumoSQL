@@ -16,7 +16,7 @@ Four wrong rewrites on the first runs: two in the rules that handle provably emp
 
 ## Looking inside the big rules
 
-Some rules are really a bundle of smaller rewrites: one name in the report, several different shapes inside. Counting that name as "fired" can hide a shape that was never tried. Three generators (`distinct_variants`, `eager_variants`, `aggregate_variants`) write one query for each shape and one near miss for each safety check, for example a `LIMIT` that would see repeated rows or a `COUNT(*)` that would count them. A small test makes sure each shape still triggers its rewrite, so a later edit cannot quietly stop it. The full list is in the [full reference](../docs/rule-fuzzing.md#variants-inside-one-rule).
+Some rules are really a bundle of smaller rewrites: one name in the report, several different shapes inside. Counting that name as "fired" can hide a shape that was never tried. Four generators (`distinct_variants`, `eager_variants`, `aggregate_variants`, `keyed_variants`) write one query for each shape and one near miss for each safety check, for example a `LIMIT` that would see repeated rows, a `COUNT(*)` that would count them, or a key that may be NULL. A small test makes sure each shape still triggers its rewrite, so a later edit cannot quietly stop it. The full list is in the [full reference](../docs/rule-fuzzing.md#variants-inside-one-rule).
 
 ## Limits
 

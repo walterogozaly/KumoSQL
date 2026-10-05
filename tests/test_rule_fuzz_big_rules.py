@@ -1,4 +1,4 @@
-"""The ``distinct_variants``, ``eager_variants`` and ``aggregate_variants`` rule-fuzz generators (tools/rule_fuzz_targets):
+"""The DISTINCT, eager, aggregate and keyed rule-fuzz generators (tools/rule_fuzz_targets):
 every rewrite they aim at still fires on its ``FIRES`` query. Tracing only, no DuckDB, so a template edit that quietly
 stops a variant from firing fails here instead of leaving the fuzzer with a rule it no longer exercises."""
 
@@ -13,9 +13,9 @@ pytest.importorskip("duckdb")
 TOOLS = Path(__file__).resolve().parent.parent / "tools"
 sys.path.insert(0, str(TOOLS))
 import rule_fuzz as fuzz  # noqa: E402
-from rule_fuzz_targets import aggregate_variants, distinct_variants, eager_variants  # noqa: E402
+from rule_fuzz_targets import aggregate_variants, distinct_variants, eager_variants, keyed_variants  # noqa: E402
 
-from kumosql import aggregate_rules, dedup_join_rules, distinct_rules, join_rewrites, set_split_rules  # noqa: E402
+from kumosql import aggregate_rules, dedup_join_rules, distinct_rules, join_rewrites, keyed_rules, set_split_rules  # noqa: E402
 
 # rewrites inside one traced rule: ``module.function`` targets are recorded when they return a rewrite
 INSIDE = {
@@ -37,7 +37,7 @@ INSIDE = {
 
 ENTRIES = [
     (module.__name__.rsplit(".", 1)[-1], target, case)
-    for module in (distinct_variants, eager_variants, aggregate_variants)
+    for module in (distinct_variants, eager_variants, aggregate_variants, keyed_variants)
     for target, case in module.fire_list()
 ]
 
@@ -76,7 +76,7 @@ def test_each_targeted_rewrite_fires(recorded, module, target, case):
 def test_every_template_expands_to_a_parsable_query():
     import sqlglot
 
-    for module in (distinct_variants, eager_variants, aggregate_variants):
+    for module in (distinct_variants, eager_variants, aggregate_variants, keyed_variants):
         for case in module.cases(1, len(module.TEMPLATES)):
             sqlglot.parse_one(case["sql"], read="bigquery")
             assert set(case["schema"]) == {"t", "u", "p"}
@@ -100,3 +100,28 @@ def test_chained_foreign_keys_hold_in_every_generated_database():
     for seed in range(3):
         for database in fuzz.build_databases(case, seed):
             assert not fuzz.fixture_errors(case, database["tables"]), database["name"]
+
+
+def test_keyed_guards_keep_their_near_misses():
+    import sqlglot
+
+    generated = keyed_variants.cases(seed=1, count=len(keyed_variants.TEMPLATES))
+    near_misses = {
+        2: "remove_keyed_grouping",
+        5: "drop_keyed_distinct",
+        6: "drop_keyed_distinct",
+        7: "drop_keyed_distinct",
+        10: "exists_over_aggregate",
+        11: "exists_over_aggregate",
+        12: "exists_over_aggregate",
+        13: "exists_over_aggregate",
+    }
+    for index, target in near_misses.items():
+        fires, crashes = fuzz.trace_case(generated[index], only={target})
+        assert not crashes, generated[index]["sql"]
+        assert target not in {fire.rule for fire in fires}, generated[index]["sql"]
+
+    # ROLLUP is expanded into separate groups earlier in normalize; check the keyed rule's own extended-grouping guard.
+    rollup = sqlglot.parse_one(generated[3]["sql"], read="bigquery")
+    kwargs = fuzz.normalize_kwargs(generated[3])
+    assert keyed_rules.remove_keyed_grouping(rollup, kwargs["keys"], fuzz._not_null_as_prover(generated[3])) is None
