@@ -3,27 +3,34 @@
 sqlglot keeps some backslash escapes of a BigQuery literal undecoded: ``'a\\"b'`` reads as the text ``a\\"b``,
 which differs from ``'a"b'`` although BigQuery gives both the same string (and sqlglot writes the first back as
 ``'a\\\\"b'``, a different string). It also reads two adjacent quoted names, ``col``col``, as one name containing a
-backtick. ``canonical_literals`` rewrites the source text before it is parsed: every plain string whose escapes
-are all among ``\\\\ \\' \\" \\` \\? \\n \\r \\t`` becomes a single-quoted literal using only ``\\\\``, ``\\'``, ``\\n``,
-``\\r`` and ``\\t``, and a space goes between adjacent backtick names. Raw strings (``r'..'``), strings with other
-escapes (``\\x41``, ``\\u0041``, octal) and everything else are left as written, so equal values written with those
-escapes stay unproven rather than being called different by a wrong reading.
+backtick. ``canonical_literals`` rewrites the source text before it is parsed: every plain string has its escapes
+decoded (``\\\\ \\' \\" \\` \\? \\a \\b \\f \\n \\r \\t \\v``, ``\\x41`` and octal below 128, ``\\u0041``, ``\\U00000041``) and becomes a
+single-quoted literal using only ``\\\\``, ``\\'``, ``\\n``, ``\\r``, ``\\t`` and the control escapes, and a space goes between adjacent
+backtick names. Raw strings (``r'..'``) and everything else are left as written. A string with an escape whose value is
+not certain (``\\xE9``, which BigQuery may read as a byte) is reported by ``invalid_literal``, so the provers decline it:
+sqlglot reads ``'\\x41'`` and ``'\\\\x41'`` as the same four characters, and the structural prover once proved them equal.
 
 Bytes literals (``b'..'``, and raw ``rb'..'``) are decoded and written back with printable ASCII as is and every other
 byte as ``\\xHH``. sqlglot reads ``\\\\`` in a bytes literal as one backslash but keeps ``\\x41`` undecoded, so
 ``b'\\\\x41'`` (four bytes) and ``b'\\x41'`` (the one byte ``A``) used to read the same.
 
-A single-quoted literal holding a line break is not valid GoogleSQL and is left as written.
+A single-quoted literal holding a line break is not valid GoogleSQL and is left as written (and declined by ``invalid_literal``).
 """
 
 from __future__ import annotations
 
-_SIMPLE = {"\\": "\\", "'": "'", '"': '"', "`": "`", "?": "?", "n": "\n", "r": "\r", "t": "\t"}
-_OUT = {"\\": "\\\\", "'": "\\'", "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+_SIMPLE = {"\\": "\\", "'": "'", '"': '"', "`": "`", "?": "?", "n": "\n", "r": "\r", "t": "\t", "a": "\a", "b": "\b", "f": "\f", "v": "\v"}
+_OUT = {"\\": "\\\\", "'": "\\'", "\n": "\\n", "\r": "\\r", "\t": "\\t", "\a": "\\a", "\b": "\\b", "\f": "\\f", "\v": "\\v"}
+_HEX_DIGITS = "0123456789abcdefABCDEF"
 
 
 def _decode(body: str) -> str | None:
-    """The string value of an escaped literal body, ``None`` if it uses an escape this module does not decode."""
+    """The string value of an escaped literal body, ``None`` if it uses an escape whose value this module cannot be sure of.
+
+    ``\\xhh`` and an octal ``\\ooo`` are decoded only below 128, where a character and a byte are the same thing (above that
+    BigQuery may read them as UTF-8 bytes); ``\\uhhhh`` and ``\\Uhhhhhhhh`` are code points. sqlglot decodes some of these and
+    keeps the others as text, so ``'\\x41'`` and ``'\\\\x41'`` both reach it as the four characters ``\\x41``.
+    """
 
     out = []
     i = 0
@@ -33,10 +40,30 @@ def _decode(body: str) -> str | None:
             out.append(char)
             i += 1
             continue
-        if i + 1 >= len(body) or body[i + 1] not in _SIMPLE:
+        code = body[i + 1 : i + 2]
+        if code in _SIMPLE:
+            out.append(_SIMPLE[code])
+            i += 2
+            continue
+        if code in ("x", "X"):
+            width, base, skip = 2, 16, 2
+        elif code in ("u", "U"):
+            width, base, skip = (4 if code == "u" else 8), 16, 2
+        elif code in "01234567" and code:
+            width, base, skip = 3, 8, 1
+        else:
             return None
-        out.append(_SIMPLE[body[i + 1]])
-        i += 2
+        digits = body[i + skip : i + skip + width]
+        allowed = _HEX_DIGITS if base == 16 else "01234567"
+        if len(digits) != width or any(d not in allowed for d in digits):
+            return None
+        value = int(digits, base)
+        if code not in ("u", "U") and value >= 128:
+            return None
+        if value == 0 or value > 0x10FFFF or 0xD800 <= value <= 0xDFFF:
+            return None
+        out.append(chr(value))
+        i += skip + width
     return "".join(out)
 
 
@@ -111,7 +138,7 @@ def invalid_literal(sql: str) -> bool:
     it equal to a valid query with the escaped spelling.
     """
 
-    if "\n" not in sql and "\r" not in sql:
+    if "\n" not in sql and "\r" not in sql and "\\" not in sql:
         return False
     i, size = 0, len(sql)
     while i < size:
@@ -131,10 +158,21 @@ def invalid_literal(sql: str) -> bool:
             end, quote, body = _string_end(sql, i)
             if body is not None and _invalid(quote, body):
                 return True
+            if body is not None and "\\" in body and not _prefixed(sql, i) and _decode(body) is None:
+                return True  # an escape whose value is not certain: sqlglot would read it the same as a backslash and text
             i = end
         else:
             i += 1
     return False
+
+
+def _prefixed(sql: str, start: int) -> bool:
+    """Whether the quote at ``start`` opens a raw or bytes literal (``r'..'``, ``b'..'``, ``rb'..'``): a prefix not part of a longer word."""
+
+    j = start
+    while j > 0 and sql[j - 1] in "rRbB":
+        j -= 1
+    return start - j in (1, 2) and not (j > 0 and (sql[j - 1].isalnum() or sql[j - 1] == "_"))
 
 
 def canonical_literals(sql: str) -> str:

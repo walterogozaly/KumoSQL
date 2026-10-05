@@ -3,7 +3,7 @@
 import pytest
 
 from kumosql.equivalence import prove_equivalent
-from kumosql.string_literals import canonical_literals
+from kumosql.string_literals import canonical_literals, invalid_literal
 
 
 @pytest.mark.parametrize(
@@ -19,7 +19,10 @@ from kumosql.string_literals import canonical_literals
         # bytes: printable ASCII as is, every other byte (quote and backslash too) as \xHH
         (r"SELECT b'x\n', Rb'q\"', B'\x41', b'\101', b'it\'s', b'é'", r"SELECT b'x\x0A', b'q\x5C" + '"' + r"', b'A', b'A', b'it\x27s', b'\xC3\xA9'"),
         (r"SELECT b'\\x41', b'\u0041'", r"SELECT b'\x5Cx41', b'\u0041'"),
-        (r"SELECT '\x41', 'A'", r"SELECT '\x41', 'A'"),
+        (r"SELECT '\x41', '\101', '\u0041', '\U00000041', 'A'", "SELECT 'A', 'A', 'A', 'A', 'A'"),
+        (r"SELECT '\a\b\f\v', '\u00e9'", r"SELECT '\a\b\f\v', 'é'"),
+        # an escape of uncertain value (a byte above 127?) is left as written
+        (r"SELECT '\xE9', '\377', '\q'", r"SELECT '\xE9', '\377', '\q'"),
         ("SELECT 1 -- it's \\\nFROM t", "SELECT 1 -- it's \\\nFROM t"),
         ("SELECT 'unterminated\\'", "SELECT 'unterminated\\'"),
     ],
@@ -73,3 +76,27 @@ def test_execution_check_reads_escapes_like_bigquery():
 
     assert _duck(r"SELECT 'a\"b'", "bigquery") == _duck("SELECT 'a\"b'", "bigquery")
     assert _duck("SELECT `a``b` FROM t", "bigquery") == _duck("SELECT `a` `b` FROM t", "bigquery")
+
+
+@pytest.mark.parametrize("escaped, plain", [(r"'\x41'", "'A'"), (r"'\101'", "'A'"), (r"'\U00000041'", "'A'"), (r"'a\x22b'", "'a\"b'")])
+def test_a_hex_octal_or_unicode_escape_is_the_character_it_names(escaped, plain):
+    assert prove_equivalent(f"SELECT {escaped} AS x FROM t", f"SELECT {plain} AS x FROM t").proven
+
+
+@pytest.mark.parametrize("escaped, other", [(r"'\x41'", r"'\\x41'"), (r"'\u0041'", r"'\\u0041'"), (r"'\U00000041'", r"'\\U00000041'"), (r"'\101'", r"'\\101'")])
+def test_an_escape_is_not_proved_equal_to_a_backslash_and_the_same_text(escaped, other):
+    # sqlglot reads both as the characters backslash, x, 4, 1; BigQuery reads the first as the one letter A.
+    assert not prove_equivalent(f"SELECT {escaped} AS x FROM t", f"SELECT {other} AS x FROM t").proven
+
+
+@pytest.mark.parametrize("escape", [r"'\xE9'", r"'\377'", r"'\q'", r"'a\xzz'"])
+def test_an_escape_of_uncertain_value_is_never_proved(escape):
+    sql = f"SELECT {escape} AS x FROM t"
+    assert not prove_equivalent(sql, sql).proven
+    assert invalid_literal(sql)
+
+
+def test_raw_and_bytes_literals_keep_their_escapes_without_being_declined():
+    assert not invalid_literal(r"SELECT r'\xE9', b'\xE9', rb'\q', B'\377'")
+    assert invalid_literal(r"SELECT 'x', '\xE9'")
+    assert not invalid_literal(r"SELECT 1 AS \q -- '\xE9'")

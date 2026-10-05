@@ -4983,7 +4983,7 @@ def _prove_equivalent_algebraic_checked(left_sql: str, right_sql: str, **kwargs)
     try:
         left_sql, right_sql = (string_number_literals.normalize(sql, dialect, kwargs.get("types")) for sql in (left_sql, right_sql))
         if dialect == "bigquery" and (invalid_literal(left_sql) or invalid_literal(right_sql)):
-            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a single-quoted literal holds a line break (not valid GoogleSQL)")
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a string literal holds a line break GoogleSQL rejects, or an escape whose value is not certain (such as \\xE9)")
         unknown_type = dialect == "bigquery" and (invalid_type_name(left_sql) or invalid_type_name(right_sql))
         if unknown_type:
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BigQuery would reject the query: {unknown_type}")

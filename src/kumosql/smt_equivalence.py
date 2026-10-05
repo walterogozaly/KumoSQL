@@ -79,7 +79,7 @@ from . import proof_columns
 from .set_operations import positional_sql_pair
 from .smt_args import check_args
 from .solver_lock import bound, bounded_solver, serialized
-from .string_literals import canonical_literals
+from .string_literals import canonical_literals, invalid_literal
 from .type_names import invalid_type_name
 from .sqlx_fragments import masked_template_problem
 from . import numeric_column_reading, smt_errors, smt_group_sums, smt_numeric, smt_values, string_number_compare, string_number_literals
@@ -4879,6 +4879,8 @@ def _prove_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     if masked:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, masked)
     if dialect == "bigquery":
+        if invalid_literal(left_sql) or invalid_literal(right_sql):
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a string literal holds a line break or an escape whose value is not certain")
         left_sql, right_sql = canonical_literals(left_sql), canonical_literals(right_sql)
     left_sql, right_sql, problem = positional_sql_pair(left_sql, right_sql, dialect)
     if problem:

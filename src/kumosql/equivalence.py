@@ -1174,7 +1174,7 @@ def prove_equivalent(
     if invalid_literal(left_sql) or invalid_literal(right_sql):
         return EquivalenceResult(
             status=EquivalenceStatus.NOT_PROVEN,
-            reason="a single-quoted literal holds a line break, which GoogleSQL rejects",
+            reason="a string literal holds a line break GoogleSQL rejects, or an escape whose value is not certain (such as \\xE9)",
         )
     unknown_type = invalid_type_name(left_sql) or invalid_type_name(right_sql)
     if unknown_type:
