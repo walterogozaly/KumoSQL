@@ -25,3 +25,11 @@ Run from a development checkout. The full guide supplies unsafe and composition 
 The suite checks proofs against small DuckDB databases and replays counterexamples. It distinguishes false proofs, counterexamples that fail to show a difference, bugs in generated labels, and behavior-changing rule steps.
 
 Finding no difference on the generated databases is executed evidence. It does not establish unbounded equivalence. Coverage and wrong-answer counts are separate so an unknown answer is not mistaken for a false proof.
+
+## Queries that cannot return a row
+
+Some generated pairs differ by a small edit (a constant, a dropped `NOT`) inside a query that returns nothing whatever the data. Example: a derived table sums `b` over rows where `b >= a`; those rows all have a real `b`, so the sum is never NULL, and an outer filter `WHERE sum IS NULL` can never be true. Both versions of such a query are empty, so they are equivalent. KumoSQL tracks which columns are always NULL or never NULL, and when a filter contradicts that, it replaces the filter by `FALSE`.
+
+It is careful about the cases that look similar but are not empty: a sum over no rows with no `GROUP BY` is one NULL row, `ROLLUP` and `CUBE` add a total row, a `LEFT JOIN` can pad a column with NULL, and `COUNT` is never NULL. If it cannot tell, it leaves the query alone.
+
+The evidence is the unit tests, with near misses that really return a row, plus a random comparison of rewritten and original queries on small databases. That is evidence, not a proof of the rule. See the [full reference](../../docs/evals/fuzzing.md#queries-that-can-never-return-a-row-null-facts) for the exact conditions.

@@ -66,6 +66,17 @@ Seeds 31 (fuzz, count 40: 850 cases) and 31 (compose, 60 queries) over the riche
 
 The generated shapes also cover window functions, QUALIFY, SAFE_*/NULLIF/IF, date arithmetic, UNNEST, STRUCT and NULL-heavy LEFT/RIGHT/FULL joins. Counterexamples that need a fractional value are replayed on DOUBLE columns (they are valid for FLOAT64 only). A fix from the first run over these shapes: when no integer model exists, a counterexample column that the queries only compare with numbers could be given a string; the model now prefers any numeric value before any other.
 
+## Queries that can never return a row (NULL facts)
+
+Some SQLancer mutants change a constant, drop a `NOT` or drop a filter inside a query that returns no row either way, so the two sides are equivalent only because both are empty. `src/kumosql/null_facts.py` (`null_contradiction`, the first entry of the select rule tuple in `algebraic_equivalence.normalize`) turns the WHERE or HAVING of such a select into `FALSE`, and `empty_rules` then empties whatever reads it.
+
+Two facts are read per select, from its own top-level WHERE conjuncts and from the derived tables it reads:
+
+* a column is NULL on every row: a conjunct `c IS NULL` (WHERE runs after the joins, so padded rows count), or a derived-table output that projects such a column, `NULL`, or `MIN`/`MAX`/`SUM`/`AVG` of a NULL-everywhere expression (all NULL in every group and over no row);
+* a column is never NULL: a conjunct that cannot be TRUE when it is NULL (comparison, `BETWEEN`, `IN`, `LIKE`, `IS NOT NULL`, NULL-propagating arithmetic), or a derived output that projects such a column, a `COUNT`, or `MIN`/`MAX`/`SUM`/`AVG` of a never-NULL column under a plain, non-empty `GROUP BY` (each group holds a row of numbers). A source an outer, right, full or positional join can pad loses its never-NULL facts.
+
+A top-level conjunct that cannot be TRUE under the facts (`x.b > 1` on a NULL column, `x.b IS NULL` on a never-NULL one) makes the whole WHERE never TRUE. In HAVING, `MIN(b) > 1` over a NULL-everywhere `b` is NULL for every group, and `COUNT` is never NULL. Traps kept out: a global aggregate over no row is one row (and `SUM` of it is NULL), `ROLLUP`, `CUBE`, `GROUPING SETS` and `GROUP BY ()` add total rows with NULL aggregates (so they never give never-NULL facts), a `LEFT JOIN` pads a derived `SUM` with NULL, `COALESCE` and `NOT x IN (subquery)` and `x > ALL (subquery)` are not strict, and an `IS NULL` in `ON` leaves the other side's values. Tests: `tests/test_null_facts.py` (must-prove emptiness and must-not-prove near misses that return a row on a DuckDB database). Besides the unit tests the rule was run against 3000 random nested queries (grouped and outer-joined derived tables, ROLLUP/CUBE/grouping-set totals, HAVING on aggregates) comparing the original and rewritten SQL on small NULL-heavy databases with the optimizer off: no difference, and a version of the rule that ignored extended grouping or outer-join padding was caught by the same run.
+
 ## Typed soundness fuzzer
 
 `tools/soundness_fuzz.py` hunts false proofs: pairs the prover proves while a database separates them. It is adapted from Sol's S015 differential fuzzer (an external review deliverable), with its oracle and execution domain kept and the generator widened.
