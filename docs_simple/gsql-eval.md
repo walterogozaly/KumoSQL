@@ -10,6 +10,10 @@ For example, give it a table with a number column holding `1` and `NULL`, and as
 
 Its job is to be an independent check. When the DuckDB path and this evaluator give the same rows, that is more convincing than either alone. When they differ, one of them is wrong, and the difference is worth a look. It is not yet used by the checks that find counterexamples; it is the foundation for that.
 
+## What the comparison found
+
+`python tools/gsql_differential.py` runs the same queries through the evaluator and through the DuckDB path and lists where they disagree. The first run compared about 2,950 queries, found 103 disagreements that shrink to 53 small examples, and the evaluator looked right in the ones that were checked by hand against BigQuery's documentation. Examples: `0.1 + 0.2` is a decimal in DuckDB and a float in BigQuery; rounding 2.5 to an integer gives 3 in BigQuery and 2 in DuckDB; splitting a string inside `UNNEST` returned a variable's name instead of the pieces. These go to the guards workstream; none of them is fixed here.
+
 ## Limits of the evidence
 
 - It is checked against Google's published compliance tests, not against live BigQuery. Where those tests do not settle a behaviour, the evaluator declines.

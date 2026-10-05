@@ -47,7 +47,7 @@ import sys
 import threading
 import time
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, time as dtime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -253,12 +253,12 @@ def _dk_key(t: T.Type, value: Any) -> Any:
 def rows_equal(answer: Answer, rows: list, strict: bool = True) -> bool:
     """Whether the evaluator's answer and DuckDB's ``rows`` agree (column count, row count, values, order if ordered)."""
 
-    types = [ct for _, ct in answer.columns]
+    width = len(answer.columns)
     for _, ct in answer.columns:
         _check_readable(ct)
     if len(answer.rows) != len(rows):
         return False
-    if any(len(r) != len(types) for r in rows) or any(len(r) != len(types) for r in answer.rows):
+    if any(len(r) != width for r in rows) or any(len(r) != width for r in answer.rows):
         return False
     relative = 1e-9 if answer.inexact else 0.0
     row_type = T.struct(answer.columns)
@@ -725,6 +725,13 @@ def shrink(tables: dict[str, Table], sql: str, make_session: Callable[[dict[str,
                     continue
                 sql, verdict, progress = candidate_sql, got, True
                 break
+    # tables the smaller query no longer reads
+    used = _used_tables(sql, {n.lower() for n in tables})
+    smaller = {n: t for n, t in tables.items() if n.lower() in used}
+    if len(smaller) < len(tables):
+        got = check(smaller, sql)
+        if got is not None:
+            tables, verdict = smaller, got
     # rows once more, now the query is smaller
     for name in list(tables):
         index = 0
@@ -911,16 +918,16 @@ MINIMIZE_BUDGET = 45.0  # seconds a worker spends shrinking, in all
 
 
 def _tally(results: list[dict], sql: str, source: str, verdict: Verdict, extra: dict | None = None) -> None:
-    results.append({"source": source, "kind": verdict.kind, "reason": verdict.reason, "declined": verdict.declined, **(extra or {})})
+    results.append({"source": source, "kind": verdict.kind, "reason": verdict.reason, "declined": verdict.declined,
+                    "difference": verdict.difference, **(extra or {})})
 
 
 def run_batch(label: str, tables: dict[str, Table], queries: list[tuple[str, str, Any]], minimize: bool,
               reference: Callable[[Any, Any], bool | None] | None = None) -> tuple[list[dict], list[dict]]:
     """Run ``queries`` (``(source, sql, token)``) on one set of tables; returns ``(per-query results, divergences)``."""
 
-    if hasattr(signal, "SIGALRM"):
-        signal.signal(signal.SIGALRM, _alarm)
-    sys.setrecursionlimit(4000)
+    previous = signal.signal(signal.SIGALRM, _alarm) if hasattr(signal, "SIGALRM") and threading.current_thread() is threading.main_thread() else None
+    sys.setrecursionlimit(max(4000, sys.getrecursionlimit()))
     session = Session(tables)
     results: list[dict] = []
     divergences: list[dict] = []
@@ -947,6 +954,8 @@ def run_batch(label: str, tables: dict[str, Table], queries: list[tuple[str, str
             divergences.append(divergence_record(source, shrunk_sql, shrunk_tables, shrunk_verdict, sql, shrunk, ref, checks))
     finally:
         session.close()
+        if previous is not None:
+            signal.signal(signal.SIGALRM, previous)
     return results, divergences
 
 
@@ -1543,6 +1552,12 @@ def reason_group(reason: str) -> str:
     return text[:100]
 
 
+def _ranked(counter: Counter, top: int) -> list:
+    """``most_common`` with ties in alphabetical order, so a run's report does not depend on which worker finished first."""
+
+    return sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))[:top]
+
+
 def summarize(results: list[dict], divergences: list[dict], meta: dict) -> dict:
     counts = Counter(r["kind"] for r in results)
     not_run = [r for r in results if r["kind"] == "not_run"]
@@ -1558,6 +1573,8 @@ def summarize(results: list[dict], divergences: list[dict], meta: dict) -> dict:
         "declined": sum(1 for r in not_run if r["declined"]),
         "not_run": sum(1 for r in not_run if not r["declined"]),
         "diverge": counts["diverge"],
+        "diverge_value": sum(1 for r in results if r["kind"] == "diverge" and r["difference"] == "value"),
+        "diverge_type": sum(1 for r in results if r["kind"] == "diverge" and r["difference"] == "type"),
         "diverge_optimizer_explained": counts["optimizer"],
         "unstable": counts["unstable"],
         "by_source": {
@@ -1568,8 +1585,8 @@ def summarize(results: list[dict], divergences: list[dict], meta: dict) -> dict:
             }
             for kind in ("conformance", "random")
         },
-        "evaluator_skipped_reasons": Counter(reason_group(r["reason"]) for r in results if r["kind"] == "skipped").most_common(15),
-        "not_run_reasons": Counter(reason_group(r["reason"]) for r in not_run).most_common(25),
+        "evaluator_skipped_reasons": _ranked(Counter(reason_group(r["reason"]) for r in results if r["kind"] == "skipped"), 15),
+        "not_run_reasons": _ranked(Counter(reason_group(r["reason"]) for r in not_run), 25),
         "divergences": dedupe(divergences),
     }
     summary["groups"] = group_divergences(summary["divergences"])
@@ -1615,7 +1632,10 @@ def render(summary: dict, show_all: int = 40) -> str:
     out.append(f"  compared                    {summary['compared']:>6}")
     out.append(f"  agree                       {summary['agree']:>6}")
     out.append(f"  declined / not run          {summary['declined_or_not_run']:>6}  ({summary['declined']} declined by the layer, {summary['not_run']} DuckDB or sqlglot could not run)")
-    out.append(f"  DIVERGE                     {summary['diverge']:>6}  ({len(summary['divergences'])} distinct after shrinking)")
+    out.append(
+        f"  DIVERGE                     {summary['diverge']:>6}  ({summary['diverge_value']} other values, {summary['diverge_type']} same value in another type; "
+        f"{len(summary['divergences'])} distinct repros after shrinking)"
+    )
     out.append(f"  diverge, optimizer explained{summary['diverge_optimizer_explained']:>5}")
     if summary["unstable"]:
         out.append(f"  unstable (optimizer-off run agrees with neither) {summary['unstable']}")
@@ -1691,4 +1711,9 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    if os.environ.get("PYTHONHASHSEED") is None:
+        # string hashing is randomised per process and some evaluator paths depend on set order: pin it so that
+        # two runs with the same arguments give the same report
+        os.environ["PYTHONHASHSEED"] = "0"
+        os.execv(sys.executable, [sys.executable, *sys.argv])
     raise SystemExit(main())

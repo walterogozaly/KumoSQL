@@ -50,6 +50,20 @@ The evaluator never approximates. Every handler names the sqlglot arguments it r
 
 sqlglot reads some names BigQuery does not have (`LEN`, `HEX`, `CHARINDEX`...) as functions it knows, drops extra arguments of a few functions, and drops the `STRICT` keyword of a set operation. `text_guards.py` scans the query text outside strings and comments and raises `Unsupported` for those; `STRICT` is detected on the token stream and implemented. On the text path every BigQuery string escape is decoded once (`literals.py`); on the tree path a literal holding a backslash is refused.
 
+## Differential check against the DuckDB layer
+
+`python tools/gsql_differential.py [--limit N] [--random N --seed S] [--json PATH]` runs every query the evaluator answers (the conformance development cases, plus seeded random expression queries over INT64, FLOAT64, NUMERIC, STRING and DATE) through the [BigQuery-on-DuckDB layer](bigquery-on-duckdb.md) on identical typed tables, and shrinks each difference to a small repro. A difference counts only when DuckDB with its optimizer off (`run_unoptimized`) returns the same rows as with it on. The run is deterministic, reads only the development split and takes about 20 s for 6,000 queries.
+
+First run (`--random 3000 --seed 0`, 6,149 queries): 4,715 answered by the evaluator, 2,950 compared, 2,847 agree, 103 differ (28 in value, 75 only in type), 53 distinct repros after shrinking. Findings for the BigQuery-vs-DuckDB guards workstream (#487), each with the evaluator believed right from BigQuery's documentation (not re-checked against live BigQuery):
+
+- `FROM UNNEST(SPLIT(...))` and other macro calls in a table-function argument return the lambda variable's name as text.
+- `CAST(FLOAT64 AS INT64)` rounds halves to even in DuckDB; BigQuery rounds them away from zero.
+- `ROUND`/`TRUNC` of NUMERIC leaks DuckDB's narrow `DECIMAL` type into `IFNULL`, `COALESCE` and `GREATEST`, changing values.
+- `CAST(DATE_ADD(...) AS STRING)` gains `00:00:00`; `%e` and `%c` lose their space padding in `FORMAT_DATE`/`FORMAT_TIMESTAMP`; `BIT_COUNT` of a small literal counts 32 or 8 bits.
+- `CAST(FLOAT64 AS NUMERIC)` is imprecise for large magnitudes; decimal literals are `DECIMAL` in DuckDB but FLOAT64 in BigQuery (`0.1 + 0.2` differs); `SIGN` returns an integer; some NUMERIC quotients come back as DOUBLE.
+
+Queries the evaluator rejects are skipped even when DuckDB returns rows; reporting those would show missing run-time guards and is a natural follow-up.
+
 ## Limits
 
 - It is as good as the reference results it was checked against: Google's compliance tests, not BigQuery itself. Rules fitted to those results (for example how a grouping key is matched by expression) are exact only where the tests pin them; where they do not, the evaluator declines.

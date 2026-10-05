@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 SPEC = importlib.util.spec_from_file_location(
-    "googlesql_conformance", Path(__file__).parent.parent / "tools" / "googlesql_conformance.py"
+    "googlesql_conformance_floor", Path(__file__).parent.parent / "tools" / "googlesql_conformance.py"
 )
 conformance = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = conformance  # dataclasses (postponed annotations) look their module up here
