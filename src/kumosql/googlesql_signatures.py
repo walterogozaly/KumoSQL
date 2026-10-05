@@ -199,7 +199,7 @@ ELEMENT_OF_FIRST = {"ARRAY_FIRST", "ARRAY_LAST", "ARRAY_MIN", "ARRAY_MAX", "ARRA
 ARRAY_OF_FIRST = {"ARRAY_AGG", "APPROX_QUANTILES"}
 # STRING in, STRING out; BYTES in, BYTES out (the first argument decides).
 STRING_OR_BYTES = {
-    "LOWER", "UPPER", "LTRIM", "RTRIM", "TRIM", "LPAD", "RPAD", "LEFT", "RIGHT", "REPEAT", "REPLACE", "REVERSE",
+    "LOWER", "UPPER", "LCASE", "UCASE", "LTRIM", "RTRIM", "TRIM", "LPAD", "RPAD", "LEFT", "RIGHT", "REPEAT", "REPLACE", "REVERSE",
     "SUBSTR", "SUBSTRING", "TRANSLATE", "REGEXP_EXTRACT", "REGEXP_REPLACE", "REGEXP_SUBSTR", "STRING_AGG",
 }
 ARRAY_OF_STRING_OR_BYTES = {"SPLIT", "REGEXP_EXTRACT_ALL"}
@@ -431,15 +431,17 @@ def _named(typer, node, name: str, scope, ctes) -> T:
         if first is None or first.kind not in ("ARRAY", "RANGE"):
             return UNKNOWN
         return known(first.element)
+    if name == "ARRAY_AGG" and call.first().lit == "null":
+        return T(GType.array(INT64))  # an untyped NULL is INT64
     if name in ARRAY_OF_FIRST:
         first = call.first()
         if first.type is None or first.lit == "null" or first.type.kind == "ARRAY":
             return UNKNOWN
         return T(GType.array(first.type))
     if name in STRING_OR_BYTES:
-        return string_or_bytes(call.first())
+        return string_or_bytes(call.first(), call.ts[1:])
     if name in ARRAY_OF_STRING_OR_BYTES:
-        inner = string_or_bytes(call.first())
+        inner = string_or_bytes(call.first(), call.ts[1:])
         return T(GType.array(inner.type)) if inner.type is not None else UNKNOWN
     if name in SUPERTYPE_OF_ALL:
         result = supertype(call.ts)
@@ -602,12 +604,23 @@ def _bitwise_pair(left: T, right: T) -> T:
     return UNKNOWN
 
 
-def string_or_bytes(t: T) -> T:
-    if t.type is None or t.lit == "null":
+def string_or_bytes(t: T, rest: list[T] = ()) -> T:
+    """STRING in, STRING out; BYTES in, BYTES out. An untyped NULL first argument takes the STRING signature when the
+    other arguments are all typed and none is BYTES (compliance: REPEAT(NULL, 10), SPLIT(NULL, ','))."""
+
+    if t.lit == "null":
+        if all(r.type is not None and r.type.kind != "BYTES" for r in rest):
+            return T(STRING)
+        return UNKNOWN
+    if t.type is None:
         return UNKNOWN
     if t.type.kind in ("STRING", "BYTES"):
         return T(t.type)
     return UNKNOWN
+
+
+_CONCAT_CAST_KINDS = {"BOOL", "INT64", "NUMERIC", "BIGNUMERIC", "FLOAT64", "TIMESTAMP", "DATE", "DATETIME", "TIME",
+                      "INTERVAL"}
 
 
 def concat(ts: list[T]) -> T:
@@ -620,6 +633,8 @@ def concat(ts: list[T]) -> T:
         return T(BYTES)
     if "STRING" in kinds:
         return T(STRING)
+    if kinds and kinds <= _CONCAT_CAST_KINDS and all(t.type is not None for t in ts):
+        return T(STRING)  # CONCAT casts these scalars to STRING (compliance: concat_function)
     if kinds and all(k == "ARRAY" for k in kinds):
         result = supertype(ts)
         return T(result.type) if result is not None and result.lit is None else UNKNOWN
