@@ -1,7 +1,8 @@
 """Counterexample search: run two queries on small random databases and compare their results.
 
 Given a schema with integrity constraints, ``find_counterexample`` builds many small
-databases that satisfy every constraint, executes both queries on DuckDB, and returns
+databases that satisfy every constraint, executes both queries on DuckDB or the GoogleSQL
+reference evaluator, and returns
 the first database on which the result bags differ. A returned counterexample is a
 *refutation*: it was observed by running both queries, so it needs no trust in the
 prover. Finding none proves nothing.
@@ -22,6 +23,7 @@ import random
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Callable
 
 import sqlglot
@@ -354,6 +356,90 @@ def _bag(rows) -> Counter:
     return Counter(tuple(_norm(v) for v in row) for row in rows)
 
 
+def _gsql_type(column: Column):
+    """Map counterexample's compact schema types to evaluator types."""
+
+    from .gsql_eval import types as T
+
+    kind = column.type.split("(")[0].upper()
+    mapped = {
+        "INT": "INT64", "INTEGER": "INT64", "BIGINT": "INT64", "SMALLINT": "INT64",
+        "DECIMAL": "NUMERIC", "DOUBLE": "FLOAT64", "FLOAT": "FLOAT64",
+        "BOOLEAN": "BOOL", "VARCHAR": "STRING", "ENUM": "STRING",
+    }.get(kind, kind)
+    if mapped not in T.BY_NAME:
+        mapped = "STRING"
+    return T.BY_NAME[mapped]
+
+
+def _gsql_payload(value, typ):
+    if value is None:
+        return None
+    if typ.kind == "DATE" and isinstance(value, str):
+        return _dt.date.fromisoformat(value)
+    if typ.kind == "TIME" and isinstance(value, str):
+        return _dt.time.fromisoformat(value)
+    if typ.kind in ("NUMERIC", "BIGNUMERIC") and not isinstance(value, Decimal):
+        return Decimal(str(value))
+    if typ.kind == "STRING" and not isinstance(value, str):
+        return str(value)
+    return value
+
+
+def _gsql_database(spec: Spec, tables: set[str], data: dict[str, list[tuple]]):
+    from .gsql_eval import Database, Table
+
+    converted = {}
+    for name in tables:
+        schema = spec.tables[name]
+        columns = [(column.name, _gsql_type(column)) for column in schema.columns]
+        rows = [tuple(_gsql_payload(value, typ) for value, (_, typ) in zip(row, columns)) for row in data.get(name, ())]
+        converted[name] = Table(columns, rows)
+    return Database(converted)
+
+
+def _gsql_key(value, typ):
+    """Keep SQL arrays, structs, booleans and NaNs distinct in result bags."""
+
+    if value is None:
+        return None
+    if typ.kind == "ARRAY":
+        return ("array", tuple(_gsql_key(item, typ.elem) for item in value))
+    if typ.kind == "STRUCT":
+        return ("struct", tuple(_gsql_key(item, field_type) for item, (_, field_type) in zip(value, typ.fields)))
+    if typ.kind == "BOOL":
+        return ("bool", bool(value))
+    if isinstance(value, float):
+        if value != value:
+            return ("nan",)
+        return 0.0 if value == 0 else value
+    return value
+
+
+def _gsql_display(value, typ):
+    if value is None:
+        return None
+    if typ.kind == "ARRAY":
+        return [_gsql_display(item, typ.elem) for item in value]
+    if typ.kind == "STRUCT":
+        return {
+            name if name is not None else f"_{index}": _gsql_display(item, field_type)
+            for index, ((name, field_type), item) in enumerate(zip(typ.fields, value))
+        }
+    if typ.kind == "TIMESTAMP":
+        from .gsql_eval import values as V
+
+        return V.micros_to_utc(value)
+    return value
+
+
+def _gsql_bag(result) -> Counter:
+    return Counter(
+        tuple(_gsql_key(value, typ) for value, (_, typ) in zip(row, result.columns))
+        for row in result.rows
+    )
+
+
 def _grouping_keys(item: exp.Expression):
     """The key expressions of one GROUP BY item, looking inside GROUPING SETS, ROLLUP and CUBE."""
 
@@ -661,18 +747,30 @@ class Searcher:
     tables only through its own methods.
     """
 
-    def __init__(self, spec: Spec, left: str, right: str, *, dialect: str = "mysql", predicates: dict[str, int] | None = None):
+    def __init__(
+        self, spec: Spec, left: str, right: str, *, dialect: str = "mysql",
+        predicates: dict[str, int] | None = None, engine: str = "duckdb",
+    ):
         """``predicates`` names uninterpreted boolean functions (name to arity) the queries call.
 
         Each gets one fixed, arbitrary interpretation (a hash of its arguments), so a difference found
         with it refutes the pair for every interpretation's sake: the pair must agree under all of them.
         """
 
+        if engine not in ("duckdb", "googlesql"):
+            raise ValueError("engine must be 'duckdb' or 'googlesql'")
+        if engine == "googlesql" and dialect != "bigquery":
+            raise ValueError("engine='googlesql' requires dialect='bigquery'")
         self.spec = spec
+        self.engine = engine
+        self.unsupported = False
         self.constants = constants_of(left, right, dialect=dialect)
         known = {c.name.lower() for t in spec.tables.values() for c in t.columns}
-        self.left_sql = to_duckdb(left, dialect, known)
-        self.right_sql = to_duckdb(right, dialect, known)
+        if engine == "googlesql":
+            self.left_sql, self.right_sql = left, right
+        else:
+            self.left_sql = to_duckdb(left, dialect, known)
+            self.right_sql = to_duckdb(right, dialect, known)
         names = set()
         for sql in (left, right):
             for table in sqlglot.parse_one(_dollars(sql), read=dialect).find_all(exp.Table):
@@ -685,22 +783,24 @@ class Searcher:
             self.columns_used.update(c.name.lower() for c in tree.find_all(exp.Column))
             self.star = self.star or any(True for _ in tree.find_all(exp.Star))
             self.having = self.having or tree.find(exp.Having) is not None
-        self.db = small_database()
         self.bigquery = dialect == "bigquery"
-        if self.bigquery:
-            from .bigquery_on_duckdb import configure
+        self.db = None
+        if engine == "duckdb":
+            self.db = small_database()
+            if self.bigquery:
+                from .bigquery_on_duckdb import configure
 
-            configure(self.db)
-        for name, arity in (predicates or {}).items():
-            if not _PLAIN_NAME.match(name):
-                raise ValueError(f"predicate name {name!r}")
-            parameters = [f"p{i}" for i in range(arity)]
-            hashed = ", ".join([*parameters, _literal(name.lower())])
-            self.db.execute(f"CREATE MACRO {name}({', '.join(parameters)}) AS (hash({hashed}) % 2 = 0)")
-        for name in self.used:
-            table = spec.tables[name]
-            columns = ", ".join(f'"{c.name}" {_duck_type(c)}' for c in table.columns)
-            self.db.execute(f'CREATE TABLE "{name}" ({columns})')
+                configure(self.db)
+            for name, arity in (predicates or {}).items():
+                if not _PLAIN_NAME.match(name):
+                    raise ValueError(f"predicate name {name!r}")
+                parameters = [f"p{i}" for i in range(arity)]
+                hashed = ", ".join([*parameters, _literal(name.lower())])
+                self.db.execute(f"CREATE MACRO {name}({', '.join(parameters)}) AS (hash({hashed}) % 2 = 0)")
+            for name in self.used:
+                table = spec.tables[name]
+                columns = ", ".join(f'"{c.name}" {_duck_type(c)}' for c in table.columns)
+                self.db.execute(f'CREATE TABLE "{name}" ({columns})')
         # what each table holds, as the VALUES list ``_load`` inserted ("" when empty, None when unknown), and
         # the databases on which both queries already ran and agreed: running them again would agree again
         self._loaded: dict[str, str | None] = {name: "" for name in self.used}
@@ -752,8 +852,47 @@ class Searcher:
     def _rows(self, sql: str):
         return self._read(self.db.execute(sql).fetchall())
 
+    def _googlesql_pair(self, data):
+        """Evaluate both original GoogleSQL queries over a generated database."""
+
+        from .gsql_eval import evaluate
+
+        database = _gsql_database(self.spec, self.used, data)
+        return evaluate(self.left_sql, database), evaluate(self.right_sql, database)
+
+    def _googlesql_counterexample(self, data):
+        """Return a reliable GoogleSQL witness, or ``None`` when this database is unusable."""
+
+        from .gsql_eval import AnalysisError, EvalError, Unsupported
+
+        try:
+            left, right = self._googlesql_pair(data)
+        except (AnalysisError, EvalError, Unsupported):
+            return None
+        if not left.deterministic or not right.deterministic or left.inexact or right.inexact:
+            return None
+        if _gsql_bag(left) != _gsql_bag(right):
+            return Counterexample(
+                {name: data[name] for name in self.used},
+                [tuple(_gsql_display(value, typ) for value, (_, typ) in zip(row, left.columns)) for row in left.rows],
+                [tuple(_gsql_display(value, typ) for value, (_, typ) in zip(row, right.columns)) for row in right.rows],
+            )
+        return None
+
     def runs(self) -> bool:
-        """Whether DuckDB accepts both queries on an empty database."""
+        """Whether the selected engine accepts both queries on an empty database."""
+
+        if self.engine == "googlesql":
+            from .gsql_eval import AnalysisError, EvalError, Unsupported
+
+            try:
+                self._googlesql_pair({name: [] for name in self.used})
+            except Unsupported:
+                self.unsupported = True
+                return False
+            except (AnalysisError, EvalError):
+                return False
+            return True
 
         try:
             self._rows(self.left_sql)
@@ -836,6 +975,7 @@ class Searcher:
             return "too_large", None
         if total > max_dbs:
             return "too_large", None
+        incomplete = False
         try:
             for combo in itertools.product(*per_table):
                 data = dict(zip(tables, combo))
@@ -845,6 +985,28 @@ class Searcher:
                 key = self._key(values)
                 if key in self._agreed:
                     continue
+                if self.engine == "googlesql":
+                    from .gsql_eval import AnalysisError, EvalError, Unsupported
+
+                    try:
+                        a, b = self._googlesql_pair(data)
+                    except EvalError:
+                        continue
+                    except (AnalysisError, Unsupported):
+                        incomplete = True
+                        continue
+                    if not a.deterministic or not b.deterministic or a.inexact or b.inexact:
+                        incomplete = True
+                        continue
+                    if _gsql_bag(a) == _gsql_bag(b):
+                        self._agreed.add(key)
+                    else:
+                        return "found", Counterexample(
+                            data,
+                            [tuple(_gsql_display(value, typ) for value, (_, typ) in zip(row, a.columns)) for row in a.rows],
+                            [tuple(_gsql_display(value, typ) for value, (_, typ) in zip(row, b.columns)) for row in b.rows],
+                        )
+                    continue
                 self._load_values(values)
                 a = self._rows(self.left_sql)
                 b = self._rows(self.right_sql)
@@ -852,7 +1014,11 @@ class Searcher:
                     self._agreed.add(key)
                 elif self._stable(data, a, b, random.Random(1)):
                     return "found", Counterexample(data, a, b)
-        except duckdb.Error:
+        except Exception as error:
+            if self.engine == "duckdb" and duckdb is not None and isinstance(error, duckdb.Error):
+                return "too_large", None
+            raise
+        if incomplete:
             return "too_large", None
         return "verified", None
 
@@ -892,6 +1058,11 @@ class Searcher:
             key = self._key(values)
             if key in self._agreed:
                 continue
+            if self.engine == "googlesql":
+                witness = self._googlesql_counterexample(data)
+                if witness is not None:
+                    return witness
+                continue
             try:
                 self._load_values(values)
                 a = self._rows(self.left_sql)
@@ -927,7 +1098,11 @@ class Searcher:
         seen = set()
         for sql in (self.left_sql, self.right_sql):
             try:
-                suite = database_suite(sql, schema, rules, dialect="duckdb", random_seeds=())
+                suite = database_suite(
+                    sql, schema, rules,
+                    dialect="bigquery" if self.engine == "googlesql" else "duckdb",
+                    random_seeds=(),
+                )
             except Exception:
                 continue
             for labeled in suite:
@@ -939,6 +1114,11 @@ class Searcher:
                 seen.add(key)
                 exact = repr(key)  # repr keeps 1, 1.0 and True apart
                 if exact in self._agreed_targeted:
+                    continue
+                if self.engine == "googlesql":
+                    witness = self._googlesql_counterexample(data)
+                    if witness is not None:
+                        return witness
                     continue
                 try:
                     for name in self.used:
@@ -1043,19 +1223,33 @@ class Searcher:
         return True
 
 
-def find_counterexample(spec: Spec, left: str, right: str, *, dialect: str = "mysql", trials: int = 150, seed: int = 0):
-    """A database on which the queries differ, ``None`` if none was found, ``False`` if DuckDB rejects a query.
+def find_counterexample(
+    spec: Spec, left: str, right: str, *, dialect: str = "mysql", trials: int = 150, seed: int = 0,
+    engine: str = "duckdb",
+):
+    """A database on which the queries differ, ``None`` if none was found, ``False`` if the engine rejects a query.
 
     ``False`` too for a BigQuery query that names a type BigQuery does not have (``kumosql.type_names``): DuckDB
-    reads ``FLOAT`` and ``VARCHAR``, so a search would report on a query BigQuery rejects.
+    reads ``FLOAT`` and ``VARCHAR``, so a DuckDB search would report on a query BigQuery rejects. The ``googlesql``
+    engine runs only BigQuery-dialect queries and accepts a witness only when both results are deterministic and exact.
     """
 
+    if engine not in ("duckdb", "googlesql"):
+        raise ValueError("engine must be 'duckdb' or 'googlesql'")
+    if engine == "googlesql" and dialect != "bigquery":
+        raise ValueError("engine='googlesql' requires dialect='bigquery'")
     if dialect == "bigquery" and (invalid_type_name(left) or invalid_type_name(right)):
         return False
     try:
-        searcher = Searcher(spec, left, right, dialect=dialect)
-    except (sqlglot.errors.SqlglotError, duckdb.Error):
+        searcher = Searcher(spec, left, right, dialect=dialect, engine=engine)
+    except sqlglot.errors.SqlglotError:
         return False
+    except Exception as error:
+        if duckdb is not None and isinstance(error, duckdb.Error):
+            return False
+        raise
     if not searcher.runs():
+        if searcher.unsupported:
+            return None
         return False
     return searcher.search(trials, seed)

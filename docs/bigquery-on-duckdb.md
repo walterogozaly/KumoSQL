@@ -2,7 +2,7 @@
 
 [Plain-language version](../docs_simple/bigquery-on-duckdb.md)
 
-Every refutation KumoSQL reports from execution runs BigQuery SQL on DuckDB after sqlglot translates it: the counterexample searches (`kumosql.executed_refutation`, `kumosql.refute`, `kumosql.counterexample`), the bounded checker's replay, random databases (`kumosql.random_check`), synthetic-data comparison (`kumosql.result_equivalence`) and incremental-model simulation. Where the two engines read the same SQL differently, a DuckDB difference can be a false BigQuery refutation, which is a wrong answer. `src/kumosql/bigquery_on_duckdb.py` closes those gaps for every BigQuery-dialect run; SQL read in other dialects (MySQL, Postgres, SQLite, DuckDB evals) is run as before.
+By default, KumoSQL's execution checks run BigQuery SQL on DuckDB after sqlglot translates it: the counterexample searches (`kumosql.executed_refutation`, `kumosql.refute`, `kumosql.counterexample`), the bounded checker's replay, random databases (`kumosql.random_check`), synthetic-data comparison (`kumosql.result_equivalence`) and incremental-model simulation. The `counterexample` and `result_equivalence` APIs can opt into `engine="googlesql"` to execute queries with the pure-Python GoogleSQL reference evaluator instead. Where DuckDB and BigQuery read the same SQL differently, a DuckDB difference can be a false BigQuery refutation, which is a wrong answer. `src/kumosql/bigquery_on_duckdb.py` closes those gaps for the default DuckDB path; SQL read in other dialects (MySQL, Postgres, SQLite, DuckDB evals) is run as before.
 
 It does three things.
 

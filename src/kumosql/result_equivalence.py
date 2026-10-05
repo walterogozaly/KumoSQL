@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 import math
@@ -56,6 +56,8 @@ class QueryOutput:
 
     columns: tuple[str, ...]
     rows: tuple[Row, ...]
+    deterministic: bool = True
+    inexact: bool = False
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,7 @@ class ResultEquivalence:
     right_duckdb_sql: tuple[str, ...] = ()
     float_digits: int | None = 12
     """The float policy the rows were compared under: significant digits, or ``None`` for exact."""
+    engine: str = "duckdb"
 
     @property
     def equivalent(self) -> bool:
@@ -96,7 +99,7 @@ class ResultEquivalence:
             if rows:
                 lines.append(f"{label} ({len(rows)} rows):")
                 lines.extend(f"  {row!r}" for row in rows[:max_rows])
-        for label, statements in (("left DuckDB SQL", self.left_duckdb_sql), ("right DuckDB SQL", self.right_duckdb_sql)):
+        for label, statements in ((f"left {self.engine} SQL", self.left_duckdb_sql), (f"right {self.engine} SQL", self.right_duckdb_sql)):
             if statements and self.status is not ResultEquivalenceStatus.EQUIVALENT:
                 lines.append(f"{label}:")
                 lines.extend(f"  {statement}" for statement in statements)
@@ -612,8 +615,15 @@ def execute_on_dataset(
     dataset: SyntheticDataset,
     *,
     run_tag: str = "run",
+    engine: str = "duckdb",
 ) -> tuple[QueryOutput, list[str]]:
-    """Run ``sql`` in a fresh DuckDB connection loaded with ``dataset``."""
+    """Run ``sql`` against ``dataset`` with DuckDB or the GoogleSQL reference evaluator."""
+
+    if engine not in ("duckdb", "googlesql"):
+        raise ValueError("engine must be 'duckdb' or 'googlesql'")
+    if engine == "googlesql":
+        output = _execute_googlesql_on_dataset(sql, dataset)
+        return output, [sql]
 
     statements, last_target = prepare_statements(sql, schema, run_tag=run_tag)
     connection = _connect()
@@ -638,6 +648,81 @@ def execute_on_dataset(
         connection.close()
     rows = _bigquery_rows(rows, "bigquery")
     return QueryOutput(columns=columns, rows=rows), statements
+
+
+def _gsql_payload(value: Any, kind: str) -> Any:
+    """Convert synthetic boundary values to the evaluator's typed payload representation."""
+
+    if value is None:
+        return None
+    if kind == "TIMESTAMP" and isinstance(value, datetime):
+        from .gsql_eval import values as gsql_values
+
+        if value.tzinfo is not None:
+            value = value.astimezone(timezone.utc).replace(tzinfo=None)
+        return gsql_values.utc_to_micros(value)
+    return value
+
+
+def _gsql_output_value(value: Any, typ: Any) -> Any:
+    """Give arrays and structs distinct, hashable-comparison-friendly boundary shapes."""
+
+    if value is None:
+        return None
+    if typ.kind == "ARRAY":
+        return [_gsql_output_value(item, typ.elem) for item in value]
+    if typ.kind == "STRUCT":
+        return {
+            (name if name is not None else f"_{index}"): _gsql_output_value(item, field_type)
+            for index, ((name, field_type), item) in enumerate(zip(typ.fields, value))
+        }
+    if typ.kind == "TIMESTAMP":
+        from .gsql_eval import values as gsql_values
+
+        return gsql_values.micros_to_utc(value)
+    return value
+
+
+def _execute_googlesql_on_dataset(sql: str, dataset: SyntheticDataset) -> QueryOutput:
+    """Run one GoogleSQL query over a typed in-memory database.
+
+    The reference evaluator intentionally does not execute scripts or mutate tables. Those
+    remain available through the DuckDB engine.
+    """
+
+    from .gsql_eval import AnalysisError, Database, EvalError, Table, Unsupported, evaluate
+    from .gsql_eval import types as gsql_types
+
+    sql = sqlx_to_sql(sql)
+    try:
+        statements = [statement for statement in sqlglot.parse(sql, read="bigquery") if statement is not None]
+    except sqlglot.errors.SqlglotError as exc:
+        raise ExecutionError(f"cannot parse GoogleSQL: {exc}") from exc
+    if len(statements) != 1 or not isinstance(statements[0], exp.Query):
+        raise Unsupported("the googlesql engine supports one query, not SQL scripts or writes")
+
+    tables = {}
+    normalized_types: dict[str, tuple[Any, ...]] = {}
+    for name, table in dataset.tables.items():
+        columns = [(column_name, gsql_types.parse_type_name(column_type)) for column_name, column_type in table.columns]
+        normalized_types[name] = tuple(typ for _, typ in columns)
+        rows = [
+            tuple(_gsql_payload(value, typ.kind) for value, typ in zip(row, normalized_types[name]))
+            for row in table.rows
+        ]
+        tables[name] = Table(columns, rows)
+    try:
+        result = evaluate(sql, Database(tables))
+    except (AnalysisError, EvalError, Unsupported):
+        raise
+    except Exception as exc:
+        raise ExecutionError(f"GoogleSQL evaluator failed: {exc}") from exc
+    output_columns = tuple(name or "" for name, _ in result.columns)
+    rows = tuple(
+        tuple(_gsql_output_value(value, typ) for value, (_, typ) in zip(row, result.columns))
+        for row in result.rows
+    )
+    return QueryOutput(output_columns, rows, deterministic=result.deterministic, inexact=result.inexact)
 
 
 class DatasetRunner:
@@ -829,6 +914,7 @@ def check_result_equivalence(
     float_digits: int | None = 12,
     use_query_constants: bool = True,
     targeted: bool = False,
+    engine: str = "duckdb",
 ) -> ResultEquivalence:
     """Run both queries over several synthetic datasets and compare results.
 
@@ -841,11 +927,13 @@ def check_result_equivalence(
     (see :func:`query_constants`), so their filters match some rows.
 
     Stops at the first seed that yields a counterexample or an execution
-    error. An error on either side is never reported as equivalence. Each side
-    is executed twice per seed; a side that differs from itself makes the
-    result ``INCONCLUSIVE`` instead of equivalent or different.
+    error. An error on either side is never reported as equivalence. DuckDB
+    runs each side twice per seed to detect nondeterminism; GoogleSQL uses the
+    evaluator's determinism and inexactness flags instead.
     """
 
+    if engine not in ("duckdb", "googlesql"):
+        raise ValueError("engine must be 'duckdb' or 'googlesql'")
     extras = query_constants(left_sql, right_sql) if use_query_constants else None
     checked: list[int] = []
     left_sql_out: list[str] = []
@@ -866,73 +954,117 @@ def check_result_equivalence(
                 yield labeled.dataset.seed, labeled.dataset
 
     skipped = 0
+    uncertain = False
     for seed, dataset in _datasets():
         try:
             left_output, left_sql_out = execute_on_dataset(
-                left_sql, schema, dataset, run_tag=f"left_{seed}"
+                left_sql, schema, dataset, run_tag=f"left_{seed}", engine=engine
             )
-        except BigQueryWouldFail:
-            skipped += 1  # BigQuery fails on this database: it shows nothing either way
-            continue
-        except ExecutionError as exc:
-            return ResultEquivalence(
-                ResultEquivalenceStatus.ERROR, f"left side failed: {exc}", tuple(checked), seed,
-                float_digits=float_digits,
-            )
-        try:
-            right_output, right_sql_out = execute_on_dataset(
-                right_sql, schema, dataset, run_tag=f"right_{seed}"
-            )
-        except BigQueryWouldFail:
-            skipped += 1
-            continue
-        except ExecutionError as exc:
-            return ResultEquivalence(
-                ResultEquivalenceStatus.ERROR,
-                f"right side failed: {exc}",
-                tuple(checked),
-                seed,
-                left_output=left_output,
-                left_duckdb_sql=tuple(left_sql_out),
-                float_digits=float_digits,
-            )
-        # A side that disagrees with itself on identical input cannot support
-        # either an equivalence or a counterexample claim.
-        for side, side_sql, first_output in (
-            ("left", left_sql, left_output),
-            ("right", right_sql, right_output),
-        ):
-            try:
-                repeat_output, _ = execute_on_dataset(
-                    side_sql, schema, dataset, run_tag=f"{side}_{seed}_repeat"
-                )
-            except ExecutionError as exc:
+        except Exception as exc:
+            if isinstance(exc, BigQueryWouldFail):
+                skipped += 1
+                continue
+            if isinstance(exc, ExecutionError):
                 return ResultEquivalence(
-                    ResultEquivalenceStatus.ERROR,
-                    f"{side} side failed on repeat run: {exc}",
-                    tuple(checked),
-                    seed,
-                    float_digits=float_digits,
+                    ResultEquivalenceStatus.ERROR, f"left side failed: {exc}", tuple(checked), seed,
+                    float_digits=float_digits, engine=engine,
                 )
-            stable, _, _, _ = compare_outputs(
-                first_output,
-                repeat_output,
-                ignore_row_order=ignore_row_order,
-                check_column_names=check_column_names,
-                float_digits=float_digits,
-            )
-            if not stable:
+            if engine != "googlesql":
+                raise
+            from .gsql_eval import AnalysisError, EvalError, Unsupported
+
+            if isinstance(exc, Unsupported):
                 return ResultEquivalence(
                     ResultEquivalenceStatus.INCONCLUSIVE,
-                    f"{side} side returned different results on two runs over the same "
-                    f"synthetic data (seed {seed}); it is nondeterministic, so the "
-                    "comparison proves nothing either way",
-                    tuple(checked),
-                    seed,
-                    left_duckdb_sql=tuple(left_sql_out),
-                    right_duckdb_sql=tuple(right_sql_out),
+                    f"GoogleSQL evaluator does not support the left query: {exc}",
+                    tuple(checked), seed, float_digits=float_digits, engine=engine,
+                )
+            if isinstance(exc, AnalysisError):
+                return ResultEquivalence(
+                    ResultEquivalenceStatus.ERROR,
+                    f"left query is invalid in GoogleSQL: {exc}",
+                    tuple(checked), seed, float_digits=float_digits, engine=engine,
+                )
+            if isinstance(exc, EvalError):
+                skipped += 1
+                continue
+            raise
+        try:
+            right_output, right_sql_out = execute_on_dataset(
+                right_sql, schema, dataset, run_tag=f"right_{seed}", engine=engine
+            )
+        except Exception as exc:
+            if isinstance(exc, BigQueryWouldFail):
+                skipped += 1
+                continue
+            if isinstance(exc, ExecutionError):
+                return ResultEquivalence(
+                    ResultEquivalenceStatus.ERROR, f"right side failed: {exc}", tuple(checked), seed,
+                    left_output=left_output, left_duckdb_sql=tuple(left_sql_out),
+                    float_digits=float_digits, engine=engine,
+                )
+            if engine != "googlesql":
+                raise
+            from .gsql_eval import AnalysisError, EvalError, Unsupported
+
+            if isinstance(exc, Unsupported):
+                return ResultEquivalence(
+                    ResultEquivalenceStatus.INCONCLUSIVE,
+                    f"GoogleSQL evaluator does not support the right query: {exc}",
+                    tuple(checked), seed, left_output=left_output,
+                    left_duckdb_sql=tuple(left_sql_out), float_digits=float_digits, engine=engine,
+                )
+            if isinstance(exc, AnalysisError):
+                return ResultEquivalence(
+                    ResultEquivalenceStatus.ERROR,
+                    f"right query is invalid in GoogleSQL: {exc}",
+                    tuple(checked), seed, left_output=left_output,
+                    left_duckdb_sql=tuple(left_sql_out), float_digits=float_digits, engine=engine,
+                )
+            if isinstance(exc, EvalError):
+                skipped += 1
+                continue
+            raise
+        if engine == "googlesql" and (
+            not left_output.deterministic or not right_output.deterministic or left_output.inexact or right_output.inexact
+        ):
+            uncertain = True
+            continue
+        if engine == "duckdb":
+            # A side that disagrees with itself on identical input cannot support
+            # either an equivalence or a counterexample claim.
+            for side, side_sql, first_output in (
+                ("left", left_sql, left_output),
+                ("right", right_sql, right_output),
+            ):
+                try:
+                    repeat_output, _ = execute_on_dataset(
+                        side_sql, schema, dataset, run_tag=f"{side}_{seed}_repeat", engine=engine
+                    )
+                except ExecutionError as exc:
+                    return ResultEquivalence(
+                        ResultEquivalenceStatus.ERROR,
+                        f"{side} side failed on repeat run: {exc}",
+                        tuple(checked), seed, float_digits=float_digits, engine=engine,
+                    )
+                stable, _, _, _ = compare_outputs(
+                    first_output,
+                    repeat_output,
+                    ignore_row_order=ignore_row_order,
+                    check_column_names=check_column_names,
                     float_digits=float_digits,
                 )
+                if not stable:
+                    return ResultEquivalence(
+                        ResultEquivalenceStatus.INCONCLUSIVE,
+                        f"{side} side returned different results on two runs over the same "
+                        f"synthetic data (seed {seed}); it is nondeterministic, so the "
+                        "comparison proves nothing either way",
+                        tuple(checked), seed,
+                        left_duckdb_sql=tuple(left_sql_out),
+                        right_duckdb_sql=tuple(right_sql_out),
+                        float_digits=float_digits, engine=engine,
+                    )
         checked.append(seed)
         equal, reason, only_left, only_right = compare_outputs(
             left_output,
@@ -961,6 +1093,7 @@ def check_result_equivalence(
                     only_right,
                     tuple(left_sql_out),
                     tuple(right_sql_out),
+                    engine=engine,
                 )
             return ResultEquivalence(
                 ResultEquivalenceStatus.DIFFERENT,
@@ -974,12 +1107,19 @@ def check_result_equivalence(
                 tuple(left_sql_out),
                 tuple(right_sql_out),
                 float_digits=float_digits,
+                engine=engine,
             )
     if not checked and skipped:
         return ResultEquivalence(
-            ResultEquivalenceStatus.ERROR, "BigQuery fails on every synthetic dataset", (), None
+            ResultEquivalenceStatus.ERROR, f"{engine} fails on every synthetic dataset", (), None, engine=engine
         )
     if not checked:
+        if uncertain:
+            return ResultEquivalence(
+                ResultEquivalenceStatus.INCONCLUSIVE,
+                "the GoogleSQL evaluator marked every usable result nondeterministic or inexact",
+                (), engine=engine,
+            )
         raise ValueError("at least one seed is required")
     return ResultEquivalence(
         ResultEquivalenceStatus.EQUIVALENT,
@@ -988,6 +1128,7 @@ def check_result_equivalence(
         left_duckdb_sql=tuple(left_sql_out),
         right_duckdb_sql=tuple(right_sql_out),
         float_digits=float_digits,
+        engine=engine,
     )
 
 
