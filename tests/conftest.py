@@ -157,6 +157,7 @@ EVAL_FILES = {
     "test_proof_recheck_fuzz_reuse.py",
     "test_proof_recheck_pipelines_bounded.py",
     "test_conditional_candidates.py",
+    "test_googlesql_conformance.py",
     "test_smt_counterexample_determinism.py",
     "test_cost_validity_bench.py",
     "test_keyed_set_join.py",

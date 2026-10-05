@@ -425,28 +425,38 @@ class Session:
         import duckdb
 
         from kumosql import bigquery_on_duckdb as bq
-        from kumosql.duckdb_load import insert_rows
 
-        self.tables = tables
-        self.database = Database(tables)
-        self.dropped = has_unloadable(tables)  # columns the DuckDB copy lacks
         self.con = duckdb.connect(":memory:", config={"threads": 1})
         self.con.execute("SET memory_limit = '1GB'")
         bq.configure(self.con)
+        self.last_sql = ""
         self.loaded: set[str] = set()
+        self.retable(tables)
+
+    def retable(self, tables: dict[str, Table]) -> None:
+        """Hold exactly ``tables`` (the connection and its macros are reused)."""
+
+        from kumosql.duckdb_load import insert_rows
+
+        for name in self.loaded:
+            self.con.execute(f'DROP TABLE IF EXISTS "{name}"')
+        self.loaded = set()
+        self.tables = tables
+        self.database = Database(tables)
+        self.dropped = has_unloadable(tables)  # columns the DuckDB copy lacks
         for name, table in tables.items():
             keep = [(i, c, t) for i, (c, t) in enumerate(table.columns) if c not in self.dropped.get(name, ())]
             if not keep:
                 continue
             try:
                 self.con.execute(f'CREATE TABLE "{name}" (' + ", ".join(f'"{c}" {duck_type(t)}' for _, c, t in keep) + ")")
+                self.loaded.add(name)
                 rows = [tuple(duck_value(t, row[i]) for i, _, t in keep) for row in table.rows]
                 if rows:
                     insert_rows(self.con, f'"{name}"', rows)
-                self.loaded.add(name.lower())
             except Exception:  # noqa: BLE001  - a table DuckDB cannot hold: a query reading it is not run
                 self.con.execute(f'DROP TABLE IF EXISTS "{name}"')
-        self.last_sql = ""
+                self.loaded.discard(name)
 
     def close(self) -> None:
         self.con.close()
@@ -498,7 +508,7 @@ class Session:
                 raise NotRun("a table has columns DuckDB cannot hold and the query uses *")
         used = {t.name.lower() for t in tree.find_all(exp.Table) if t.name}
         ctes = {c.alias_or_name.lower() for c in tree.find_all(exp.CTE)}
-        missing = sorted(u for u in used - ctes if u in {n.lower() for n in self.tables} and u not in self.loaded)
+        missing = sorted(u for u in used - ctes if u in {n.lower() for n in self.tables} and u not in {n.lower() for n in self.loaded})
         if missing:
             raise NotRun(f"table {missing[0]} cannot be loaded into DuckDB")
         try:
@@ -541,6 +551,32 @@ class Session:
             timer.cancel()
 
 
+class Reusable:
+    """``make_session`` for :func:`shrink`: one :class:`Session`, its tables swapped when they change."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def __call__(self, tables: dict[str, Table]) -> "Reusable":
+        current = self.session.tables
+        if not (current.keys() == tables.keys() and all(current[n] is tables[n] for n in tables)):
+            self.session.retable(tables)
+        return self
+
+    def evaluate(self, sql: str) -> Answer:
+        return self.session.evaluate(sql)
+
+    def duckdb(self, sql: str, optimizer: bool = True) -> list:
+        return self.session.duckdb(sql, optimizer)
+
+    @property
+    def last_sql(self) -> str:
+        return self.session.last_sql
+
+    def close(self) -> None:
+        pass
+
+
 # --- shrinking a divergence -----------------------------------------------------------------------
 
 
@@ -568,7 +604,7 @@ def _candidates(tree: exp.Expression):
 
     for index, node in enumerate(list(tree.walk(bfs=False))):
         if isinstance(node, exp.Select):
-            for key in ("where", "having", "qualify", "order", "limit", "group", "distinct", "offset", "joins", "windows", "from"):
+            for key in ("where", "having", "qualify", "order", "limit", "group", "distinct", "offset", "joins", "windows", "from", "from_"):
                 if node.args.get(key):
                     candidate = tree.copy()
                     target = list(candidate.walk(bfs=False))[index]
@@ -639,6 +675,7 @@ def shrink(tables: dict[str, Table], sql: str, make_session: Callable[[dict[str,
         got = check(smaller, sql)
         if got is not None:
             tables, verdict = smaller, got
+    tables, verdict = _drop_columns(tables, sql, verdict, check, out_of_budget)
     # rows: remove chunks, then single rows
     for name in list(tables):
         size = max(1, len(tables[name].rows) // 2)
@@ -899,11 +936,12 @@ def run_batch(label: str, tables: dict[str, Table], queries: list[tuple[str, str
             shrunk = False
             if minimize and spent < MINIMIZE_BUDGET:
                 try:
-                    t2, s2, v2, checks = shrink(tables, sql, Session)
+                    t2, s2, v2, checks = shrink(tables, sql, Reusable(session))
                     if v2 is not None:
                         shrunk_tables, shrunk_sql, shrunk_verdict, shrunk = t2, s2, v2, True
                 except CaseTimeout:
                     pass
+                session.retable(tables)  # shrinking swapped the tables of this connection
                 spent += time.perf_counter() - started
             ref = reference(token, session) if reference else None
             divergences.append(divergence_record(source, shrunk_sql, shrunk_tables, shrunk_verdict, sql, shrunk, ref, checks))

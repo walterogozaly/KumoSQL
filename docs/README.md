@@ -17,6 +17,7 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Parser checks](parser-checks.md) | A second reading of every query a proof depends on, checked against MySQL, DuckDB and BigQuery, and what sqlglot gets wrong |
 | [Equivalent under conditions](conditional-equivalence.md) | The fourth verdict: a pair that is equal when stated NOT NULL, unique or foreign-key facts hold, with a SQL check for each |
 | [Running BigQuery SQL on DuckDB](bigquery-on-duckdb.md) | How executed counterexamples stay BigQuery refutations: settings, translation fixes and guards |
+| [GoogleSQL reference evaluator](gsql-eval.md) | A pure-Python GoogleSQL interpreter that returns BigQuery's rows or declines: values, coverage, errors and guards |
 | [Whole-pipeline analysis](pipeline-analysis.md) | Loading a project, lineage and impact, table profiles, work already done elsewhere, comparing outputs |
 | [Cost, change reports and the BigQuery dry run](cost-and-change-reports.md) | Dry-run checks, cost attribution, change reports and refactoring proposals |
 | [Refactor](refactor.md) | Protected and editable tables, searching for simpler pipelines, and folding chosen tables into one |
