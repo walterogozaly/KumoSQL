@@ -333,6 +333,8 @@ def type_call(typer, node: exp.Expression, scope, ctes) -> T:
         name = function_name(node.expression)
         if name is None:
             return UNKNOWN
+        if node.this.name.upper() == "SAFE":  # SAFE.fn(..) has the type of fn(..); only the error becomes NULL
+            return _named(typer, node.expression, name, scope, ctes)
         return _named(typer, node.expression, f"{node.this.name.upper()}.{name}", scope, ctes)
     if isinstance(node, exp.Extract):
         return extract(typer, node, scope, ctes)
@@ -365,6 +367,8 @@ def _named(typer, node, name: str, scope, ctes) -> T:
         return UNKNOWN
     if name in ("ARRAY_TRANSFORM",) or (name in ("ARRAY_FILTER",) and _has_lambda(node)):
         return lambda_call(typer, node, name, scope, ctes)
+    if name == "ARRAY_ZIP" and isinstance(node, exp.Anonymous):
+        return array_zip_call(typer, node, scope, ctes)
     if name in ARRAY_LAMBDA_RESULTS and _has_lambda(node):
         return array_lambda_call(typer, node, name, scope, ctes)
     if _has_lambda(node):
@@ -708,6 +712,57 @@ def array_lambda_call(typer, node, name: str, scope, ctes) -> T:
     if name == "ARRAY_OFFSETS":
         return T(GType.array(INT64))
     return T(BOOL)
+
+
+def array_zip_call(typer, node: exp.Anonymous, scope, ctes) -> T:
+    """ARRAY_ZIP(a1 [AS n1], a2 [AS n2], .. [, transformation => (e1, e2) -> body] [, mode => 'PAD']): an
+    ARRAY<STRUCT<n1 T1, n2 T2, ..>> of the arrays' element types (a field is unnamed unless aliased), or an
+    ARRAY of the lambda body's type. Arrays that are not typed ARRAY (a bare NULL) and unaliased paths are unknown."""
+
+    from .googlesql_types import _Range, _Scope
+
+    arrays, lam = [], None
+    for arg in node.expressions:
+        if isinstance(arg, exp.Kwarg):
+            key = arg.this.name.lower() if isinstance(arg.this, exp.Expression) else ""
+            if key == "mode":
+                typer.expr(arg.expression, scope, ctes)
+                continue
+            if key != "transformation" or not isinstance(arg.expression, exp.Lambda) or lam is not None:
+                return UNKNOWN
+            lam = arg.expression
+        elif isinstance(arg, exp.Lambda):
+            if lam is not None:
+                return UNKNOWN
+            lam = arg
+        elif lam is not None:
+            return UNKNOWN
+        else:
+            arrays.append(arg)
+    if len(arrays) < 2:
+        return UNKNOWN
+    elements, names = [], []
+    for arg in arrays:
+        value, name = (arg.this, arg.alias) if isinstance(arg, exp.Alias) else (arg, None)
+        t = typer.expr(value, scope, ctes)
+        if t.type is None or t.type.kind != "ARRAY" or t.type.element is None or t.lit not in (None, "empty_array"):
+            return UNKNOWN
+        if name is None and isinstance(value, (exp.Column, exp.Dot)):
+            return UNKNOWN  # a path may lend its name to the field
+        elements.append(t.type.element)
+        names.append(name)
+    if lam is None:
+        return T(GType.array(GType.struct([StructField(n, e) for n, e in zip(names, elements)])))
+    params = [p.name for p in lam.expressions]
+    if len(params) != len(elements):
+        return UNKNOWN
+    inner = _Scope(scope)
+    for param, element in zip(params, elements):
+        inner.ranges.append(_Range(param.lower(), None, value=T(element)))
+    body = typer.expr(lam.this, inner, ctes)
+    if body.type is None or body.lit == "null":
+        return UNKNOWN
+    return T(GType.array(body.type))
 
 
 def _generate_array(call: Call) -> T:
