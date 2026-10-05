@@ -75,6 +75,18 @@ def _inner_relations(select: exp.Select) -> list[exp.Expression] | None:
     return relations
 
 
+def _twin(root: exp.Expression, node: exp.Expression, copy: exp.Expression) -> exp.Expression | None:
+    """The node of ``copy`` (a copy of ``root``) at the position ``node`` has in ``root``.
+
+    Matching a node by its SQL text would also find an identical-looking node somewhere else in the query, such
+    as the same ``x IN (...)`` in a nested select where ``x`` is another column and the test is not a filter."""
+
+    for original, twin in zip(root.walk(), copy.walk()):
+        if original is node:
+            return twin
+    return None
+
+
 def _conjuncts(node: exp.Expression | None) -> list[exp.Expression]:
     if node is None:
         return []
@@ -137,10 +149,10 @@ def _split_case_key(select: exp.Select) -> exp.Expression | None:
             for branch in branches[1:]:
                 union = exp.Union(this=union, expression=branch, distinct=False)
             copy = select.copy()
-            for subquery in copy.find_all(exp.Subquery):
-                if subquery.alias == relation.alias and subquery.this.sql() == relation.this.sql():
-                    subquery.set("this", union)
-                    return copy
+            subquery = _twin(select, relation, copy)
+            if subquery is not None:
+                subquery.set("this", union)
+                return copy
     return None
 
 
@@ -200,7 +212,9 @@ def _split_case_comparison(select: exp.Select) -> exp.Expression | None:
             for disjunct in disjuncts[1:]:
                 replacement = exp.Or(this=replacement, expression=disjunct)
             copy = select.copy()
-            target = next(n for n in copy.find_all(exp.EQ) if n.sql() == test.sql())
+            target = _twin(select, test, copy)
+            if target is None:
+                continue
             target.replace(exp.Paren(this=replacement))
             return copy
     return None
@@ -331,13 +345,11 @@ def _distribute_union_source(select: exp.Select) -> exp.Expression | None:
         copies = []
         for branch in branches:
             copy = select.copy()
-            copy.set("distinct", None)
-            for subquery in copy.find_all(exp.Subquery):
-                if subquery.alias == relation.alias and subquery.this.sql() == relation.this.sql():
-                    subquery.set("this", branch)
-                    break
-            else:
+            subquery = _twin(select, relation, copy)  # before the copy changes shape
+            if subquery is None:
                 return None
+            copy.set("distinct", None)
+            subquery.set("this", branch)
             copies.append(copy)
         result: exp.Expression = copies[0]
         for copy in copies[1:]:
@@ -458,7 +470,9 @@ def _split_in_over_union(select: exp.Select) -> exp.Expression | None:
         if any(len(b.expressions) != 1 for b in branches):
             continue
         copy = select.copy()
-        target = next(n for n in copy.find_all(exp.In) if n.sql() == node.sql())
+        target = _twin(select, node, copy)
+        if target is None:
+            continue
         tests = [exp.In(this=target.this.copy(), query=exp.Subquery(this=b.copy())) for b in branches]
         result = tests[0]
         for test in tests[1:]:
@@ -476,7 +490,9 @@ def _split_in_over_union(select: exp.Select) -> exp.Expression | None:
         if branches is None or len(branches) < 2 or len(branches) > MAX_BRANCHES:
             continue
         copy = select.copy()
-        target = next(n for n in copy.find_all(exp.Exists) if n.sql() == node.sql())
+        target = _twin(select, node, copy)
+        if target is None:
+            continue
         result = exp.Exists(this=branches[0].copy())
         for branch in branches[1:]:
             result = exp.Or(this=result, expression=exp.Exists(this=branch.copy()))
