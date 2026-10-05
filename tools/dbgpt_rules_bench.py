@@ -135,35 +135,52 @@ def _bag(rows) -> Counter:
     return Counter(tuple(round(v, 9) if isinstance(v, float) else v for v in row) for row in rows)
 
 
-def differs_on(case: Case, database: dict[str, list]) -> bool | None:
-    """True when the two queries return different bags with DuckDB's optimizer on and off, None if either errors."""
+def _differs_on(db, case: Case, database: dict[str, list], left: str, right: str) -> bool | None:
+    """Check one database on an existing connection using already-transpiled queries."""
 
     import duckdb
 
     from kumosql.duckdb_load import run_unoptimized
 
+    _load(db, case, database)
+    try:
+        if _bag(db.execute(left).fetchall()) == _bag(db.execute(right).fetchall()):
+            return False
+        plain_left, plain_right = run_unoptimized(db, left, right)
+    except duckdb.Error:
+        return None
+    return _bag(plain_left) != _bag(plain_right)
+
+
+def differs_on(case: Case, database: dict[str, list]) -> bool | None:
+    """True when the two queries return different bags with DuckDB's optimizer on and off, None if either errors."""
+
+    import duckdb
+
+    left, right = to_duckdb(case.left, case.dialect), to_duckdb(case.right, case.dialect)
     db = duckdb.connect()
     try:
-        _load(db, case, database)
-        left, right = to_duckdb(case.left, case.dialect), to_duckdb(case.right, case.dialect)
-        try:
-            if _bag(db.execute(left).fetchall()) == _bag(db.execute(right).fetchall()):
-                return False
-            plain_left, plain_right = run_unoptimized(db, left, right)
-        except duckdb.Error:
-            return None
-        return _bag(plain_left) != _bag(plain_right)
+        return _differs_on(db, case, database, left, right)
     finally:
         db.close()
 
 
 def search_difference(case: Case, trials: int = TRIALS, seed: int = 11) -> dict[str, list] | None:
+    """Find a separating database without reparsing SQL or reopening DuckDB per trial."""
+
+    import duckdb
+
     rng = random.Random(seed)
-    for _ in range(trials):
-        database = random_database(case, rng)
-        if differs_on(case, database):
-            return database
-    return None
+    left, right = to_duckdb(case.left, case.dialect), to_duckdb(case.right, case.dialect)
+    db = duckdb.connect()
+    try:
+        for _ in range(trials):
+            database = random_database(case, rng)
+            if _differs_on(db, case, database, left, right):
+                return database
+        return None
+    finally:
+        db.close()
 
 
 def runs(case: Case) -> bool:
