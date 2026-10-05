@@ -402,14 +402,16 @@ def results_row(results: list[dict]) -> dict:
         "caveats": (
             f"Downloaded at run time from pinned commits (TestSuiteEval has no licence) and never committed. The {sum(r['rows'] for r in results)} rows hold {len(results)} distinct pairs, each decided once. "
             f"Spider's databases are blocked here, so refutations use databases KumoSQL builds from tables.json's types, keys and foreign keys; the prover gets no key (tables.json lists only the first column of a composite key). "
-            f"{summary['plugged']['pairs']} pairs hold value placeholders and are decided with TestSuiteEval's plug-in of the gold's values (scored apart). "
-            f"Refuted causes: {', '.join(f'{k or chr(63)} {v}' for k, v in sorted(causes.items()))}. A pair that runs past {PAIR_TIMEOUT} s or crashes z3 is unknown ({sum(r['how'] in ('timeout', 'crash') for r in results)} here)."
+            f"Taken as published: {summary['published']['proven']}/{summary['published']['pairs']} proved, {summary['published']['refuted']} refuted. "
+            f"{summary['plugged']['pairs']} pairs hold value placeholders and are decided with TestSuiteEval's plug-in of the gold's values (scored apart): {summary['plugged']['proven']} proved, {summary['plugged']['refuted']} refuted. "
+            f"Refuted causes: {', '.join(f'{k or chr(63)} {v}' for k, v in sorted(causes.items()))}. A pair that runs past {PAIR_TIMEOUT} s or crashes z3 is unknown ({sum(r['how'] in ('timeout', 'crash') for r in results)} here). "
+            "Tuned on test: no knowledge of it; the harness was written by an earlier, interrupted session whose log is not available, and this run is the first full scoring of the held-out pairs (the development pairs alone scored 26/293 proved earlier the same day)."
         ),
     }
 
 
 def check_sources() -> list[str]:
-    problems = spider_data.check_sources()
+    problems = spider_data.check_sources(("tables.json", "ESMFalseNegatives.tsv"))
     if not problems:
         pairs = load_pairs()
         if len(pairs) != 359 or sum(len(p.rows) for p in pairs) != 558:
