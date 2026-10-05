@@ -20,13 +20,33 @@ Each table has N slots. A slot has a presence flag and, per column, a symbolic v
 - `WHERE`, `ON`, `HAVING`: conjoin the row's presence with the condition (three-valued logic: NULL does not pass).
 - Joins (inner, left, right, full, cross, `USING`, `NATURAL`): every pair of rows, with an outer row for each unmatched side.
 - `GROUP BY`: slot *i* is a group representative when it is present and no earlier present slot has the same key (NULLs equal each other); aggregates run over the members. Without `GROUP BY`, an aggregate query always returns one row. A column that is neither grouped nor aggregated is an *arbitrary pick* from the group: a fresh choice constrained to a member, so two queries are equivalent only if they agree whatever the pick.
-- `DISTINCT`, `UNION [ALL]`, `INTERSECT [ALL]`, `EXCEPT [ALL]` (branches matched by position; `BY NAME` and `CORRESPONDING` are first rewritten to the positional form by `kumosql.set_operations`, and the answer is unknown when a branch's columns are not known), `IN`, `NOT IN`, `EXISTS`, correlated and scalar subqueries, CTEs, `CASE`, `COALESCE`, `NULLIF`, `LIKE` (literal patterns), arithmetic, `ROUND`, date arithmetic in days, `ORDER BY ... LIMIT ... OFFSET`, window functions (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, `FIRST_VALUE`, aggregates over the default frame).
+- `DISTINCT`, `UNION [ALL]`, `INTERSECT [ALL]`, `EXCEPT [ALL]` (branches matched by position; `BY NAME` and `CORRESPONDING` are first rewritten to the positional form by `kumosql.set_operations`, and the answer is unknown when a branch's columns are not known), `IN`, `NOT IN`, `EXISTS`, correlated and scalar subqueries, CTEs, `CASE`, `COALESCE`, `NULLIF`, `LIKE` (literal patterns), arithmetic, `ROUND`, date arithmetic in days, `ORDER BY ... LIMIT ... OFFSET`, window functions (see [Window functions and frames](#window-functions-and-frames)).
 - Uninterpreted predicates such as `B(X)` (VeriEQL's symbolic predicates) become z3 functions, so equivalence has to hold for every meaning of `B`.
 - Constraints: NOT NULL, keys, foreign keys, enum values, consecutive-id columns and cross-row predicates become assertions.
 
 Two relations are compared as bags: a difference exists when some row's multiplicity differs. `sat` gives a model; `unsat` is "equivalent within the bound".
 
-Anything the encoding does not model (`GROUP_CONCAT`, regular expressions, `UPPER`, date parts, `GROUPING SETS`, recursive CTEs, explicit window frames, MySQL's `date + 1`, a `LIMIT` or `OFFSET` on a set operation itself, `SELECT * EXCEPT/REPLACE/RENAME/ILIKE`, a table missing from the schema) raises `Unsupported` and the answer is **unknown**, never a verdict.
+Anything the encoding does not model (`GROUP_CONCAT`, regular expressions, `UPPER`, date parts, `GROUPING SETS`, recursive CTEs, window frames outside the list below (`GROUPS`, `EXCLUDE`, a frame without `ORDER BY`, a computed offset, a `RANGE` offset over several keys or a non-number key), MySQL's `date + 1`, a `LIMIT` or `OFFSET` on a set operation itself, `SELECT * EXCEPT/REPLACE/RENAME/ILIKE`, a table missing from the schema) raises `Unsupported` and the answer is **unknown**, never a verdict.
+
+## Window functions and frames
+
+Rows of a window's partition sort by its `ORDER BY` keys (NULLs placed as the dialect or an explicit `NULLS FIRST/LAST` says), **ties broken by row position**: the earlier slot comes first. DuckDB on one thread breaks ties by storage order, and the encoding is tested against it with ties in the data.
+
+| Function | Model |
+| --- | --- |
+| `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `PERCENT_RANK`, `CUME_DIST` | position (or tied-group count) in the partition; the last three give tied rows the same value, whatever the tie-break |
+| `NTILE(n)` | literal `n`; the first `size mod n` buckets get one extra row; rows past the end of a short partition get one bucket each |
+| `LAG`, `LEAD` (offset, default) | the row that many positions before or after; no frame |
+| `SUM`, `COUNT`, `AVG`, `MIN`, `MAX` | over the frame; an empty frame gives NULL (`COUNT` gives 0) |
+| `FIRST_VALUE`, `LAST_VALUE`, `NTH_VALUE`, with `IGNORE NULLS` | the first, last or n-th row of the frame (with `IGNORE NULLS`, of the frame's non-NULL rows); NULL when there is none |
+
+Frames: with no frame clause the frame is `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` (the whole partition without `ORDER BY`). An explicit `ROWS` or `RANGE` frame needs an `ORDER BY` and may use `UNBOUNDED PRECEDING/FOLLOWING`, `CURRENT ROW` and `n PRECEDING/FOLLOWING`, one bound or `BETWEEN` two.
+
+- `ROWS n` counts positions in the sort order, so on tied rows the frame depends on the tie-break.
+- `RANGE CURRENT ROW` reaches the first or last tied row. `RANGE n PRECEDING/FOLLOWING` takes rows whose key is within `n` of the current key (reversed under `DESC`) and needs one numeric `ORDER BY` key; a whole-number key takes a whole-number offset, a `FLOAT64` key any literal. For a NULL key the offset bounds are its tied NULL rows; for a number, NULL rows are inside the bound or outside it according to where the ordering puts NULLs.
+- A frame whose start lies after its end is an error in BigQuery, so it is `Unsupported` here rather than an empty frame; so are `GROUPS`, `EXCLUDE`, a computed or fractional (`ROWS`) offset, and an explicit frame on a function that takes none (`LAG`, `ROW_NUMBER`, `NTILE`, ...).
+
+A `RANGE` frame holds whole groups of tied rows, so an aggregate over it does not depend on the tie-break. A `ROWS` frame, `FIRST_VALUE`/`LAST_VALUE`/`NTH_VALUE` (which pick one tied row), `LAG`, `LEAD`, `ROW_NUMBER` and `NTILE` do, which is why a difference found there is reported only if it survives the replay's shuffles. The NULL-key `RANGE` behaviour is checked against DuckDB; BigQuery's own result for a NULL key under an offset bound was not run.
 
 ## Replay, assumptions, and what a result means
 
@@ -43,6 +63,7 @@ Assumptions reported with every result: bounded databases only; exact arithmetic
 A wrong encoding could hide a difference, so the encoding itself is tested against DuckDB:
 
 - `tests/test_bounded_equivalence.py` compiles 30 query shapes (joins, groups, windows, set operations, subqueries, NULL cases), pins the symbolic database to random concrete ones and compares the result with DuckDB's.
+- The same file runs 260 random window queries (24 functions, `ROWS` and `RANGE` frames with every bound kind, ascending and descending keys with explicit and default NULL placement, partitions) over tables of up to 5 rows with repeated key values and NULLs, against DuckDB with `SET threads=1`. At least 150 are modeled and every one matches; a frame the encoding declines is skipped, never compared.
 - `python tools/bounded_bench.py differential SUITE` does the same on every query of a VeriEQL suite. Any mismatch is a bug and must stay 0 before a bounded number is quoted.
 - `run` cross-checks every bounded verdict: a counterexample against a pair the unbounded prover proved, VeriEQL's published counterexample (replayed on DuckDB) that fits inside the bound, or a random-search counterexample that fits inside the bound each count as **wrong**.
 
