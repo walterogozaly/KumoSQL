@@ -25,3 +25,11 @@ Run from a development checkout. The full guide supplies unsafe and composition 
 The suite checks proofs against small DuckDB databases and replays counterexamples. It distinguishes false proofs, counterexamples that fail to show a difference, bugs in generated labels, and behavior-changing rule steps.
 
 Finding no difference on the generated databases is executed evidence. It does not establish unbounded equivalence. Coverage and wrong-answer counts are separate so an unknown answer is not mistaken for a false proof.
+
+## Differences that only show on unusual values
+
+The generated test databases only use the numbers 0 to 3, so a change that matters only for a negative number, or for a number bigger than any in the query, can look harmless although it is not. When the usual searches find nothing, the checker now also tries two extra kinds of small databases: ones where a boundary row sits alone in its table, and ones that the solver builds on purpose so that the two queries disagree (a few rows, small values only).
+
+For example, `WHERE a >= 3` against `WHERE a > 3` differs on a single row with `a = 3`, as long as no matching row exists in the second table. A database like that is only a suggestion: it is accepted as a difference only after both queries really run on it and return different rows, also with the database engine's optimizer turned off, so a bug in the solver's model can lose a difference but never invent one. Two details of how the engines read SQL differently are pinned down for this: rounding a decimal to an integer, and dates beyond year 9999.
+
+Limits of the evidence: finding no such database proves nothing, and the searches only cover queries made of constructs whose results are known to match between the two engines. See the [full reference](../../docs/evals/fuzzing.md#refutations-that-need-exact-values-bounded-refutation) for the details.
