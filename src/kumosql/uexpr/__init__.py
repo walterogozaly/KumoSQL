@@ -48,6 +48,35 @@ def _grouping_sets_as_union(tree):
     return _plain_grouping_calls(grouping_sets_to_union(expand_grouping_sets(tree)))
 
 
+def _limit_spelling(sql: str, dialect: str, schema) -> str:
+    """Read ``FETCH NEXT n ROWS ONLY`` as ``LIMIT n``, and spell out ``SELECT *`` under a top-level LIMIT.
+
+    The ORDER BY .. LIMIT splitter keys the ordering on output positions, so a star list needs its
+    columns written out (the schema knows them). Anything that does not round-trip is left alone.
+    """
+
+    from sqlglot import exp
+
+    try:
+        tree = sqlglot.parse_one(sql, read=dialect)
+    except sqlglot.errors.SqlglotError:
+        return sql
+    changed = False
+    if any(True for _ in tree.find_all(exp.Fetch)):
+        spelled = tree.sql(dialect)
+        if "FETCH" in spelled.upper():
+            return sql  # PERCENT, WITH TIES: left for check_modeled to refuse
+        tree = sqlglot.parse_one(spelled, read=dialect)
+        changed = True
+    if schema and isinstance(tree, exp.Select) and tree.args.get("limit") is not None and tree.args.get("order") is not None:
+        if any(isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star)) for e in tree.expressions):
+            from ..algebraic_equivalence import _expand_stars
+
+            tree = _expand_stars(tree, schema)
+            changed = True
+    return tree.sql(dialect) if changed else sql
+
+
 def _plain_grouping_calls(tree):
     """``GROUPING(k)`` over a plain GROUP BY is 0: every key is present in every group.
 
@@ -128,6 +157,7 @@ def prove_bag_equivalent(
         if problem:
             return unknown(f"BY NAME set operation ({problem})")
         assumptions = list(BASE_ASSUMPTIONS)
+        left_sql, right_sql = _limit_spelling(left_sql, dialect, schema), _limit_spelling(right_sql, dialect, schema)
         left_core, left_spec = _split_limit(left_sql, dialect)
         right_core, right_spec = _split_limit(right_sql, dialect)
         if left_core is None or right_core is None:
