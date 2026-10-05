@@ -507,11 +507,12 @@ def _rewrite_ai_scalar_calls(sql: str, tokens: list) -> str:
     ``IF``, written ``AI.__KUMO_AI_GENERATE_BOOL(..)``: sqlglot read the prompt as a table (``MODEL prompt``) and refused ``AI.IF``.
     A call whose first argument is ``TABLE``, ``MODEL`` or a subquery, or that follows ``FROM``/``JOIN``, is the table function."""
 
-    known = set(BigQuery.Parser.FUNCTIONS) | set(BigQuery.Parser.FUNCTION_PARSERS)
+    known = None
     edits: list[tuple[int, int, str]] = []
     for index in range(len(tokens) - 5):
         if tokens[index].text.upper() != "AI" or tokens[index + 1].token_type != TokenType.DOT:
             continue
+        known = known or set(BigQuery.Parser.FUNCTIONS) | set(BigQuery.Parser.FUNCTION_PARSERS)
         name, opened, first = tokens[index + 2], tokens[index + 3], tokens[index + 4]
         if opened.token_type != TokenType.L_PAREN or name.text.upper() not in known:
             continue

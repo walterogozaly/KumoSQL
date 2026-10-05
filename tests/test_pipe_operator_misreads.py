@@ -37,7 +37,6 @@ def read(sql: str) -> str:
         f"{SRC} |> DISTINCT |> JOIN UNNEST([1]) AS y ON x = y",
         f"{SRC} |> WHERE x > 1 |> RIGHT JOIN UNNEST([1]) AS y ON x = y",
         f"{SRC} |> WHERE x > 1 |> FULL OUTER JOIN UNNEST([1]) AS y ON x = y",
-        f"{SRC} |> PIVOT(COUNT(*) FOR x IN (1, 2))",
         f"{SRC} |> SELECT AS STRUCT x",
         f"{SRC} |> SELECT AS VALUE STRUCT(x)",
         f"{SRC} |> SELECT SUM(x) OVER w AS s WINDOW w AS (ORDER BY x)",
@@ -99,6 +98,7 @@ def test_forms_with_a_plain_spelling_are_read_through_it(sql, expected):
         f"{SRC} |> TABLESAMPLE SYSTEM (50 PERCENT)",
         f"SELECT * FROM ({SRC} |> LIMIT 1) WHERE x > 1",
         f"{SRC} |> UNPIVOT(v FOR k IN (x))",
+        f"{SRC} |> PIVOT(COUNT(*) FOR x IN (1, 2))",
         f"{SRC} |> SELECT x, SUM(x) OVER (ORDER BY x) AS s |> WHERE s > 1",
         f"{SRC} |> UNION ALL ({SRC} |> LIMIT 1), ({SRC} |> WHERE x > 1)",
     ],
@@ -115,9 +115,31 @@ def test_a_limit_read_before_a_later_order_is_not_merged_into_it():
     assert read(f"{SRC} |> ORDER BY x |> LIMIT 1") == "SELECT * FROM UNNEST([1, 2, 3]) AS x ORDER BY x LIMIT 1"
 
 
+@pytest.mark.parametrize(
+    "sql, expected",
+    [
+        (
+            "FROM (SELECT 'a' AS k, 1 AS v) |> PIVOT(SUM(v) FOR k IN ('a'))",
+            "SELECT * FROM (SELECT * FROM (SELECT 'a' AS k, 1 AS v)) PIVOT(SUM(v) FOR k IN ('a'))",
+        ),
+        (
+            "FROM (SELECT 1 AS a, 2 AS b) |> WHERE a > 0 |> UNPIVOT(v FOR k IN (a, b)) AS u |> WHERE v > 1 |> LIMIT 1",
+            "SELECT * FROM (SELECT * FROM (SELECT * FROM (SELECT * FROM (SELECT 1 AS a, 2 AS b) WHERE a > 0)) UNPIVOT(v FOR k IN (a, b)) AS u WHERE v > 1 LIMIT 1)",
+        ),
+        (
+            "WITH w AS (SELECT 1 AS a, 2 AS b) FROM w |> UNPIVOT(v FOR k IN (a, b)) |> UNPIVOT(z FOR y IN (v))",
+            "SELECT * FROM (SELECT * FROM (WITH w AS (SELECT 1 AS a, 2 AS b) SELECT * FROM w) UNPIVOT(v FOR k IN (a, b))) UNPIVOT(z FOR y IN (v))",
+        ),
+    ],
+)
+def test_a_pipe_pivot_is_the_table_pivot_of_the_query_before_it(sql, expected):
+    # a filter before |> UNPIVOT acts on the columns being unpivoted, so it must stay inside, before the unpivot
+    assert read(sql) == expected
+
+
 def test_a_refusal_is_a_parse_error_naming_the_operator():
-    with pytest.raises(ParseError, match="PIVOT"):
-        parse_statements(f"{SRC} |> PIVOT(COUNT(*) FOR x IN (1, 2))")
+    with pytest.raises(ParseError, match="AS STRUCT"):
+        parse_statements(f"{SRC} |> SELECT AS STRUCT x")
     with pytest.raises(ParseError, match="LIMIT"):
         parse_statements(f"{SRC} |> LIMIT 1 |> WHERE x > 1")
 

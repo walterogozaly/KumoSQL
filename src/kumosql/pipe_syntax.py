@@ -3,12 +3,13 @@
 sqlglot turns ``FROM t |> op |> op`` into one ``SELECT`` and keeps adding to it: ``|> WHERE`` fills the ``WHERE``, ``|> LIMIT`` the
 ``LIMIT``, ``|> JOIN`` a join. That is right only while the operators come in an order a ``SELECT`` can say. After a ``|> LIMIT``
 a later ``|> WHERE``, ``|> ORDER BY`` or ``|> JOIN`` would be read as acting before the limit (``FROM t |> LIMIT 1 |> ORDER BY x``
-became ``SELECT * FROM t ORDER BY x LIMIT 1``, a different row). Other operators sqlglot drops without a word: ``|> PIVOT``,
+became ``SELECT * FROM t ORDER BY x LIMIT 1``, a different row). Other operators sqlglot drops without a word: ``|> PIVOT`` (and ``|> UNPIVOT``, which it ran after the filters before it),
 ``|> SELECT DISTINCT``, the ``AS STRUCT`` and ``AS VALUE`` of ``|> SELECT``, the ordering of ``GROUP AND ORDER BY`` and the
 ``WINDOW`` clause of ``|> SELECT``; ``GROUP BY ROLLUP (x)`` of ``|> AGGREGATE`` is read as a column called ``ROLLUP``.
 
 What this module does about each, working on the tokens so that it is the same on every sqlglot build:
 
+* ``FROM t |> WHERE c |> PIVOT(...)`` (and ``UNPIVOT``) is the table ``PIVOT`` of the query before it, ``FROM (FROM t |> WHERE c) PIVOT(...)``;
 * ``|> WINDOW e AS a`` is BigQuery's own spelling of ``|> EXTEND e AS a`` and is written that way;
 * ``|> SELECT DISTINCT items`` is ``|> SELECT items |> DISTINCT``;
 * ``GROUP AND ORDER BY a, b DESC`` is ``GROUP BY a ASC, b DESC``;
@@ -120,7 +121,12 @@ def rewrite(sql: str, tokens: list) -> str:
     edits: list[tuple[int, int, str]] = []
     for _, first, end in _segments(tokens):
         word = _word(tokens, first + 1)
-        if word == "WINDOW":
+        if word in ("PIVOT", "UNPIVOT"):
+            if not edits:  # one at a time: the text it leaves is read again, and the next one is rewritten then
+                edit = _pivot_over_input(sql, tokens, first, end)
+                if edit:
+                    return _edit(sql, [edit])
+        elif word == "WINDOW":
             edits.append((tokens[first + 1].start, tokens[first + 1].end + 1, "EXTEND"))
         elif word == "SELECT" and _word(tokens, first + 2) == "DISTINCT" and first + 3 < end:
             if _word(tokens, first + 3) == "AS" and _word(tokens, first + 4) in ("STRUCT", "VALUE"):
@@ -132,6 +138,36 @@ def rewrite(sql: str, tokens: list) -> str:
             if edit:
                 edits.extend(edit)
     return _edit(sql, edits) if edits else sql
+
+
+def _chain_start(tokens: list, index: int) -> int:
+    """Index of the first token of the query that holds ``tokens[index]``: just after the parenthesis it sits in, or after
+    the statement's start."""
+
+    depth = 0
+    for i in range(index - 1, -1, -1):
+        kind = tokens[i].token_type
+        if kind in _CLOSE:
+            depth += 1
+        elif kind in _OPEN:
+            if depth == 0:
+                return i + 1
+            depth -= 1
+        elif kind == TokenType.SEMICOLON and depth == 0:
+            return i + 1
+    return 0
+
+
+def _pivot_over_input(sql: str, tokens: list, first: int, end: int) -> tuple[int, int, str] | None:
+    """``FROM t |> WHERE c |> PIVOT(...) AS p`` as ``FROM (FROM t |> WHERE c) PIVOT(...) AS p``: BigQuery defines the pipe
+    operator as the table ``PIVOT`` applied to the query before it. sqlglot dropped a ``|> PIVOT`` and put a ``|> UNPIVOT`` on the
+    first table of the chain, so a filter before it ran after it."""
+
+    start = _chain_start(tokens, first)
+    if start >= first or end <= first + 2:
+        return None
+    head = tokens[start].start
+    return head, tokens[end - 1].end + 1, f"FROM ({sql[head : tokens[first].start].strip()}) {sql[tokens[first + 1].start : tokens[end - 1].end + 1]}"
 
 
 def _group_and_order_by(sql: str, tokens: list, first: int, end: int) -> list[tuple[int, int, str]]:
