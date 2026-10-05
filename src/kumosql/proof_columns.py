@@ -725,7 +725,34 @@ class _Origins:
             if resolution.target is None:
                 raise _Undecided("a select alias with no single value")
             return self.expression(resolution.target, depth + 1)
+        if status == USING:
+            return self._merged(column, depth)
         raise _Undecided(resolution.detail or status)
+
+    def _merged(self, column: exp.Column, depth: int) -> list[tuple]:
+        """A bare name that ``JOIN ... USING`` merges reads the left source (the right one for RIGHT, both for FULL).
+
+        Read only when exactly one join of the select lists the name and every source up to it names its columns,
+        so that "the left source" is one source and not the result of an earlier merge.
+        """
+
+        name = column.name.lower()
+        select, _, _ = _locate(column)
+        sources = self.reader._select_sources(select)
+        joins = select.args.get("joins") or []
+        hits = [(position, join) for position, join in enumerate(joins, start=1) if name in {u.name.lower() for u in join.args.get("using") or []}]
+        if len(hits) != 1:
+            raise _Undecided("a USING column listed by more than one join")
+        position, join = hits[0]
+        if any(source.columns is None or source.open for source in sources[: position + 1]):
+            raise _Undecided("a USING join over a source whose columns are not known")
+        left = [source for source in sources[:position] if name in source.columns]
+        right = sources[position]
+        if len(left) != 1 or name not in right.columns:
+            raise _Undecided("the sides of a USING column are not one source each")
+        side = str(join.args.get("side") or "").upper()
+        chosen = {"RIGHT": [right], "FULL": [left[0], right]}.get(side, [left[0]])
+        return [leaf for source in chosen for leaf in self._item(source.node, name, depth)]
 
     def expression(self, node: exp.Expression, depth: int = 0) -> list[tuple]:
         leaves: list[tuple] = []
@@ -737,6 +764,9 @@ class _Origins:
 
     def _item(self, item: exp.Expression, name: str, depth: int) -> list[tuple]:
         if isinstance(item, exp.Table):
+            alias = item.args.get("alias")
+            if alias is not None and alias.args.get("columns"):
+                raise _Undecided("a table alias that renames the columns")
             try:
                 cte = _cte_named(item)
             except _Rejected as exc:
@@ -774,8 +804,45 @@ class _Origins:
             value = matches[0].this if isinstance(matches[0], exp.Alias) else matches[0]
             return self.expression(value, depth + 1)
         if isinstance(query, exp.SetOperation):
-            return [("derived", self._number(item), name)]
+            branches = _set_branches(query)
+            names = _plain_outputs(branches[0])
+            if names.count(name) != 1:
+                raise _Undecided(f"{name} is not exactly one output of the set operation")
+            position = names.index(name)
+            leaves: list[tuple] = []
+            for branch in branches:
+                outputs = _plain_outputs(branch, values=True)
+                if len(outputs) != len(names):
+                    raise _Undecided("the branches of a set operation list different numbers of columns")
+                leaves.extend(self.expression(outputs[position], depth + 1))
+            return leaves
         raise _Undecided("a derived table that is not a SELECT")
+
+
+def _set_branches(query: exp.Expression) -> list[exp.Select]:
+    """The SELECTs a set operation combines, in order (nested operations and parentheses read through)."""
+
+    while isinstance(query, exp.Subquery):
+        if query.args.get("order") or query.args.get("limit") or query.args.get("offset"):
+            raise _Undecided("a parenthesized query with its own ORDER BY or LIMIT")
+        query = query.this
+    if isinstance(query, exp.SetOperation):
+        if query.args.get("by_name") or query.args.get("on") or query.args.get("order") or query.args.get("limit"):
+            raise _Undecided("a set operation by name or with its own ORDER BY or LIMIT")
+        return _set_branches(query.this) + _set_branches(query.expression)
+    if isinstance(query, exp.Select):
+        return [query]
+    raise _Undecided("a set operation over something that is not a SELECT")
+
+
+def _plain_outputs(select: exp.Select, values: bool = False) -> list:
+    """The output names of a SELECT (lower case), or the expressions that compute them."""
+
+    if any(isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star)) for e in select.expressions):
+        raise _Undecided("a star in the projection")
+    if values:
+        return [e.this if isinstance(e, exp.Alias) else e for e in select.expressions]
+    return [e.alias_or_name.lower() for e in select.expressions]
 
 
 def _show(leaves: list[tuple]) -> str:
@@ -890,7 +957,7 @@ class Rewrite:
             return Verdict(UNCHECKED, str(exc))
         except _Ambiguous as exc:
             return Verdict(DISAGREE, f"{label!r} is ambiguous after the rewrite ({exc}) and was not before")
-        if actual == expected:
+        if sorted(actual) == sorted(expected):
             return Verdict(AGREE, "the same base columns", agreed=1)
         return Verdict(DISAGREE, f"{label!r} reads {_show(actual)} after the rewrite but read {_show(expected)} before")
 
