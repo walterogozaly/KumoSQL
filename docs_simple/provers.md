@@ -74,6 +74,10 @@ Some writes cannot be compared faithfully, so the check answers `error` instead 
 
 Repeating the same comparison should find the same counterexample regardless of earlier comparisons or unrelated imports. For example, removing a lookup join can lose its treatment of a user whose plan is NULL: the join drops that user, while reading the users table keeps them. The solver isolates its candidate search to avoid changing this witness with process history. The search can still miss a difference or run out of time; returned examples must respect the declared data guarantees and make the query results differ.
 
+## Strings written with escapes
+
+BigQuery lets you write the letter `A` as `'\x41'`. The parser KumoSQL uses keeps those four characters as written, so a checker that compared the text would say `'\x41' = 'A'` is never true and call `WHERE '\x41' = 'A'` an empty query, while BigQuery returns every row. The checkers now decline a BigQuery query with such an escape (`\x41`, `\u0041`, octal) and answer "not proven"; plain strings, the common escapes (`\n`, `\t`, `\\`, `\'`) and raw strings (`r'..'`) are unaffected. See the [full reference](../docs/provers.md) for the rule.
+
 ## Strings compared with numbers
 
 `WHERE '2' <> 2` looks like a condition that is never true, but engines disagree: MySQL turns the string into a number and finds them equal, DuckDB and PostgreSQL cast it the same way, and BigQuery refuses the query. Treating the two as always different once led the checker to say this query matches one with no filter, when real engines return different rows.

@@ -39,7 +39,7 @@ from .set_operations import positional_sql_pair
 from .literal_fold_rules import distribute_over_constant_union, fold_string_literals
 from .parse_check import refuse_misread_proofs
 from .solver_lock import serialized
-from .string_literals import canonical_literals, invalid_literal
+from .string_literals import canonical_literals, invalid_literal, undecoded_escape
 from .type_names import invalid_type_name
 from .sqlx_fragments import masked_template_problem
 
@@ -4984,6 +4984,8 @@ def _prove_equivalent_algebraic_checked(left_sql: str, right_sql: str, **kwargs)
         left_sql, right_sql = (string_number_literals.normalize(sql, dialect, kwargs.get("types")) for sql in (left_sql, right_sql))
         if dialect == "bigquery" and (invalid_literal(left_sql) or invalid_literal(right_sql)):
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a single-quoted literal holds a line break (not valid GoogleSQL)")
+        if dialect == "bigquery" and (undecoded_escape(left_sql) or undecoded_escape(right_sql)):
+            return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "unsupported: a string literal holds an escape the prover does not decode (\\x41, \\u0041, octal)")
         unknown_type = dialect == "bigquery" and (invalid_type_name(left_sql) or invalid_type_name(right_sql))
         if unknown_type:
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BigQuery would reject the query: {unknown_type}")

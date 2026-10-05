@@ -4,6 +4,10 @@
 ``'table'``, and ``'TABLE' = 'VIEW'`` is FALSE. Only results every supported dialect agrees on are folded:
 case changes of ASCII text, a substring that starts at 1 or later and is not empty, a concatenation of
 non-NULL literals, and equality of two literals (compared exactly, as the solver does).
+
+A literal holding a backslash is never read: sqlglot leaves some escapes of a BigQuery string undecoded (``'\\x41'``
+is the text ``\\x41`` to it but the string ``A`` to BigQuery), so its text is not its value and comparing, casing,
+cutting or joining that text would call equal strings different.
 """
 
 from __future__ import annotations
@@ -14,7 +18,7 @@ from sqlglot import exp
 
 
 def _text(node: exp.Expression | None) -> str | None:
-    return node.name if isinstance(node, exp.Literal) and node.is_string else None
+    return node.name if isinstance(node, exp.Literal) and node.is_string and "\\" not in node.name else None
 
 
 def _integer(node: exp.Expression | None) -> int | None:
@@ -63,6 +67,8 @@ def _constant_row(select: exp.Expression) -> tuple | None:
         return None
     if not select.expressions or not all(isinstance(item.unalias(), exp.Literal) or isinstance(item.unalias(), exp.Null) for item in select.expressions):
         return None
+    if any(isinstance(item.unalias(), exp.Literal) and item.unalias().is_string and "\\" in item.unalias().name for item in select.expressions):
+        return None  # an escape sqlglot leaves undecoded: 'A' and '\\x41' are one string to BigQuery but two texts here
     # Numbers compare by value (1 and 1.0 are one row of a UNION), strings exactly.
     return tuple(("n", Decimal(lit.name)) if isinstance(lit, exp.Literal) and not lit.is_string else ("s", lit.name) if isinstance(lit, exp.Literal) else ("null",) for lit in (item.unalias() for item in select.expressions))
 

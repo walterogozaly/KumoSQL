@@ -3,7 +3,7 @@
 import pytest
 
 from kumosql.equivalence import prove_equivalent
-from kumosql.string_literals import canonical_literals
+from kumosql.string_literals import canonical_literals, undecoded_escape
 
 
 @pytest.mark.parametrize(
@@ -73,3 +73,37 @@ def test_execution_check_reads_escapes_like_bigquery():
 
     assert _duck(r"SELECT 'a\"b'", "bigquery") == _duck("SELECT 'a\"b'", "bigquery")
     assert _duck("SELECT `a``b` FROM t", "bigquery") == _duck("SELECT `a` `b` FROM t", "bigquery")
+
+
+@pytest.mark.parametrize(
+    "sql, expected",
+    [
+        (r"SELECT '\x41'", True),
+        (r"SELECT 'a' || '\u0041'", True),
+        (r"SELECT '\101', 'z'", True),
+        (r'SELECT "\x41"', True),
+        (r"SELECT '''x\x41'''", True),
+        (r"SELECT 'a\nb', 'x\\y', 'q\'r', 'p\"q'", False),
+        (r"SELECT r'\x41', b'\x41', Rb'\x41', rb'\101'", False),
+        (r"SELECT `a\x41` FROM t", False),
+        ("SELECT 1 -- '\\x41'\nFROM t", False),
+        (r"SELECT 'ok' /* '\x41' */", False),
+        ("SELECT 'plain'", False),
+    ],
+)
+def test_undecoded_escapes_are_found(sql, expected):
+    assert undecoded_escape(sql) is expected
+
+
+def test_strings_the_prover_cannot_decode_are_not_compared_by_their_text():
+    pytest.importorskip("z3")
+    from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+    from kumosql.smt_equivalence import prove_equivalent_smt
+
+    # BigQuery reads '\x41' as the string 'A'; sqlglot keeps the four characters, so the two were called different
+    pair = (r"SELECT t.id FROM t WHERE '\x41' = 'A'", "SELECT t.id FROM t WHERE FALSE")
+    assert not prove_equivalent_algebraic(*pair, schema={"t": ["id"]}).proven
+    assert not prove_equivalent_smt(*pair, schema={"t": ["id"]}).proven
+    plain = ("SELECT t.id FROM t WHERE 'a' = 'A'", "SELECT t.id FROM t WHERE FALSE")
+    assert prove_equivalent_algebraic(*plain, schema={"t": ["id"]}).proven
+    assert prove_equivalent_smt(*plain, schema={"t": ["id"]}).proven

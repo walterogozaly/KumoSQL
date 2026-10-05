@@ -137,6 +137,49 @@ def invalid_literal(sql: str) -> bool:
     return False
 
 
+def undecoded_escape(sql: str) -> bool:
+    """Whether ``sql`` has a string literal with a backslash escape that ``canonical_literals`` leaves as written.
+
+    sqlglot reads ``'\\x41'`` as the four characters ``\\x41``, where BigQuery reads the string ``A``, and gives both
+    spellings of the text ``\\x41`` (``'\\\\x41'`` is the four characters) one tree. A prover that compares such
+    literals by their text would call equal strings different, so it declines the query. Raw strings (``r'..'``) and
+    bytes literals (``b'..'``) are not meant: a raw string has no escapes, and bytes are not compared as text.
+    """
+
+    if "\\" not in sql:
+        return False
+    i, size = 0, len(sql)
+    while i < size:
+        char = sql[i]
+        if sql.startswith("--", i) or char == "#":
+            end = sql.find("\n", i)
+            i = size if end < 0 else end
+        elif sql.startswith("/*", i):
+            end = sql.find("*/", i + 2)
+            i = size if end < 0 else end + 2
+        elif char == "`":
+            j = i + 1
+            while j < size and sql[j] != "`":
+                j += 2 if sql[j] == "\\" else 1
+            i = j + 1
+        elif char.isalnum() or char == "_":
+            j = i
+            while j < size and (sql[j].isalnum() or sql[j] == "_"):
+                j += 1
+            if sql[i:j].lower() in ("r", "b", "rb", "br") and j < size and sql[j] in "'\"":
+                i = _string_end(sql, j)[0]  # raw and bytes literals: no text escapes to misread
+            else:
+                i = j
+        elif char in "'\"":
+            end, quote, body = _string_end(sql, i)
+            if body is not None and not _invalid(quote, body) and "\\" in body and _decode(body) is None:
+                return True
+            i = end
+        else:
+            i += 1
+    return False
+
+
 def canonical_literals(sql: str) -> str:
     """``sql`` with BigQuery string literals and adjacent quoted names spelled one way (see the module docstring)."""
 
