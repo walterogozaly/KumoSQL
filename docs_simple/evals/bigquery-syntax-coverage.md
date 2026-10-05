@@ -36,4 +36,8 @@ Five BigQuery constructs that real queries use were either rejected or misread, 
 
 Where BigQuery itself refuses a form (a filtered aggregate inside a window, or next to `ORDER BY`), KumoSQL declines it as well. The provers say "unknown" for the new forms rather than guess. Each example was first checked with a free BigQuery dry run. The evidence is a handful of small queries, not a broad measurement. The full guide lists the details and the two operator-precedence misreads that another workstream owns.
 
+## Statements that load, clone and export
+
+`LOAD DATA`, `EXPORT MODEL`, `UNDROP SCHEMA`, snapshot and external tables, indexes and row access policies used to be rejected or kept as raw text that the cleanup rules could not get past. KumoSQL now recognises each by its exact shape, so the table a load writes and the table a snapshot copies show up in the dependency graph, and cleanup leaves the statement exactly as written. Anything that does not match a shape exactly is still refused rather than guessed. The evidence is the coverage examples and a set of small tests; see [Reading SQL scripts](../scripts.md) and the [full reference](../../docs/evals/bigquery-syntax-coverage.md).
+
 Syntax coverage does not establish equivalence on every dataset. See [BigQuery behavior](bigquery-behavior-eval.md) for execution checks.

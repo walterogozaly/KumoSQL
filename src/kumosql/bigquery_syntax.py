@@ -8,6 +8,10 @@ function sqlglot does not know are kept as their own text.
 ``TABLE`` ("Expecting )"), so the model was reported unparseable and everything it read was lost. Here the argument becomes a
 :data:`TABLE_ARGUMENT` call holding the table, so the table is read like any other and the SQL prints back unchanged.
 
+``DROP EXTERNAL TABLE`` and ``DROP SNAPSHOT TABLE`` are read as drops of those kinds. ``EXPORT MODEL``, ``UNDROP SCHEMA`` and
+``LOAD DATA`` (and ``EXPORT DATA`` where sqlglot has no ``Export``) are kept as the raw-text ``exp.Command`` sqlglot makes for
+what it does not read, the same on every release; :mod:`kumosql.statement_forms` says what each is and which tables it names.
+
 ``x LIKE ALL UNNEST(array)`` (and ``LIKE SOME``), an aggregate with a ``WHERE`` filter inside its parentheses (``COUNT(* WHERE c)``),
 the ``WITH(a AS 1, a + 1)`` expression and ``t.arr elem WITH OFFSET off`` are read the same way, each into nodes sqlglot already
 has or a marker call that prints back as written. ``STRUCT<>()``, which sqlglot reads as the comparison ``STRUCT <> ()``, is refused.
@@ -177,6 +181,76 @@ def _merge_table_function_kind(tokens: list) -> list:
             continue
         out.append(token)
         i += 1
+    return out
+
+
+_DROP_KINDS = ("EXTERNAL", "SNAPSHOT")
+
+
+def _merge_drop_kinds(tokens: list) -> list:
+    """``DROP EXTERNAL TABLE`` and ``DROP SNAPSHOT TABLE`` become ``DROP`` and one ``TABLE`` token spelled ``EXTERNAL TABLE``:
+    sqlglot takes the kind of a ``DROP`` from that token's text (it keeps these as raw text otherwise), so they parse as a
+    dropped table of that kind and print back as written."""
+
+    out: list = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if (
+            token.text.upper() in _DROP_KINDS
+            and i + 1 < len(tokens) and tokens[i + 1].token_type == TokenType.TABLE
+            and out and out[-1].token_type == TokenType.DROP
+            and (len(out) == 1 or out[-2].token_type == TokenType.SEMICOLON)
+        ):
+            end = tokens[i + 1]
+            out.append(Token(TokenType.TABLE, f"{token.text.upper()} TABLE", line=token.line, col=token.col, start=token.start, end=end.end))
+            i += 2
+            continue
+        out.append(token)
+        i += 1
+    return out
+
+
+_COMMAND_STARTS = ("LOAD", "UNDROP", "EXPORT")
+
+
+def _command_statements(sql: str, tokens: list, *, export_data: bool = False) -> list:
+    """Each statement that :mod:`kumosql.statement_forms` recognises as ``EXPORT MODEL``, ``UNDROP SCHEMA`` or ``LOAD DATA``
+    (and ``EXPORT DATA`` when ``export_data``) becomes a command word and one string holding the rest, which every sqlglot
+    release parses as the raw-text ``exp.Command`` it makes for what it does not read. The text is the statement as written."""
+
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for index, token in enumerate(tokens):
+        if token.token_type == TokenType.SEMICOLON:
+            spans.append((start, index))
+            start = index + 1
+    spans.append((start, len(tokens)))
+    if not any(
+        end - first >= 3 and tokens[first].text.upper() in _COMMAND_STARTS for first, end in spans
+    ):
+        return tokens
+    from .statement_forms import recognise
+
+    out: list = []
+    position = 0
+    changed = False
+    for first, end in spans:
+        if end - first >= 3 and tokens[first].text.upper() in _COMMAND_STARTS:
+            head, last = tokens[first], tokens[end - 1]
+            text = sql[head.start : last.end + 1]
+            form = recognise(text)
+            if form is not None and (form.opaque or (export_data and form.kind == "export_data")):
+                rest = tokens[first + 1]
+                comments = [*(head.comments or []), *(last.comments or [])]
+                out.extend(tokens[position:first])
+                out.append(Token(TokenType.COMMAND, head.text, line=head.line, col=head.col, start=head.start, end=head.end, comments=comments))
+                out.append(Token(TokenType.STRING, sql[rest.start : last.end + 1], line=rest.line, col=rest.col, start=rest.start, end=last.end))
+                position = end
+                changed = True
+    if not changed:
+        return tokens
+    out.extend(tokens[position:])
     return out
 
 
@@ -702,10 +776,17 @@ def install() -> None:
         try:
             _check_literals(sql, tokens)
             _check_empty_struct(sql, tokens)
-            return self.parser(**opts).parse(tokens, sql)  # what the dialect's own parse does
+            # what the dialect's own parse does, with the statements sqlglot cannot read kept as raw text
+            return self.parser(**opts).parse(_command_statements(sql, _merge_drop_kinds(tokens)), sql)
         except UnclosedLiteral:
             raise
         except ParseError as error:
+            commanded = _command_statements(sql, tokens, export_data=True)  # sqlglot 26 has no EXPORT DATA
+            if commanded is not tokens:
+                try:
+                    return list(self.parser(**opts).parse(_merge_drop_kinds(commanded), sql))
+                except ParseError:
+                    pass
             rewritten = sql
             for rewrite in (
                 _rewrite_raw_bytes, _rewrite_verbatim_calls, _rewrite_model_arguments, _rewrite_pipe_operators, _rewrite_pipe_with,

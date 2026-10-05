@@ -16,7 +16,7 @@ Reading happens in three steps:
 2. Each statement is *kept* (it reads or writes tables: queries,
    ``CREATE TABLE/VIEW ... AS``, ``INSERT``, ``MERGE``, ``UPDATE``, ``DELETE``, table DDL,
    ``CALL`` of a known procedure), *ignored* (``DECLARE``/``SET`` of scalars,
-   ``ASSERT``, transactions, ``LOAD DATA``, definitions outside tables, control-flow shells) or
+   ``ASSERT``, transactions, ``EXPORT MODEL``, indexes, definitions outside tables, control-flow shells) or
    *unknown* (it might read tables and could not be understood: dynamic
    ``EXECUTE IMMEDIATE``, an unknown procedure, text that does not parse).
    Unknown is never guessed.
@@ -611,6 +611,7 @@ _QUERY_STARTS = {"SELECT", "WITH", "FROM", "TABLE"}
 _DDL = {"DROP", "ALTER", "GRANT", "REVOKE", "UNDROP", "TRUNCATE", "COMMENT"}
 _FLOW = {"RAISE", "RETURN", "BREAK", "LEAVE", "CONTINUE", "ITERATE"}
 _TRANSACTION = {"BEGIN", "COMMIT", "ROLLBACK", "START"}
+_CREATE_FORM_WORDS = {"SNAPSHOT", "EXTERNAL", "SEARCH", "VECTOR", "ROW", "RESERVATION", "CAPACITY", "ASSIGNMENT"}
 
 
 def _code_start(text: str) -> int:
@@ -830,6 +831,14 @@ def _parse_error_line(text: str) -> str:
         first = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
         return re.sub(r"\s+", " ", first)[:160]
     return ""
+
+
+def _form(text: str):
+    """The recognised form of a statement sqlglot does not read (see :mod:`kumosql.statement_forms`), or ``None``."""
+
+    from .statement_forms import recognise
+
+    return recognise(text)
 
 
 def _parse_one(sql: str) -> exp.Expression | None:
@@ -1883,6 +1892,11 @@ class _Run:
             return self.dml_statement(text_, line, "delete", conditional)
         if first == "TRUNCATE":
             return self.ddl_statement(text_, line, "truncate", conditional)
+        if first == "UNDROP":
+            form = _form(text_)
+            if form is not None and form.kind == "undrop":
+                return done("undrop", IGNORED, "restores a dataset, no data flow")
+            return self.degrade(done("undrop", UNKNOWN, "statement not recognised"), text_)
         if first in _DDL:
             if first in {"ALTER", "DROP"}:
                 return self.ddl_statement(text_, line, first.lower(), conditional)
@@ -1894,9 +1908,12 @@ class _Run:
         if first == "ASSERT":
             return done("assert", IGNORED, "a check, not data flow")
         if first == "LOAD":
-            return done("load_data", IGNORED, "loads files")
+            return self.load_statement(text_, line, conditional)
         if first == "EXPORT":
-            return self.export_statement(text_, line, conditional)
+            form = _form(text_)
+            if form is not None and form.kind == "export_model":
+                return done("export_model", IGNORED, "exports a model to storage; no table is read or written")
+            return self.export_statement(text_, line, conditional, form)
         if first in _TRANSACTION or (first == "BEGIN" and len(words) > 1):
             self.transaction(first, conditional)
             return done("transaction", IGNORED, "transaction control")
@@ -1933,8 +1950,13 @@ class _Run:
         valid = {"alter": exp.Alter, "drop": exp.Drop, "truncate": exp.TruncateTable}[kind]
         index = len(self.a.statements)
         if not isinstance(tree, valid):
+            form = _form(text_) if kind == "drop" else None
+            if form is not None:
+                return self.form_statement(form, text_, line, conditional)
             return self.record(Statement(index, line, kind, UNKNOWN, "could not be parsed", conditional))
-        if kind != "truncate" and str(tree.args.get("kind") or "").upper() not in {"TABLE", "VIEW", "MATERIALIZED VIEW"}:
+        if kind != "truncate" and str(tree.args.get("kind") or "").upper() not in {
+            "TABLE", "VIEW", "MATERIALIZED VIEW", "EXTERNAL TABLE", "SNAPSHOT TABLE"
+        }:
             return self.record(Statement(index, line, kind, IGNORED, "definition change outside tables", conditional))
         targets = tree.expressions if kind == "truncate" else tree.args.get("tables") or [tree.this]
         if not targets or any(not isinstance(table, exp.Table) or not table.name for table in targets):
@@ -2123,12 +2145,18 @@ class _Run:
             statement.definition = True
             return self.record(statement)
         if not re.match(r"CREATE (OR REPLACE )?(TEMP |TEMPORARY )?(EXTERNAL |MATERIALIZED |SNAPSHOT )?(TABLE|VIEW|MODEL)", head):
+            form = _form(text_) if set(words[1:5]) & _CREATE_FORM_WORDS else None
+            if form is not None:
+                return self.form_statement(form, text_, line, conditional)
             return self.record(Statement(index, line, "ddl", IGNORED, "definition change, no data flow", conditional))
         tree = self.parse(text_)
         target = None
         if isinstance(tree, exp.Create):
             target = tree.this.this if isinstance(tree.this, exp.Schema) else tree.this
         if not isinstance(target, exp.Table) or not target.name:
+            form = _form(text_) if set(words[1:5]) & _CREATE_FORM_WORDS else None
+            if form is not None:
+                return self.form_statement(form, text_, line, conditional)
             return self.degrade(self.record(Statement(index, line, "create_table", UNKNOWN, "could not be parsed", conditional)), text_)
         words_set = set(words[:6])
         properties = tree.args.get("properties")
@@ -2394,11 +2422,68 @@ class _Run:
             return []
         return list(self.variable_sources(tree).items())
 
+    # -- statements read by their shape (kumosql.statement_forms)
+    def qualified(self, text_: str, *tables: exp.Table) -> list[exp.Table]:
+        """``tables`` as the statement means them: a name without a dataset is in the default dataset set by ``SET @@dataset_id``."""
+
+        holder = exp.Tuple(expressions=[_clean(table) for table in tables])
+        if self.default_dataset or self.default_project:
+            self.qualify_defaults(holder, text_)
+        return list(holder.expressions)
+
+    def load_statement(self, text_: str, line: int, conditional: bool) -> Statement:
+        """``LOAD DATA`` writes its table from files: it reads no table, and a temporary table it defines has no table behind it."""
+
+        index = len(self.a.statements)
+        form = _form(text_)
+        if form is None or form.kind != "load_data":
+            return self.degrade(self.record(Statement(index, line, "load_data", UNKNOWN, "statement not recognised", conditional)), text_)
+        statement = self.record(Statement(index, line, "load_data", KEPT, "loads files into a table; reads no table", conditional))
+        statement.complete = True  # the rows come from files: no column is traced to a table
+        (target,) = self.qualified(text_, form.table)
+        key = target.name.casefold()
+        if _is_temp_name(target) and (form.temp or key in self.temps):
+            if key in self.temps and not form.temp:
+                self.temp_dml(target, "load", None, None, {}, statement)  # rows added to a temporary table that exists
+                return statement
+            self.define_temp(target, {}, None, form.columns, conditional, [statement])
+            temp = self.temps[key]
+            temp.empty, temp.opaque_reason = False, "its rows come from files"
+            return statement
+        self.write(target, {}, "load_data", conditional)
+        return statement
+
+    def form_statement(self, form, text_: str, line: int, conditional: bool) -> Statement:
+        """A recognised statement sqlglot keeps as raw text: what it writes and reads comes from its form."""
+
+        index = len(self.a.statements)
+        if form.kind == "create_snapshot_table":
+            statement = self.record(Statement(index, line, "clone", KEPT, "", conditional))
+            target, source = self.qualified(text_, form.table, form.source)
+            sources, _temps, _late = self.reads_of(source)
+            self.write_or_temp(target, sources, "clone", conditional, False, None, None, statement)
+            return statement
+        if form.kind == "create_external_table":
+            statement = self.record(Statement(index, line, "create_table", KEPT, "no source query", conditional))
+            (target,) = self.qualified(text_, form.table)
+            self.write(target, {}, "create_table", conditional)
+            return statement
+        kind = "drop" if form.command == "DROP" else "ddl"
+        if form.kind == "row_access_policy":
+            statement = self.record(Statement(index, line, kind, KEPT, "changes which rows readers of the table see", conditional))
+            statement.complete = True  # no output column values are assigned
+            (target,) = self.qualified(text_, form.on)
+            self.write(target, {}, kind, conditional)
+            return statement
+        reason = "slot administration, no data flow" if form.kind == "reservation" else "index maintenance, no data flow"
+        return self.record(Statement(index, line, kind, IGNORED, reason, conditional))
+
     # -- other statements
-    def export_statement(self, text_: str, line: int, conditional: bool) -> Statement:
+    def export_statement(self, text_: str, line: int, conditional: bool, form=None) -> Statement:
         index = len(self.a.statements)
         match = re.search(r"\bAS\b\s*(.*)$", text_, re.I | re.S)
-        tree = _parse_one(match.group(1)) if match else None
+        query_text = form.query if form is not None and form.kind == "export_data" else match.group(1) if match else None
+        tree = _parse_one(query_text) if query_text else None
         query = _query_of(tree) if tree is not None else None
         if query is None:
             return self.degrade(self.record(Statement(index, line, "export_data", UNKNOWN, "query could not be read", conditional)), text_)

@@ -31,6 +31,7 @@ from kumosql import rewrite  # noqa: E402
 from kumosql.ast_utils import parse_statements, top_level_query  # noqa: E402
 from kumosql.fingerprint import _compare_query  # noqa: E402
 from kumosql.pipeline import load_sqlx_project  # noqa: E402
+from kumosql.statement_forms import recognise_command  # noqa: E402
 from kumosql.smt_equivalence import SmtStatus, prove_equivalent_smt  # noqa: E402
 from kumosql.equivalence import EquivalenceStatus, prove_equivalent  # noqa: E402
 
@@ -76,7 +77,8 @@ def stage_parse(sql: str) -> tuple[str, str]:
         return UNSUPPORTED, _error(exc)
     if not statements:
         return FAIL, "no statements parsed"
-    commands = [s for s in statements if isinstance(s, exp.Command)]
+    # A command kumosql.statement_forms recognises is read (its kind, tables and clauses are known); any other is opaque.
+    commands = [s for s in statements if isinstance(s, exp.Command) and recognise_command(s) is None]
     if commands:
         return UNSUPPORTED, f"sqlglot keeps {commands[0].this} as an opaque command"
     return PASS, ""
@@ -123,10 +125,21 @@ def expected_reads(sql: str) -> set[str] | None:
         statements = parse_statements(sql)
     except Exception:  # noqa: BLE001
         return None
-    if any(isinstance(statement, exp.Command) for statement in statements):
+    forms = [recognise_command(statement) for statement in statements if isinstance(statement, exp.Command)]
+    if any(form is None for form in forms):
         return None
     reads: set[str] = set()
+    for form in forms:  # a recognised command names its read table (a snapshot's source) and the query of EXPORT DATA
+        named = [form.source] if form.source is not None else []
+        if form.query:
+            named = list(parse_statements(form.query)[0].find_all(exp.Table))
+        for table in named:
+            name = ".".join(part for part in (table.catalog, table.db, table.name) if part)
+            if _READ_RE.fullmatch(name):
+                reads.add(name.lower())
     for statement in statements:
+        if isinstance(statement, exp.Command):
+            continue
         targets = set()
         if isinstance(statement, _WRITERS):
             candidates = [statement.this, statement.args.get("securable"), *(statement.args.get("tables") or [])]

@@ -19,8 +19,8 @@ KumoSQL has its own small lexer for this because sqlglot's BigQuery tokenizer tr
 
 | | Statements |
 | --- | --- |
-| Kept | queries, `CREATE [TEMP] TABLE/VIEW ... AS`, `INSERT` (`SELECT` or `VALUES`), `MERGE`, `UPDATE`, `DELETE`, `EXPORT DATA ... AS SELECT` (reads only), `CREATE [TEMP] FUNCTION` and `TABLE FUNCTION` (a definition: its body's tables are reads, it is never a skipped step), `CALL` of a procedure defined in the project or script, `EXECUTE IMMEDIATE` of literal text (also `||` and `CONCAT` of literals) |
-| Ignored | `DECLARE` and `SET` of scalars, `ASSERT`, transactions, `LOAD DATA`, definitions outside tables/views, `RAISE`, `RETURN`, `LEAVE`/`ITERATE`/`BREAK`, and the shell of `IF`, loops and `BEGIN ... END` |
+| Kept | queries, `CREATE [TEMP] TABLE/VIEW ... AS`, `INSERT` (`SELECT` or `VALUES`), `MERGE`, `UPDATE`, `DELETE`, `EXPORT DATA ... AS SELECT` (reads only), `LOAD DATA` (writes its table, reads none), `CREATE SNAPSHOT TABLE ... CLONE s` (reads `s`), `CREATE EXTERNAL TABLE` and `ROW ACCESS POLICY` statements (write the table), `CREATE [TEMP] FUNCTION` and `TABLE FUNCTION` (a definition: its body's tables are reads, it is never a skipped step), `CALL` of a procedure defined in the project or script, `EXECUTE IMMEDIATE` of literal text (also `||` and `CONCAT` of literals) |
+| Ignored | `DECLARE` and `SET` of scalars, `ASSERT`, transactions, `EXPORT MODEL`, `UNDROP SCHEMA`, search and vector indexes, reservations, definitions outside tables/views, `RAISE`, `RETURN`, `LEAVE`/`ITERATE`/`BREAK`, and the shell of `IF`, loops and `BEGIN ... END` |
 | Unknown | `EXECUTE IMMEDIATE` of dynamic text (a variable, `FORMAT`, concatenation with a variable), `CALL` of a procedure nobody defines, a statement that does not parse |
 
 Unknown is never guessed: a dynamic statement adds no edges, and the script is reported incomplete. A statement that does not parse, or whose first word is not a statement at all (a misspelled keyword), is *degraded*, not dropped: the tables it reads and writes are taken from its tokens (names after `FROM`, `JOIN`, `USING`, `TABLE`, `INTO`, `UPDATE`, `MERGE`, `CREATE ... TABLE|VIEW`, `LIKE` and `CLONE`, minus the names of CTEs it declares where they are in scope: after the CTE's body up to the parenthesis that closes its query, or from the `WITH` on for `WITH RECURSIVE`), so its graph edges stay, its columns are unknown, and one `parse_error` says where sqlglot stopped (line and column, no SQL text). Names in comments and strings are never tables, and neither is the `FROM` of `EXTRACT(DATE FROM ts)`, `TRIM(BOTH 'x' FROM s)`, `SUBSTRING`, `SUBSTR`, `OVERLAY` or `POSITION`, or of `IS [NOT] DISTINCT FROM`.
@@ -87,10 +87,28 @@ Nothing in the UI explains scripts. Each script gets an informational `script_su
 - Dynamic table names inside a loop are unknown. Statements after `RETURN`, `LEAVE` or an error are still followed, as possible edges.
 - Pre/post operations that stay as unresolved Dataform templates are reported at info level, not guessed.
 - `EXPORT DATA` is kept for its reads only; the destination is not an edge.
+- Statements sqlglot rejects or keeps as raw text are read by their shape ([Statement forms](#statement-forms)); one that does not match exactly is unknown, never read as a neighbouring form.
 - Scalar SQL functions are not inlined: a call is a transform over its arguments, and the tables its body reads are reads of every statement that calls it from the same script (not of calls to functions defined elsewhere). A call that reads a table without a column (`COUNT(*)` of a lookup) is a constant in column lineage, with the table as a dependency.
 - A table function is inlined only when a plain SQL definition is in the project or the script; one deployed only in BigQuery stays opaque.
 - `INSERT ... VALUES` without a column list has unknown columns (the target schema is not consulted).
 - Table names taken from the tokens of a statement that does not parse can include a column that follows `FROM`/`JOIN` by mistake; they appear as external tables, never as columns.
+
+## Statement forms
+
+`kumosql.statement_forms` reads a handful of BigQuery statements sqlglot cannot parse (or parses differently on different releases) by their token shape: the words that name the statement, the tables it names and the clauses that may follow, in order. A statement either matches exactly and becomes a recognised form, or it is refused (an unknown clause, an unbalanced parenthesis, a subquery where none belongs) and goes down the usual unknown path, where its tokens still supply the tables it may touch.
+
+| Statement | Writes | Reads | Script disposition |
+| --- | --- | --- | --- |
+| `LOAD DATA INTO\|OVERWRITE t [(cols)] [PARTITION BY ...] [CLUSTER BY ...] [OPTIONS (...)] FROM FILES (...) [WITH PARTITION COLUMNS (...)] [WITH CONNECTION c]` | `t`; a temporary table, with unknown rows, for `TEMP TABLE` | nothing (the rows come from files) | kept |
+| `CREATE SNAPSHOT TABLE t CLONE s [FOR SYSTEM_TIME AS OF ...] [OPTIONS (...)]` | `t` | `s` | kept (a `clone`) |
+| `CREATE EXTERNAL TABLE t [(cols)] [WITH CONNECTION c] OPTIONS (...)` | `t` | nothing | kept |
+| `CREATE/DROP ROW ACCESS POLICY p ON t ...`, `DROP ALL ROW ACCESS POLICIES ON t` | `t` (who sees its rows) | nothing | kept |
+| `DROP EXTERNAL TABLE t`, `DROP SNAPSHOT TABLE t` | `t` | nothing | kept (parsed as a `Drop` of that kind) |
+| `EXPORT MODEL m OPTIONS (...)` | nothing (a model is not a table) | nothing | ignored |
+| `UNDROP SCHEMA [IF NOT EXISTS] ds [OPTIONS (...)]` | nothing | nothing | ignored |
+| `CREATE/DROP SEARCH\|VECTOR INDEX i ON t ...`, `CREATE RESERVATION\|CAPACITY\|ASSIGNMENT ...` | nothing | nothing | ignored |
+
+The parser hook in `bigquery_syntax.py` keeps `EXPORT MODEL`, `UNDROP SCHEMA` and `LOAD DATA` (and `EXPORT DATA` where sqlglot has no `Export` node) as the raw-text `exp.Command` sqlglot makes for what it does not read, so they parse the same way on 26.0.0, 30.20, 30.21 and compiled 30.21 and print back as written; cleanup and formatting leave them alone, with no `recovered_parse` or `parse_error`. A name with no dataset is qualified by `SET @@dataset_id`. Covered by `tests/test_statement_forms.py`.
 
 ## Evaluation
 

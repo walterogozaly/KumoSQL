@@ -41,4 +41,15 @@ column lineage. Stored nested fields still trace to their containing column.
 
 Diagnostics distinguish informational script summaries from gaps that block completeness. Check those gaps before concluding that a table or column has no readers.
 
+## Loading files, snapshots and indexes
+
+A few BigQuery statements are not ordinary queries, and the SQL library KumoSQL builds on cannot read them. KumoSQL reads them itself, by their exact shape:
+
+- `LOAD DATA INTO sales FROM FILES (...)` writes the table `sales` and reads no table, because its rows come from files.
+- `CREATE SNAPSHOT TABLE backup CLONE sales` reads `sales` and writes `backup`.
+- `EXPORT MODEL`, `UNDROP SCHEMA`, search and vector indexes and reservations touch no table, so they are noted and not traced.
+- A row access policy changes who can see the rows of its table, so that table counts as changed.
+
+A statement that is almost, but not exactly, one of these (an extra clause, a missing `OPTIONS`, a subquery where none belongs) is not guessed at: it is reported as not understood, and only the table names found in its text are kept. The checks are small hand-written examples plus the syntax coverage cases, not a measurement on real projects. See [the full reference](../docs/scripts.md#statement-forms) for each form.
+
 The full reference covers variables, table functions, exports, statement roles, and MERGE cases. The script evaluation creates scripts with known dependencies, including tricky strings and temporary-table chains, to check the splitter and lineage.
