@@ -587,6 +587,72 @@ class Group:
 
 
 AGGREGATES = (exp.Count, exp.Sum, exp.Min, exp.Max, exp.Avg)
+FRAMED_VALUES = (exp.FirstValue, exp.LastValue, exp.NthValue)  # window functions that read their frame
+
+
+_BOUND_ORDER = {"UNBOUNDED PRECEDING": 0, "PRECEDING": 1, "CURRENT": 2, "FOLLOWING": 3, "UNBOUNDED FOLLOWING": 4}
+
+
+def _frame_bound(value, side, which: str):
+    """A window frame bound as ``("unbounded" | "current" | "offset", SIDE, n)``; anything else is not modeled."""
+
+    side = str(side or "").upper()
+    if isinstance(value, exp.Literal) and not value.is_string:
+        if side not in ("PRECEDING", "FOLLOWING"):
+            raise Unsupported("window frame offset without PRECEDING or FOLLOWING")
+        text = value.this
+        if text.isdigit() and len(text) <= 18:
+            return ("offset", side, int(text))
+        try:
+            fraction = Fraction(text)
+        except (ValueError, ZeroDivisionError):
+            raise Unsupported(f"window frame offset {text}") from None
+        if fraction < 0 or "e" in text.lower():
+            raise Unsupported(f"window frame offset {text}")
+        return ("offset", side, fraction)
+    text = str(value if isinstance(value, str) else getattr(value, "name", "") or "").upper()
+    if text == "CURRENT ROW":
+        return ("current", "", 0)
+    if text == "UNBOUNDED":
+        if side == ("PRECEDING" if which == "start" else "FOLLOWING"):
+            return ("unbounded", side, 0)
+        raise Unsupported("window frame starting at UNBOUNDED FOLLOWING or ending at UNBOUNDED PRECEDING")
+    raise Unsupported("window frame bound that is not a literal")
+
+
+def _check_frame_order(low, high) -> None:
+    """A frame whose start lies after its end is an error in BigQuery, not an empty frame: decline it."""
+
+    def rank(bound):
+        tag, side, _ = bound
+        return _BOUND_ORDER["CURRENT" if tag == "current" else f"UNBOUNDED {side}" if tag == "unbounded" else side]
+
+    if rank(low) > rank(high):
+        raise Unsupported("window frame whose start is after its end")
+    if low[0] == high[0] == "offset" and low[1] == high[1]:
+        if (low[1] == "PRECEDING" and low[2] < high[2]) or (low[1] == "FOLLOWING" and low[2] > high[2]):
+            raise Unsupported("window frame whose start is after its end")
+
+
+def _ntile(size: int, position: int, buckets: int) -> int:
+    """The NTILE bucket (1-based) of the row at 0-based ``position`` among ``size`` rows: the first rows get the extra."""
+
+    whole, extra = divmod(size, buckets)
+    if whole == 0:
+        return position + 1
+    big = extra * (whole + 1)
+    return position // (whole + 1) + 1 if position < big else extra + (position - big) // whole + 1
+
+
+def _lookup(size, position, bound: int, table, real: bool = False):
+    """``table(size, position)`` as a z3 term over the integer terms ``size`` and ``position`` (both at most ``bound``)."""
+
+    out = z3.RealVal(0) if real else z3.IntVal(0)
+    for m in range(bound, 0, -1):
+        for p in range(m, -1, -1):
+            value = table(m, p)
+            out = z3.If(z3.And(size == m, position == p), value if real else z3.IntVal(value), out)
+    return out
 
 
 class SymbolicDatabase:
@@ -1687,9 +1753,16 @@ class Compiler:
         if context is None:
             raise Unsupported("window function outside a select list")
         spec = node.args.get("spec")
-        if spec is not None and (spec.args.get("kind") or spec.args.get("start") or spec.args.get("end")):
-            raise Unsupported("explicit window frame")
+        explicit = spec is not None and bool(spec.args.get("kind") or spec.args.get("start") or spec.args.get("end"))
         function = node.this
+        ignore_nulls = False
+        if isinstance(function, (exp.IgnoreNulls, exp.RespectNulls)):
+            ignore_nulls = isinstance(function, exp.IgnoreNulls)
+            function = function.this
+        if explicit and not isinstance(function, AGGREGATES + FRAMED_VALUES):
+            raise Unsupported(f"window frame on {type(function).__name__}")
+        if ignore_nulls and not isinstance(function, FRAMED_VALUES):
+            raise Unsupported(f"IGNORE NULLS on {type(function).__name__}")
         index = scope.index
         partition = node.args.get("partition_by") or []
         order = node.args.get("order")
@@ -1702,74 +1775,209 @@ class Compiler:
                 keyed.append((parts, sorts))
             context.cache[key] = keyed
         keyed = context.cache[key]
+        count = len(context.rows)
         peers = [
             z3.And(row.present, *[same(x, y) for x, y in zip(keyed[index][0], keyed[j][0])])
             for j, row in enumerate(context.rows)
         ]
-        before = [self._precedes(Row(None, [], keyed[j][1]), Row(None, [], keyed[index][1])) if order is not None else _false() for j in range(len(context.rows))]
+        current = Row(None, [], keyed[index][1])
+        before = [self._precedes(Row(None, [], keyed[j][1]), current) if order is not None else _false() for j in range(count)]
+        after = [self._precedes(current, Row(None, [], keyed[j][1])) if order is not None else _false() for j in range(count)]
         if isinstance(function, exp.RowNumber) or is_call(function, "Rank") or is_call(function, "DenseRank"):
             if order is None:
                 raise Unsupported("ranking function without ORDER BY")
             if is_call(function, "DenseRank"):
                 total = []
-                for j in range(len(context.rows)):
+                for j in range(count):
                     first = z3.Not(z3.Or(*[
-                        z3.And(peers[k], before[k], *[same(x, y) for (x, _), (y, _) in zip(keyed[k][1], keyed[j][1])])
+                        z3.And(peers[k], before[k], *[same(x[0], y[0]) for x, y in zip(keyed[k][1], keyed[j][1])])
                         for k in range(j)
                     ])) if j else _true()
                     total.append(z3.If(z3.And(peers[j], before[j], first), 1, 0))
                 return V("int", 1 + z3.Sum(*total), _false())
             if isinstance(function, exp.RowNumber):  # ties are broken by row position
                 before = [
-                    z3.Or(before[j], z3.Not(z3.Or(before[j], self._precedes(Row(None, [], keyed[index][1]), Row(None, [], keyed[j][1]))))) if j < index else before[j]
-                    for j in range(len(context.rows))
+                    z3.Or(before[j], z3.Not(z3.Or(before[j], after[j]))) if j < index else before[j]
+                    for j in range(count)
                 ]
-            counted = z3.Sum(*[z3.If(z3.And(peers[j], before[j]), 1, 0) for j in range(len(context.rows)) if j != index]) if len(context.rows) > 1 else z3.IntVal(0)
+            counted = z3.Sum(*[z3.If(z3.And(peers[j], before[j]), 1, 0) for j in range(count) if j != index]) if count > 1 else z3.IntVal(0)
             return V("int", 1 + counted, _false())
-        if isinstance(function, AGGREGATES):
-            frame = []
-            for j in range(len(context.rows)):
-                if order is None:
-                    frame.append(peers[j])
-                else:  # the default frame: from the partition start to the last row tied with this one
-                    follows = self._precedes(Row(None, [], keyed[index][1]), Row(None, [], keyed[j][1]))
-                    frame.append(z3.And(peers[j], z3.Not(follows)))
-            return self._aggregate_over(function, Group(frame, context.scopes))
-        if isinstance(function, (exp.Lag, exp.Lead, exp.FirstValue)):
+        if isinstance(function, (exp.PercentRank, exp.CumeDist, exp.Ntile)):
             if order is None:
-                raise Unsupported("LAG, LEAD or FIRST_VALUE without ORDER BY")
+                raise Unsupported(f"{type(function).__name__} without ORDER BY")
+            size = z3.Sum(*[z3.If(p, 1, 0) for p in peers])
+            if isinstance(function, exp.Ntile):
+                buckets = function.this
+                if not (isinstance(buckets, exp.Literal) and not buckets.is_string) or _whole(buckets) < 1:
+                    raise Unsupported("NTILE with a computed or non-positive bucket count")
+                position = self._positions(self._ahead(context, key, keyed, order), peers)[index]
+                return V("int", _lookup(size, position, count, lambda m, p: _ntile(m, p, _whole(buckets))), _false())
+            # RANK - 1 rows come strictly before this row's peer group, CUME_DIST counts through its last peer
+            if isinstance(function, exp.PercentRank):
+                below = z3.Sum(*[z3.If(z3.And(peers[j], before[j]), 1, 0) for j in range(count)])
+                return V("real", _lookup(size, below, count, lambda m, b: z3.RealVal(Fraction(b, m - 1)) if m > 1 else z3.RealVal(0), real=True), _false())
+            through = z3.Sum(*[z3.If(z3.And(peers[j], z3.Not(after[j])), 1, 0) for j in range(count)])
+            return V("real", _lookup(size, through, count, lambda m, c: z3.RealVal(Fraction(c, m)), real=True), _false())
+        if isinstance(function, AGGREGATES + FRAMED_VALUES):
+            if explicit and order is None:
+                raise Unsupported("window frame without ORDER BY")
+            if explicit:
+                ahead = self._ahead(context, key, keyed, order)
+                members = self._frame_members(spec, order, keyed, index, peers, ahead, before, after)
+            elif order is None:
+                members = list(peers)
+            else:  # the default frame: from the partition start to the last row tied with this one
+                members = [z3.And(peers[j], z3.Not(after[j])) for j in range(count)]
+            if isinstance(function, AGGREGATES):
+                return self._aggregate_over(function, Group(members, context.scopes))
+            if order is None:
+                raise Unsupported("FIRST_VALUE, LAST_VALUE or NTH_VALUE without ORDER BY")
+            ahead = self._ahead(context, key, keyed, order)
+            values = [self.expr(function.this, s) for s in context.scopes]
+            if ignore_nulls:
+                members = [z3.And(m, z3.Not(v.null)) for m, v in zip(members, values)]
+            if isinstance(function, exp.NthValue):
+                n = function.args.get("offset")
+                if not (isinstance(n, exp.Literal) and not n.is_string) or _whole(n) < 1:
+                    raise Unsupported("NTH_VALUE with a computed or non-positive position")
+                nth = _whole(n) - 1
+            else:
+                nth = 0
+            # the member with ``nth`` frame rows ahead of it (FIRST_VALUE), or behind it (LAST_VALUE)
+            if isinstance(function, exp.LastValue):
+                rank = [z3.Sum(*[z3.If(z3.And(members[k], ahead[j][k]), 1, 0) for k in range(count) if k != j]) if count > 1 else z3.IntVal(0) for j in range(count)]
+            else:
+                rank = [z3.Sum(*[z3.If(z3.And(members[k], ahead[k][j]), 1, 0) for k in range(count) if k != j]) if count > 1 else z3.IntVal(0) for j in range(count)]
+            return self._pick_value(values, [z3.And(members[j], rank[j] == nth) for j in range(count)], null_value())
+        if isinstance(function, (exp.Lag, exp.Lead)):
+            if order is None:
+                raise Unsupported("LAG or LEAD without ORDER BY")
+            position = self._positions(self._ahead(context, key, keyed, order), peers)
+            offset_node = function.args.get("offset")
+            amount = 1
+            if offset_node is not None:
+                if not (isinstance(offset_node, exp.Literal) and not offset_node.is_string):
+                    raise Unsupported("LAG or LEAD with a computed offset")
+                amount = _whole(offset_node)
+            target = position[index] + (amount if isinstance(function, exp.Lead) else -amount)
+            default = function.args.get("default")
+            fallback = self.expr(default, scope) if default is not None else null_value()
+            values = [self.expr(function.this, s) for s in context.scopes]
+            return self._pick_value(values, [z3.And(peers[j], position[j] == target) for j in range(count)], fallback)
+        raise Unsupported(f"window function {type(function).__name__}")
+
+    def _ahead(self, context, key, keyed, order):
+        """``ahead[k][j]``: row ``k`` sorts before row ``j``, ties broken by row position (the earlier slot first)."""
+
+        cache_key = (key, "ahead")
+        if cache_key not in context.cache:
             count = len(context.rows)
             ahead = [[self._precedes(Row(None, [], keyed[k][1]), Row(None, [], keyed[j][1])) if k != j else _false() for j in range(count)] for k in range(count)]
-            for k in range(count):  # ties are broken by row position
+            for k in range(count):
                 for j in range(k + 1, count):
                     ahead[k][j] = z3.Or(ahead[k][j], z3.Not(z3.Or(ahead[k][j], ahead[j][k])))
-            rank = [z3.Sum(*[z3.If(z3.And(peers[k], ahead[k][j]), 1, 0) for k in range(count)]) for j in range(count)]
-            if isinstance(function, exp.FirstValue):
-                target = z3.IntVal(0)
-                fallback = null_value()
-            else:
-                offset_node = function.args.get("offset")
-                amount = 1
-                if offset_node is not None:
-                    if not (isinstance(offset_node, exp.Literal) and not offset_node.is_string):
-                        raise Unsupported("LAG or LEAD with a computed offset")
-                    amount = _whole(offset_node)
-                target = rank[index] + (amount if isinstance(function, exp.Lead) else -amount)
-                default = function.args.get("default")
-                fallback = self.expr(default, scope) if default is not None else null_value()
-            argument = function.this
-            values = [self.expr(argument, s) for s in context.scopes]
-            kinds = {v.kind for v in values} - {"null"} | ({fallback.kind} - {"null"})
-            kind = next(iter(kinds)) if len(kinds) == 1 else ("real" if kinds == {"int", "real"} else None)
-            if kind is None:
-                raise Unsupported("LAG or LEAD over mixed types")
-            result = to_kind(fallback, kind)
-            for j in reversed(range(count)):
-                value = to_kind(values[j], kind)
-                hit = z3.And(peers[j], rank[j] == target)
-                result = V(kind, z3.If(hit, value.val, result.val), z3.If(hit, value.null, result.null))
-            return result
-        raise Unsupported(f"window function {type(function).__name__}")
+            context.cache[cache_key] = ahead
+        return context.cache[cache_key]
+
+    @staticmethod
+    def _positions(ahead, peers):
+        """Per row ``j`` of the current row's partition, how many partition rows sort before it (0-based)."""
+
+        count = len(ahead)
+        return [z3.Sum(*[z3.If(z3.And(peers[k], ahead[k][j]), 1, 0) for k in range(count)]) for j in range(count)]
+
+    def _pick_value(self, values, hits, fallback: V) -> V:
+        """The value of the row whose ``hit`` holds (at most one does), else ``fallback``."""
+
+        kinds = {v.kind for v in values} - {"null"} | ({fallback.kind} - {"null"})
+        kind = next(iter(kinds)) if len(kinds) == 1 else ("real" if kinds == {"int", "real"} else None)
+        if kind is None:
+            if not kinds:
+                return null_value()
+            raise Unsupported("window value over mixed types")
+        result = to_kind(fallback, kind)
+        for j in reversed(range(len(values))):
+            value = to_kind(values[j], kind)
+            result = V(kind, z3.If(hits[j], value.val, result.val), z3.If(hits[j], value.null, result.null))
+        return result
+
+    def _frame_members(self, spec, order, keyed, index, peers, ahead, before, after):
+        """For the current row, ``members[j]``: row ``j`` is in its ``ROWS`` or ``RANGE`` frame.
+
+        Rows sort by the ORDER BY keys with ties broken by row position. ``ROWS`` counts those positions.
+        ``RANGE`` bounds ``CURRENT ROW`` by the tied rows, and ``n PRECEDING/FOLLOWING`` by the key's value
+        (one numeric key; a NULL key's offset bounds are its own tied NULL rows, and for a number the NULL rows
+        sit before or after the numbers as the ordering says)."""
+
+        if spec.args.get("exclude"):
+            raise Unsupported("window frame EXCLUDE")
+        kind = str(spec.args.get("kind") or "").upper()
+        if kind not in ("ROWS", "RANGE"):
+            raise Unsupported(f"{kind or 'unnamed'} window frame")
+        low = _frame_bound(spec.args.get("start"), spec.args.get("start_side"), "start")
+        high = _frame_bound(spec.args.get("end") or "CURRENT ROW", spec.args.get("end_side"), "end")
+        _check_frame_order(low, high)
+        count = len(ahead)
+        if kind == "ROWS":
+            if any(b[0] == "offset" and not isinstance(b[2], int) for b in (low, high)):
+                raise Unsupported("ROWS frame with a fractional offset")
+            position = self._positions(ahead, peers)
+            here = position[index]
+
+            def rows_ok(bound, j, lower):
+                tag, side, n = bound
+                if tag == "unbounded":
+                    return _true()
+                target = here if tag == "current" else (here - n if side == "PRECEDING" else here + n)
+                return position[j] >= target if lower else position[j] <= target
+
+            return [z3.And(peers[j], rows_ok(low, j, True), rows_ok(high, j, False)) for j in range(count)]
+        offsets = [b for b in (low, high) if b[0] == "offset"]
+        sign = {"PRECEDING": -1, "FOLLOWING": 1}
+        if offsets:
+            if len(keyed[index][1]) != 1:
+                raise Unsupported("RANGE with an offset needs exactly one ORDER BY key")
+            (mine, desc, _), = keyed[index][1]
+            mine = _ordered(mine)
+            if mine.kind not in ("int", "real"):
+                raise Unsupported("RANGE with an offset over a non-numeric key")
+            zero = z3.IntVal(0) if mine.kind == "int" else z3.RealVal(0)
+            coordinates = []
+            for j in range(count):
+                (other, _, _), = keyed[j][1]
+                other = to_kind(_ordered(other), mine.kind)
+                coordinates.append(other)
+            flip = (lambda x: -x) if desc else (lambda x: x)
+
+            def moved(n, side):
+                if mine.kind == "int":
+                    if not isinstance(n, int):
+                        raise Unsupported("RANGE over a whole-number key with a fractional offset")
+                    amount = z3.IntVal(n)
+                else:
+                    amount = z3.RealVal(n)
+                return flip(mine.val) + sign[side] * amount
+
+        def start_ok(j):
+            tag, side, n = low
+            if tag == "unbounded":
+                return _true()
+            if tag == "current":
+                return z3.Not(before[j])
+            reach = moved(n, side)
+            return z3.If(z3.Or(mine.null, coordinates[j].null), z3.Not(before[j]), flip(coordinates[j].val) >= reach)
+
+        def end_ok(j):
+            tag, side, n = high
+            if tag == "unbounded":
+                return _true()
+            if tag == "current":
+                return z3.Not(after[j])
+            reach = moved(n, side)
+            return z3.If(mine.null, z3.Not(after[j]), z3.If(coordinates[j].null, before[j], flip(coordinates[j].val) <= reach))
+
+        return [z3.And(peers[j], start_ok(j), end_ok(j)) for j in range(count)]
+
 
     def _e_Anonymous(self, node, scope):
         name = str(node.this).upper()

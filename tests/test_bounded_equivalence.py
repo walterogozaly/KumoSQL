@@ -248,3 +248,123 @@ def test_a_timestamp_shift_runs_in_duckdb_whichever_sqlglot_prints_it(call, expe
     db.execute("INSERT INTO t VALUES (TIMESTAMP '2020-01-01 00:00:00')")
     sql = spell_for_duckdb(sqlglot.parse_one(f"SELECT {call} AS v FROM t", read="bigquery")).sql(dialect="duckdb")
     assert str(db.execute(sql).fetchall()[0][0]) == expected
+
+
+# -- window frames: the encoding against DuckDB, with ties in the data ---------------------------------------
+
+FRAME_SCHEMA = BoundedSchema({"t": BTable("t", [BColumn("k", "INT64"), BColumn("a", "INT64"), BColumn("x", "INT64"), BColumn("r", "FLOAT64")])})
+_FUNCTIONS = [
+    "sum(x)", "count(*)", "count(x)", "min(x)", "max(x)", "avg(x)", "sum(r)",
+    "first_value(x)", "last_value(x)", "nth_value(x, 2)", "nth_value(x, 1)",
+    "first_value(x ignore nulls)", "last_value(x ignore nulls)", "nth_value(x, 2 ignore nulls)",
+    "lag(x)", "lead(x, 2, -1)", "ntile(2)", "ntile(3)", "ntile(7)",
+    "row_number()", "rank()", "dense_rank()", "percent_rank()", "cume_dist()",
+]
+_KEYS = ["a", "a", "a desc", "x", "a nulls last", "a desc nulls first", "r", "r desc", "a, x", "x desc, a"]
+
+
+def _window_query(rng):
+    """A random window query as ``(BigQuery text, DuckDB text)``; DuckDB's gets every NULL placement spelled out."""
+
+    key = rng.choice(_KEYS)
+    function = rng.choice(_FUNCTIONS)
+    partition = rng.choice(["", "", "partition by k "])
+    frame = ""
+    if function.split("(")[0] in ("sum", "count", "min", "max", "avg", "first_value", "last_value", "nth_value") and rng.random() < 0.85:
+        kind = rng.choice(["rows", "range"])
+        fractional = kind == "range" and key.startswith("r")
+        offset = lambda: rng.choice(["0.5", "1.5", "1", "2", "0"]) if fractional else rng.choice(["0", "1", "2", "3"])  # noqa: E731
+        low = rng.choice(["unbounded preceding", "current row", f"{offset()} preceding", f"{offset()} following"])
+        high = rng.choice(["unbounded following", "current row", f"{offset()} preceding", f"{offset()} following"])
+        frame = f"{kind} {low}" if rng.random() < 0.15 and "following" not in low else f"{kind} between {low} and {high}"
+    spelled = ", ".join(k if "nulls" in k else k + (" nulls last" if k.endswith("desc") else " nulls first") for k in (s.strip() for s in key.split(",")))
+    head = f"select k, a, x, {function} over ({partition}order by "
+    return f"{head}{key} {frame}) as w from t", f"{head}{spelled} {frame}) as w from t"
+
+
+def test_window_frames_match_duckdb_with_ties():
+    db = duckdb.connect()
+    db.execute("SET threads=1")  # one thread breaks ties by storage order, which is the encoding's tie-break
+    db.execute("create table t(k bigint, a bigint, x bigint, r double)")
+    rng = random.Random(503)
+    compared = frames = 0
+    for _ in range(260):
+        bigquery, duck = _window_query(rng)
+        rows = [
+            (rng.choice([None, 1, 2]), rng.choice([None, 1, 1, 2, 3, 5]), rng.choice([None, 1, 2, 3, 10]), rng.choice([None, 0.5, 1.0, 1.0, 2.5]))
+            for _ in range(rng.randint(0, 5))
+        ]
+        try:
+            mine = be.evaluate(bigquery, FRAME_SCHEMA, {"t": rows}, "bigquery")
+        except be.Unsupported:  # a frame BigQuery rejects, or one that is not modeled
+            continue
+        db.execute("delete from t")
+        insert_rows(db, "t", rows)
+        assert norm(mine) == norm(db.execute(duck).fetchall()), (bigquery, rows)
+        compared += 1
+        frames += " between " in bigquery or " rows " in bigquery or " range " in bigquery
+    assert compared >= 150 and frames >= 70
+
+
+def frame_check(left, right, rows=3):
+    return check_bounded(left, right, FRAME_SCHEMA, rows=rows, dialect="bigquery")
+
+
+def test_equivalent_frame_spellings_are_bounded_equivalent():
+    default = "select a, sum(x) over (order by a) from t"
+    explicit = "select a, sum(x) over (order by a range between unbounded preceding and current row) from t"
+    assert frame_check(default, explicit).status is BoundedStatus.BOUNDED_EQUIVALENT
+    whole = "select a, last_value(x) over (order by a rows between unbounded preceding and unbounded following) from t"
+    last = "select a, last_value(x) over (order by a range between current row and unbounded following) from t"
+    # the last row of the partition is the last row of both frames, ties or not
+    assert frame_check(whole, last).status is BoundedStatus.BOUNDED_EQUIVALENT
+
+
+def test_rows_and_range_differ_only_through_ties():
+    rows = "select a, sum(x) over (order by a rows between unbounded preceding and current row) from t"
+    peers = "select a, sum(x) over (order by a) from t"
+    result = frame_check(rows, peers)
+    # a tie decides it, and the replay's shuffles change the ROWS side: no counterexample is offered, and the
+    # claim stops at the bound whose models were all tie-free (one row)
+    assert result.status is BoundedStatus.BOUNDED_EQUIVALENT and result.bound == 1
+    keyed = BTable("t", [BColumn("a", "INT64", True), BColumn("x", "INT64")], keys=[("a",)])
+    unique = BoundedSchema({"t": keyed})
+    assert check_bounded(rows, peers, unique, rows=3, dialect="bigquery").status is BoundedStatus.BOUNDED_EQUIVALENT
+
+
+def test_a_different_frame_gives_a_replayed_counterexample():
+    keyed = BTable("t", [BColumn("a", "INT64", True), BColumn("x", "INT64")], keys=[("a",)])
+    unique = BoundedSchema({"t": keyed})
+    one = "select a, sum(x) over (order by a rows between 1 preceding and current row) from t"
+    two = "select a, sum(x) over (order by a rows between 2 preceding and current row) from t"
+    assert check_bounded(one, two, unique, rows=3, dialect="bigquery").status is BoundedStatus.DIFFERENT
+    first = "select a, first_value(x) over (order by a rows between 1 preceding and current row) from t"
+    lag = "select a, lag(x, 1, x) over (order by a) from t"
+    assert check_bounded(first, lag, unique, rows=3, dialect="bigquery").status is BoundedStatus.BOUNDED_EQUIVALENT
+    default_last = "select a, last_value(x) over (order by a) from t"
+    whole_last = "select a, last_value(x) over (order by a rows between unbounded preceding and unbounded following) from t"
+    assert check_bounded(default_last, whole_last, unique, rows=3, dialect="bigquery").status is BoundedStatus.DIFFERENT
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        "order by a groups between 1 preceding and current row",  # GROUPS is not modeled
+        "partition by k rows between 1 preceding and current row",  # a frame without ORDER BY
+        "order by a, x range between 1 preceding and current row",  # an offset needs one key
+        "order by a range between 1.5 preceding and current row",  # a fractional offset on a whole-number key
+        "order by a rows between 1 following and current row",  # the start is after the end
+        "order by a rows between unbounded following and current row",
+        "order by a rows between 1 preceding and 2 preceding",
+        "order by a rows between x preceding and current row",  # a computed offset
+    ],
+)
+def test_frames_that_are_not_modeled_stay_unknown(over):
+    result = frame_check(f"select sum(x) over ({over}) from t", "select sum(x) over (order by a) from t")
+    assert result.status is BoundedStatus.UNKNOWN
+    assert "unsupported" in result.reason
+
+
+def test_a_frame_on_a_function_that_takes_none_is_unknown():
+    result = frame_check("select lag(x) over (order by a rows between 1 preceding and current row) from t", "select lag(x) over (order by a) from t")
+    assert result.status is BoundedStatus.UNKNOWN
