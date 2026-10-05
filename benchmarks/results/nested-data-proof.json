@@ -1,0 +1,26 @@
+{
+  "suite": "Nested data (ARRAY, STRUCT, UNNEST): proofs",
+  "order": 64,
+  "size": 65,
+  "score": "6/65, 0 wrong",
+  "metric": "Hand-written equivalent query pairs over ARRAY and STRUCT columns in GA4, Snowplow and shop schemas (event_params lookups, UNNEST joins, IN UNNEST, offsets, struct fields) proved equivalent; the traps among the pairs must never be proved.",
+  "evidence": "proof",
+  "correctness": "0 traps proved (every trap returns different rows on BigQuery on a stored database; every equivalent pair agrees on all of them)",
+  "coverage": {
+    "unknown": 59,
+    "proven": 6
+  },
+  "held_out": "2/19 proved, 0 wrong (dev 4/46)",
+  "docs": "docs/evals/nested-data.md",
+  "command": "python tools/nested_data_bench.py --write-results",
+  "date": "2026-10-05",
+  "caveats": "Hand-written for KumoSQL (no outside source), 112 pairs (65 equivalent, 47 traps). Every label was checked on BigQuery by running both queries on the stored databases (inline data, nothing stored): every trap but one differs on at least one database and no equivalent pair differs on any. That trap, shop-array-subquery-unordered, depends on an unspecified order, so its label rests on the argument, not on a database; four pairs the DuckDB replay declines (the two struct equalities, shop-array-length-filtered and shop-array-subquery-unordered) are checked on BigQuery only. A label shows two queries differ on a stored database; it cannot show they agree everywhere. The held-out quarter (26 pairs) is chosen by a hash of each pair id, not by any result. This is the baseline before any prover rule for nested data: only the data, the translation and the counterexample search changed, so the scores are a regression and honesty check on one author's pairs, not an independent benchmark.",
+  "environment": {
+    "python": "3.11.15",
+    "sqlglot": "30.21.0",
+    "duckdb": "1.5.6",
+    "z3-solver": "5.1.0.0",
+    "sqlfluff": "4.4.0",
+    "commit": "46daf6ab+changes"
+  }
+}

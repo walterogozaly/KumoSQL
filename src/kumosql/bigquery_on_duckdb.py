@@ -289,7 +289,7 @@ def _capture_groups(pattern: str) -> int:
     return len(re.findall(r"(?<!\\)\((?!\?)", pattern))
 
 
-_ORDERED_AGGREGATES = _class("ArrayAgg", "GroupConcat", "ArrayConcatAgg")
+_ORDERED_AGGREGATES = _class("ArrayAgg", "GroupConcat")
 _CURRENT = _class("CurrentDate", "CurrentDatetime", "CurrentTime", "CurrentTimestamp")
 
 

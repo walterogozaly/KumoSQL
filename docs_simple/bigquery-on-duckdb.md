@@ -12,6 +12,10 @@ For example, BigQuery NUMERIC keeps more decimal precision than DuckDB's default
 
 The layer applies to BigQuery-dialect execution paths, including counterexample replay, random checks, synthetic comparisons, and incremental simulation. Other input dialects retain their own execution handling.
 
+## Lists and records
+
+BigQuery columns can hold a list (an `ARRAY`) or a record (a `STRUCT`), and queries open a list with `UNNEST`. The two engines disagree on a few details, and the layer corrects them or declines the query. `UNNEST(tags) AS t WITH OFFSET AS i` numbers the items from 0 in BigQuery and from 1 in DuckDB, so it is translated with one taken off. The fields of a list of records can be named without a prefix (`FROM events, UNNEST(event_params) AS p WHERE key = 'page_location'`), so the layer lists them as columns. `ARRAY_CONCAT(NULL, [9])` is `NULL` in BigQuery and `[9]` in DuckDB, so it returns `NULL`. And comparing a whole record (`geo = STRUCT('US' AS country, 'NYC' AS city)`) is refused: BigQuery compares by position and gets `NULL` when one field is `NULL`, DuckDB compares by name and says equal. For example, a query that does that is simply not run, and a pair that needs it stays unknown. See the [full reference](../docs/bigquery-on-duckdb.md) for the exact list and the [nested-data eval](evals/nested-data.md).
+
 ## Picks that are not the same twice
 
 Some queries may return any one value from a group (`ANY_VALUE`) or any one of several tied rows (`LIMIT`). BigQuery can choose differently from DuckDB, and even two copies of the same pick can differ in DuckDB. When a pair only differs through such a pick, the search no longer calls it different. It reruns the candidate with the pick guarded: if a group holds more than one value, or a `LIMIT` cuts through ties, the run fails and the pair stays unknown. A pick over a group that holds one value, such as a column the grouping already fixes, still counts.

@@ -66,6 +66,10 @@ A replayed counterexample does establish a difference: the report includes a dat
 
 Two details of the structural check: it drops a result ordering only when no sort key could raise an error (a `LIMIT` that cannot cut any row does not change that), and it treats a function that might be a user-defined one as a different function when its spelling differs, because BigQuery reads those names case-sensitively.
 
+## Lists and records in counterexamples
+
+When two queries cannot be proved the same, KumoSQL can still build small databases and run both, and a database where they disagree is a real counterexample. That search now also builds list (`ARRAY`) and record (`STRUCT`) columns, the way BigQuery stores them: a list is never `NULL` in storage (a missing one is empty) and holds no `NULL` items. For example, `ARRAY_LENGTH(tags) > 1` against `EXISTS (SELECT 1 FROM UNNEST(tags))` differ on a row with exactly one tag, and the search finds it. The search declines queries whose answer depends on the order of items it cannot rely on (`ARRAY_AGG`, `ARRAY(SELECT ...)`, a window over an `UNNEST`). Finding no difference proves nothing. The [nested-data eval](evals/nested-data.md) shows how often this works.
+
 ## Comparing scripts that change a table
 
 An `UPDATE` or `DELETE` only reports how many rows it touched, and two updates can touch the same number of rows while writing different values: `UPDATE t SET a = 1 WHERE TRUE` and `UPDATE t SET a = 2 WHERE TRUE` both touch every row. The executed comparison therefore works on a private copy of the table and compares the rows that are left afterwards, not the count. This also covers `TRUNCATE`.

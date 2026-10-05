@@ -381,8 +381,16 @@ def results_rows(rows: list[dict], caveats: str = "") -> dict[str, dict]:
 
 
 CAVEATS = (
-    "Hand-written for KumoSQL (no outside source), labels checked on BigQuery on the stored databases. "
-    "The held-out quarter was fixed by a hash of each id before any prover result was seen."
+    "Hand-written for KumoSQL (no outside source), 112 pairs (65 equivalent, 47 traps). Every label was checked on "
+    "BigQuery by running both queries on the stored databases (inline data, nothing stored): every trap but one "
+    "differs on at least one database and no equivalent pair differs on any. That trap, "
+    "shop-array-subquery-unordered, depends on an unspecified order, so its label rests on the argument, not on a "
+    "database; four pairs the DuckDB replay declines (the two struct equalities, shop-array-length-filtered and "
+    "shop-array-subquery-unordered) are checked on BigQuery only. A label shows two queries differ on a stored database; it cannot show they agree "
+    "everywhere. The held-out quarter (26 pairs) is chosen by a hash of each pair id, not by any result. This is the "
+    "baseline before any prover rule for nested data: only the data, the translation and the counterexample "
+    "search changed, so the scores are a regression and honesty check on one author's pairs, not an independent "
+    "benchmark."
 )
 
 

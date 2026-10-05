@@ -47,17 +47,17 @@ One test file in five, by the SHA-1 of its name (`held_out` in `tools/benchmark_
 2. The first fixes came from the development files only. After them the held-out files had 38 wrong of 1,385 supported: that is the unseen estimate.
 3. Those 38 were then looked at and fixed (hex, unicode and octal string escapes, `BYTES` escapes, `IN` over a struct with a `NULL`, `ANY_VALUE .. HAVING MAX`, `NUMERIC` variance, `SPLIT` with a `NULL` delimiter, `REGEXP_INSTR` occurrences, and a file-wide default time zone). The held-out result below is therefore **tuned on test**; read the 38 as the honest unseen figure.
 
-## Scores (2026-10-04)
+## Scores (2026-10-05)
 
 | Split | Supported | Agree | Declined | Not executable | Not compared | Oracle-side | Wrong |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| All | 4,633 | 1,612 | 1,191 | 1,338 | 484 | 8 | 0 |
-| Development files | 3,265 | 1,062 | 768 | 1,040 | 389 | 6 | 0 |
-| Held-out files (tuned on test) | 1,368 | 550 | 423 | 298 | 95 | 2 | 0 |
+| All | 4,633 | 1,627 | 1,168 | 1,346 | 484 | 8 | 0 |
+| Development files | 3,265 | 1,073 | 750 | 1,047 | 389 | 6 | 0 |
+| Held-out files (tuned on test) | 1,368 | 554 | 418 | 299 | 95 | 2 | 0 |
 
 12,735 cases, 8,102 skipped: 4,214 need a feature BigQuery lacks, 930 are DML or DDL, 673 are fixtures, 494 use a type BigQuery lacks, 476 read a fixture column of one, 411 take parameters, 329 expect an error, 252 are non-deterministic, 213 use protos or enums, 72 use prepared functions, 38 need their own default time zone. Of the 329 expected errors, 291 are run-time errors (`out_of_range`): the translation fails on 110, declines 143, does not get to run 20, and returns rows on 18 (not counted, and not tuned: they show where a guard is missing, so a counterexample on such a database would be one BigQuery rejects). The run takes about 90 s.
 
-Agreement fell from 1,692 to 1,612 because the fixes are refusals: constructs DuckDB reads differently now decline, and 38 cases that need a file's own default time zone are skipped (some of them had agreed only because the zone happened not to matter). The pinned sample (every twelfth supported case plus every disagreement, 80 KB) runs in the suite and each case keeps its recorded outcome.
+Agreement fell from 1,692 to 1,612 because the fixes are refusals: constructs DuckDB reads differently now decline, and 38 cases that need a file's own default time zone are skipped (some of them had agreed only because the zone happened not to matter). The pinned sample (every twelfth supported case plus every disagreement, 80 KB) runs in the suite and each case keeps its recorded outcome. On 2026-10-05 agreement rose from 1,612 to 1,627 (declined 1,191 to 1,168, not executable 1,338 to 1,346) when `UNNEST .. WITH OFFSET` as a table, the fields of an `UNNEST` of structs and `ARRAY_CONCAT` with a `NULL` argument were translated to BigQuery's reading instead of declined ([the nested-data change](nested-data.md)). Still 0 wrong.
 
 ## What this found
 
