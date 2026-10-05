@@ -9,6 +9,7 @@ becomes a one-model KumoSQL pipeline (``tools/sqllineage_bench.py``'s ``build``)
 
 ``exact``    every expected table and edge, no extra ones
 ``coarse``   no extra edge; an expected struct sub-field edge (``a.b``) is met by an edge to its root column ``a``
+``finer``    no extra edge; an expected edge to a struct's root column ``a`` is met by edges to the exact fields read (``a.b``)
 ``unknown``  KumoSQL said it could not trace something and claimed nothing wrong
 ``missed``   confident, but an expected table or edge is missing
 ``wrong``    confident, and a table or edge is claimed that is not expected
@@ -199,6 +200,7 @@ def _classify(case: dict) -> dict:
     flagged = bool(got["unknown"]) or bool(got["diagnostics"] & FLAGS)
     lenient = _lenient(case)
     coarse = False
+    finer = False
     extra: list = []
     missing: list = []
     # Tables read and written
@@ -225,9 +227,16 @@ def _classify(case: dict) -> dict:
             if "." in e[1] and any(h[2:] == e[2:] and _same_table(e[0], h[0], lenient) and h[1] == root for h in have):
                 coarse = True
                 continue
+            # a golden edge to a struct's root column is met by the exact fields the SQL reads (the golden is the coarser one)
+            if "." not in e[1] and any(h[2:] == e[2:] and _same_table(e[0], h[0], lenient) and h[1].split(".")[0] == e[1] for h in have):
+                finer = True
+                continue
             missing.append(list(e))
         for h in sorted(have):
-            if any(w[2:] == h[2:] and _same_table(w[0], h[0], lenient) and (w[1] == h[1] or w[1].split(".")[0] == h[1]) for w in want):
+            if any(
+                w[2:] == h[2:] and _same_table(w[0], h[0], lenient) and (w[1] == h[1] or w[1].split(".")[0] == h[1] or ("." not in w[1] and h[1].split(".")[0] == w[1]))
+                for w in want
+            ):
                 continue
             if h[1] == "*" or h[0] in base._created_in_script(case):
                 continue
@@ -238,7 +247,7 @@ def _classify(case: dict) -> dict:
             missing = [m for m in missing if not (isinstance(m, list) and m[1] == "*")]
     row.update(extra=extra, missing=missing, edges_expected=edges_expected, edges_found=edges_found)
     if not extra and not missing:
-        row["outcome"] = "coarse" if coarse else "exact"
+        row["outcome"] = "coarse" if coarse else "finer" if finer else "exact"
     elif flagged and not extra:
         row["outcome"] = "unknown"
     elif extra and case["id"] in DISPUTED:
@@ -267,7 +276,7 @@ def run() -> dict:
         found = sum(r.get("edges_found", 0) for r in selection)
         wanted = sum(r.get("edges_expected", 0) for r in selection)
         return {
-            "total": len(selection), "exact": counts["exact"], "coarse": counts["coarse"], "disputed": counts["disputed"], "unknown": counts["unknown"],
+            "total": len(selection), "exact": counts["exact"], "coarse": counts["coarse"], "finer": counts["finer"], "disputed": counts["disputed"], "unknown": counts["unknown"],
             "missed": counts["missed"], "wrong": counts["wrong"], "edges_expected": wanted, "edges_found": found,
         }
 
@@ -291,11 +300,11 @@ def main(argv: list[str]) -> int:
     for name in ("datahub", "openlineage"):
         for part in ("in", "other"):
             t = result[name][part]
-            print(f"{name:12} {part:5} {t['exact']}/{t['total']} exact, {t['coarse']} coarse, {t['disputed']} disputed, {t['unknown']} unknown, {t['missed']} missed, {t['wrong']} wrong")
+            print(f"{name:12} {part:5} {t['exact']}/{t['total']} exact, {t['coarse']} coarse, {t['finer']} finer, {t['disputed']} disputed, {t['unknown']} unknown, {t['missed']} missed, {t['wrong']} wrong")
         print("   left out:", result[name]["left_out"])
     if "--details" in argv:
         for r in result["rows"]:
-            if r["scope"] == "in" and r["outcome"] in {"wrong", "missed", "unknown", "coarse"}:
+            if r["scope"] == "in" and r["outcome"] in {"wrong", "missed", "unknown", "coarse", "finer"}:
                 print(r["outcome"], r["id"], "extra", r["extra"][:3], "missing", r["missing"][:3], r.get("why", ""), r.get("diagnostics", ""))
     if "--write-results" in argv:
         write_results(result, seconds)
@@ -315,7 +324,7 @@ def write_results(result: dict, seconds: float) -> None:
     )
     common = {
         "evidence": "executed",
-        "date": "2026-10-03",
+        "date": "2026-10-05",
         "held_out": (
             "Held out: the other-dialect cases (Snowflake, MySQL, T-SQL and so on, read as BigQuery) were never adjudicated or used to "
             f"shape the adapter, so they are a generalisation check; current run: {held}. Their wrong/missed counts are dialect differences "
@@ -335,7 +344,10 @@ def write_results(result: dict, seconds: float) -> None:
     }
     for name, (description, slug, order) in oracle.items():
         t = result[name]["in"]
-        score = f"{t['exact'] + t['coarse']}/{t['total']} matched" + (f" ({t['coarse']} only to a struct's root column)" if t["coarse"] else "")
+        matched = t["exact"] + t["coarse"] + t["finer"]
+        notes = [f"{t['coarse']} only to a struct's root column"] if t["coarse"] else []
+        notes += [f"{t['finer']} to exact struct fields where the golden names the root column"] if t["finer"] else []
+        score = f"{matched}/{t['total']} matched" + (f" ({'; '.join(notes)})" if notes else "")
         if t["disputed"]:
             score += f", {t['disputed']} disputed"
         score += f", {t['unknown']} unknown, {t['wrong']} wrong"
@@ -346,7 +358,7 @@ def write_results(result: dict, seconds: float) -> None:
             "score": score,
             "metric": description + " Each case is one SQL statement with its expected table and column lineage; KumoSQL must produce exactly it or say unknown.",
             "correctness": f"{t['wrong']} cases claim a table or edge the oracle does not have; {t['missed']} confident misses",
-            "coverage": {"proven": t["exact"] + t["coarse"], "unknown": t["unknown"], **({"error": t["missed"]} if t["missed"] else {})},
+            "coverage": {"proven": matched, "unknown": t["unknown"], **({"error": t["missed"]} if t["missed"] else {})},
             **(
                 {
                     "coverage_of": f"The {t['total'] - t['disputed']} of the {t['total']} cases with an undisputed golden; the other {t['disputed']} are disputed "
@@ -361,7 +373,7 @@ def write_results(result: dict, seconds: float) -> None:
                 f"Cases left out: {sum(result[name]['left_out'].values())} (other dialects, upstream-skipped tests, USE state, not BigQuery); "
                 f"{result['unharvested'][name]} upstream tests could not be harvested. Table reads and explicit writes include DML, "
                 "table DDL, LIKE/CLONE and all script targets; this does not establish complete column lineage for those statements. "
-                "Physical STRUCT sub-fields remain coarse at the root column."
+                "A struct field the SQL reads by a plain name chain is traced to that field; a subscripted, called or otherwise unresolved read stays at the root column."
             ),
             "analysis": f"{edges(name)} (column cases only; recall counts edges reported unknown)",
             **common,

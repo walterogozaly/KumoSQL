@@ -34,7 +34,9 @@ only in how a case is run and compared:
 
 ## Outcomes
 
-`exact`, `coarse` (no extra edge; a struct sub-field edge `a.b` is met only by an edge to its root column `a`), `unknown`
+`exact`, `coarse` (no extra edge; a struct sub-field edge `a.b` is met only by an edge to its root column `a`), `finer`
+(no extra edge; a golden edge to a struct's root column `a` is met by edges to the exact fields the SQL reads, `a.b`;
+the golden is the coarser side), `unknown`
 (KumoSQL said it could not trace something and claimed nothing wrong), `missed` (confident, but something expected is
 absent), `wrong` (a table or edge is claimed that is not expected) and `disputed` (the oracle defines the answer differently;
 each has one written reason in `DISPUTED`, and a test fails if one is used on a case that is not actually a mismatch).
@@ -53,8 +55,18 @@ tests that treat an unused CTE as reading nothing. After those the in-scope numb
 The four `disputed` cases: `WITH unused AS (SELECT * FROM users) SELECT ... FROM other`. OpenLineage reports data flow, so
 `users` is not an input. KumoSQL lists every table the statement names, because dropping `users` still breaks the query.
 
-Recorded on 2026-10-03 with sqlglot 30.21.0: **OpenLineage 90/94 exact, 4 disputed, 0 unknown, 0 missed, 0 wrong**;
-**DataHub 15/18 exact plus 3 coarse, 0 unknown, 0 missed, 0 wrong** (18/18 matched).
+Recorded on 2026-10-05 with sqlglot 30.21.0: **OpenLineage 90/94 exact, 4 disputed, 0 unknown, 0 missed, 0 wrong**;
+**DataHub 17/18 exact plus 1 finer, 0 coarse, 0 unknown, 0 missed, 0 wrong** (18/18 matched).
+Before field paths on `ColumnRef` (2026-10-03) DataHub was 15/18 exact plus 3 coarse: `test_select_with_full_col_name`,
+`test_select_from_struct_subfields` and `test_select_struct_subfields_from_cte` expect an edge to `widget.asset.id` (and
+`widget.metric.*`) and KumoSQL named only `widget`. KumoSQL now reads the fields off the expression that reads the struct
+and names them, so those three are exact. OpenLineage is unchanged: it has no struct field case.
+
+The one `finer` case, `test_join_struct_subfields_shared_base_name`, reads `a.widget.color` and `b.widget.size`; its golden
+names the root column `widget` on each table, which is DataHub's own coarser answer (the golden for the same shape in the
+three cases above names the field). KumoSQL names `widget.color` and `widget.size`. This is more precise than the golden,
+not a disagreement, so it counts as matched but is kept apart from `exact`; the fixture is not edited. Because the DataHub
+goldens are sqlglot's own output, this says nothing independent about which answer a user wants; the field is what the SQL reads.
 The same-version baseline was OpenLineage 85/94 exact with 5 unknown, and DataHub 14/18 exact plus 3 coarse with
 1 unknown. The recovered cases cover table rename, a DELETE without FROM, multi-table DROP, scripts with multiple
 INSERT targets, and partition schema resolution. The fixtures and their expected answers are unchanged.
@@ -65,7 +77,7 @@ The other-dialect cases (109: Snowflake, MySQL, T-SQL and so on, read as BigQuer
 shape the adapter, so they are an unseen generalisation check; their wrong and missed counts are dialect differences and stay out of
 the headline. The in-scope cases are not held out: each mismatch was read while building the adapter.
 
-Current other-dialect run: DataHub 40/81 exact, 2 coarse, 15 unknown, 16 missed, 8 wrong; OpenLineage 14/46 exact,
+Current other-dialect run (the results file counts the 80 dialect cases, without the one case upstream skips): DataHub 41/81 exact, 1 coarse, 15 unknown, 16 missed, 8 wrong (one case moved from coarse to exact with the field paths; it was not tuned on); OpenLineage 14/46 exact,
 0 unknown, 11 missed, 21 wrong. Scoping WITH names per reference (audit 1002 F11, `ast_utils.binding_cte`) moved one
 OpenLineage case here from unknown to exact (13/46 before). It was not tuned on and not looked at while fixing; the
 headline above does not change.
@@ -75,6 +87,8 @@ TRUNCATE, CREATE LIKE/CLONE, and INSERT VALUES containing a scalar subquery. Eve
 instead of inferring outputs from the final model name. A rename reads the old name and writes the new name; a DML
 target alone is not counted as a table input. Partition-decorated names use the base table's schema.
 These table matches do not establish complete column lineage for DML, copy statements or every script statement.
-Physical STRUCT sub-fields remain coarse at the root column; STRUCTs built inside a query can retain precise field lineage.
+A STRUCT field read by a plain name chain (`rec.a`, `t.rec.a.b`) is traced to that field; a subscripted, called or whole-struct
+read stays at the root column rather than a guessed field, and the rows-deciding columns of a model stay per root column
+([field paths](../pipeline-analysis.md)). STRUCTs built inside a query can retain precise field lineage.
 Unsupported column shapes continue to report unknown. On the older supported parser versions, syntax that cannot be
 parsed stays outside the in-scope denominator, so the recorded score is tied to the stated parser version.

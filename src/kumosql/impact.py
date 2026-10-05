@@ -25,7 +25,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Iterable
 
 if TYPE_CHECKING:
-    from .pipeline import ColumnRef, Pipeline
+    from .pipeline import Pipeline
 
 CHANGE_KINDS = ("drop_column", "rename_column", "change_expression", "drop_table")
 COLUMN_KINDS = ("drop_column", "rename_column", "change_expression")
@@ -175,6 +175,14 @@ def assess_change(
     a = pipeline._analyse()
     table = pipeline.resolve(target) or target
     label = f"{table}.{column}" if column else table
+    path: tuple[str, ...] = ()
+    if column and "." in column:
+        # ``widget.asset.id``: the field of a STRUCT column. A column whose own stored name has a dot (a flattened
+        # schema) stays whole unless its first part is also a column.
+        known_names = {c.lower() for c in a.outputs.get(table, ())} | {c.lower() for c in pipeline.source_schema.get(table, {})}
+        first, *rest = column.split(".")
+        if first.lower() in known_names or column.lower() not in known_names:
+            column, path = first, tuple(rest)
 
     codes_by_model: dict[str, set[str]] = {}
     for diagnostic in a.diagnostics:
@@ -189,7 +197,8 @@ def assess_change(
     # Tables named in a query also count, so a SELECT * over a table is found
     # even though it consumes no named column.
     from .ast_utils import binding_cte, is_function_table
-    from .pipeline import _table_name_for_schema
+    from .pipeline import ColumnRef, _table_name_for_schema, reverse_hops, reverse_index
+    from .pipeline_types import path_overlap
     from sqlglot import exp
 
     for model, query in a.parsed.items():
@@ -212,15 +221,12 @@ def assess_change(
             return None
         return next((c for c in _READER_REASONS if c in codes), "unparsed_model")
 
-    lineage_index: dict[tuple[str, str], list["ColumnRef"]] = {}
-    for ref in a.reverse_lineage:
-        lineage_index.setdefault((ref.table, ref.column.lower()), []).append(ref)
+    lineage_index = reverse_index(a.reverse_lineage)
 
-    def children(name: str, col: str) -> set["ColumnRef"]:
-        out: set["ColumnRef"] = set()
-        for ref in lineage_index.get((name, col.lower()), ()):
-            out |= a.reverse_lineage[ref]
-        return out
+    def children(name: str, col: str, fields: tuple[str, ...]) -> set["ColumnRef"]:
+        """Columns built from ``col`` (or from its field ``fields``): the same field, one inside it, or the whole column."""
+
+        return reverse_hops(ColumnRef(name, col, fields), a.reverse_lineage, lineage_index, a.records)
 
     if column and table in a.outputs and "*" not in a.outputs[table]:
         target_known = column.lower() in {c.lower() for c in a.outputs[table]}
@@ -254,13 +260,15 @@ def assess_change(
             tuple(sorted(set(old.columns) | set(cols))),
         )
 
-    def visit(name: str, cols: list[str] | None, depth: int) -> list[tuple[str, str]]:
+    def visit(name: str, cols: list[str] | None, depth: int, fields: tuple[str, ...] = ()) -> list[tuple[str, str, tuple[str, ...]]]:
         """Record readers of ``name`` (of the given columns, or of the whole table).
 
-        Returns the columns of those readers that are computed from the target.
+        Returns the columns of those readers that are computed from the target. ``fields`` narrows a column to a struct
+        field: a reader of that field, of a field inside it or of the whole column is reached, a reader of a sibling
+        field is not.
         """
 
-        reached: list[tuple[str, str]] = []
+        reached: list[tuple[str, str, tuple[str, ...]]] = []
         wanted = None if cols is None else {c.lower() for c in cols}
         for reader in sorted(readers_of(name)):
             problem = reader_problem(reader)
@@ -273,7 +281,10 @@ def assess_change(
             if name in a.star_branch_tables.get(reader, ()):
                 unknown.setdefault(reader, "unexpanded_star")  # a ``SELECT *`` branch may read the column
                 continue
-            refs = [r for r in a.consumed[reader] if r.table == name and r.column.lower() in wanted]
+            refs = [
+                r for r in a.consumed[reader]
+                if r.table == name and r.column.lower() in wanted and path_overlap(r.path, fields)
+            ]
             if not refs:
                 if name in a.template_reads.get(reader, ()):
                     unknown.setdefault(reader, "template_columns")  # a template expression may read it
@@ -282,7 +293,7 @@ def assess_change(
                     if words is None or wanted & words:
                         unknown.setdefault(reader, "script_columns")  # another statement of the script may read it
                 continue
-            feeds = {c for r in refs for c in children(name, r.column) if c.table == reader}
+            feeds = {c for r in refs for c in children(name, r.column, fields) if c.table == reader}
             if kind == "change_expression":
                 effect = "values_change" if feeds else "behavior_may_change"
                 if not feeds or deciding(reader, refs):
@@ -291,7 +302,7 @@ def assess_change(
                 effect = "breaks"
             note(reader, effect, "output_column" if feeds else "condition_only", depth,
                  tuple(sorted({r.column for r in refs})))
-            reached.extend((c.table, c.column) for c in feeds)
+            reached.extend((c.table, c.column, c.path) for c in feeds)
         return reached
 
     # A wildcard query (``FROM `d.events_*` ``) reads every table its pattern matches.
@@ -300,15 +311,15 @@ def assess_change(
         for name in names:
             visit(name, None, 1)
     elif kind == "change_expression":
-        seen: set[tuple[str, str]] = set()
-        queue = deque([(name, column, 1) for name in names])
+        seen: set[tuple[str, str, tuple[str, ...]]] = set()
+        queue = deque([(name, column, path, 1) for name in names])
         while queue:
-            name, col, depth = queue.popleft()
-            if (name, col.lower()) in seen:
+            name, col, fields, depth = queue.popleft()
+            if (name, col.lower(), fields) in seen:
                 continue
-            seen.add((name, col.lower()))
-            for next_table, next_column in visit(name, [col], depth):
-                queue.append((next_table, next_column, depth + 1))
+            seen.add((name, col.lower(), fields))
+            for next_table, next_column, next_fields in visit(name, [col], depth, fields):
+                queue.append((next_table, next_column, next_fields, depth + 1))
         # A model whose rows may change (the column filters, joins, groups or decides a subquery) can change
         # everything downstream of it, whichever of its columns they read.
         pending_rows = deque(sorted(rows_changed.items(), key=lambda item: (item[1], item[0])))
@@ -326,7 +337,7 @@ def assess_change(
                 pending_rows.append((reader, depth + 1))
     else:
         for name in names:
-            visit(name, [column], 1)
+            visit(name, [column], 1, path)
 
     if kind != "change_expression":
         # Whatever reads a model that breaks is affected too.
