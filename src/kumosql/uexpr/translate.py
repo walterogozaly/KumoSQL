@@ -78,6 +78,10 @@ class Unsupported(Exception):
     """The query is outside the fragment the procedure decides."""
 
 
+class KindMismatch(Unsupported):
+    """Two values of different type families are compared (see ``Translator._compare``)."""
+
+
 # ---------------------------------------------------------------------------
 # Catalog
 # ---------------------------------------------------------------------------
@@ -1254,11 +1258,17 @@ class Translator:
             a = Lit(Fraction(day), "date")
         ka, kb = value_kind(a), value_kind(b)
         if ka is not None and kb is not None and family(ka) != family(kb) and not (isinstance(a, Lit) and a.value is None) and not (isinstance(b, Lit) and b.value is None):
-            raise Unsupported(f"comparison of {ka} with {kb}")
+            raise KindMismatch(f"comparison of {ka} with {kb}")
         return a, b
 
     def _compare(self, op, a, b):
-        a, b = self._coerce(a, b)
+        try:
+            a, b = self._coerce(a, b)
+        except KindMismatch:
+            # What an engine makes of an int against a string is not modeled: the comparison is an
+            # uninterpreted strict function of the two values (NULL if either is), so a proof holds
+            # for whatever the engine does, provided both queries compare the same operands.
+            return Truth(Fn(f"CMP{op}", (a, b), True, "bool"))
         if isinstance(a, Lit) and isinstance(b, Lit):
             if a.value is None or b.value is None:
                 return FALSE
