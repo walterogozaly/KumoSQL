@@ -22,6 +22,7 @@ from kumosql.smt_equivalence import TableConstraints  # noqa: E402
 COLUMNS = ["id", "user_id", "ts", "value"]
 SCHEMA = {"events": COLUMNS}
 TYPES = {"events": {c: "INT64" for c in COLUMNS}}
+FLOAT_VALUE_TYPES = {"events": {"id": "INT64", "user_id": "INT64", "ts": "INT64", "value": "FLOAT64"}}
 FLOAT_TYPES = {"events": {"id": "INT64", "user_id": "FLOAT64", "ts": "INT64", "value": "INT64"}}
 KEY = {"events": TableConstraints(not_null=frozenset({"id", "user_id"}), keys=(("id",),))}  # id key, user_id never NULL
 NULLABLE = {"events": TableConstraints(not_null=frozenset({"id"}), keys=(("id",),))}  # user_id may be NULL
@@ -125,6 +126,10 @@ DECLINED = [
     ("grouped_select", "SELECT user_id, SUM(COUNT(*)) OVER (PARTITION BY user_id) AS s FROM events GROUP BY user_id", TYPES),
     ("qualify", "SELECT id FROM events QUALIFY SUM(value) OVER (PARTITION BY user_id) > 3", TYPES),
     ("nondeterministic_where", over("SUM(value)").replace("FROM events", "FROM events WHERE RAND() < 0.5"), TYPES),
+    ("float_sum_argument", over("SUM(value)"), FLOAT_VALUE_TYPES),
+    ("float_avg_argument", over("AVG(value)"), FLOAT_VALUE_TYPES),
+    ("derived_table_with_a_limit", "SELECT id, SUM(value) OVER (PARTITION BY user_id) AS s FROM (SELECT * FROM events LIMIT 3) AS d", TYPES),
+    ("derived_table_with_a_window", "SELECT id, SUM(value) OVER (PARTITION BY user_id) AS s FROM (SELECT id, user_id, value, ROW_NUMBER() OVER (ORDER BY ts) AS n FROM events) AS d", TYPES),
     ("subquery_in_where", over("SUM(value)").replace("FROM events", "FROM events WHERE value IN (SELECT value FROM events)"), TYPES),
 ]
 
@@ -291,3 +296,24 @@ def test_the_plain_attempt_does_not_prove_these_pairs():
     # the rewrites are later attempts: with them off a window and its join do not read alike
     for name, left, right, constraints in AGGREGATES[:1] + LAGS[:1]:
         assert _normal(left, constraints, window_joins=False) != _normal(right, constraints, window_joins=False)
+
+
+def test_a_rewrite_that_fires_records_its_assumption():
+    from kumosql.window_aggregate_joins import WINDOW_JOIN_ASSUMPTION
+
+    for sql in (over("SUM(value)"), "SELECT id, LAG(value) OVER (ORDER BY id) AS p FROM events"):
+        assumptions: set[str] = set()
+        normalize(sql, schema=SCHEMA, types=TYPES, window_joins=True, not_null={"events": KEY["events"].not_null}, keys={"events": [("id",)]}, _assumptions=assumptions)
+        assert WINDOW_JOIN_ASSUMPTION in assumptions
+    quiet: set[str] = set()
+    normalize(over("SUM(value)"), schema=SCHEMA, types=TYPES, window_joins=False, _assumptions=quiet)
+    assert WINDOW_JOIN_ASSUMPTION not in quiet
+
+
+def test_derived_table_source_without_a_limit_is_rewritten_and_agrees_on_duckdb():
+    sql = "SELECT id, SUM(value) OVER (PARTITION BY user_id) AS s FROM (SELECT id, user_id, value FROM events WHERE ts IS NOT NULL) AS d"
+    rewritten = _normal(sql, KEY)
+    assert "kqg" in rewritten
+    for rows in KEY_DATABASES:
+        a, b = _bags(sql, rewritten, rows)
+        assert a == b, rows

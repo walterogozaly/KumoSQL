@@ -24,6 +24,14 @@ declared NOT NULL, where ``=`` says the same. Each row of the select finds exact
 so the join keeps every row once. Windows with no ``PARTITION BY`` become a one-row aggregate crossed in; an
 empty input has no rows to carry the value. Every distinct list of keys gets one grouped derived table.
 
+A derived table that is read twice (once for the rows, once for the groups) must give the same rows both times, so
+one that holds a ``LIMIT``, ``OFFSET``, window or ``ORDER BY`` is left alone (a ``TABLESAMPLE`` is not modeled at all). ``SUM`` and ``AVG`` of an argument known to be floating point are left alone too: the window and the
+group may add the values in different orders.
+
+Two things cannot be seen from the query, so a rewrite that fires records ``WINDOW_JOIN_ASSUMPTION`` in the proof's
+assumptions: that a join and ``PARTITION BY``/``GROUP BY`` compare keys alike (no ``NaN`` keys where the column's type is
+unknown, one collation), and that a floating-point ``SUM`` of unknown type adds in one order.
+
 The rewrite runs only as a later attempt of the prover (``window_joins``), after the plain attempt fails.
 """
 
@@ -33,6 +41,10 @@ from sqlglot import exp
 
 from .ast_utils import FROM_KEY
 
+WINDOW_JOIN_ASSUMPTION = (
+    "a window's PARTITION BY and the join that replaces it compare keys alike (no NaN keys, one collation), "
+    "and a SUM or AVG over values of unknown type adds them in one order"
+)
 _AGGREGATES = (exp.Sum, exp.Count, exp.Min, exp.Max, exp.Avg)
 _FLOAT_TYPES = ("FLOAT", "DOUBLE", "REAL", "FLOAT64", "FLOAT32")
 _RUN_DEPENDENT = {"CurrentDatetime", "CurrentUser", "Randn", "Uuid", "Rand", "CurrentDate", "CurrentTime", "CurrentTimestamp", "TableSample"}
@@ -43,12 +55,15 @@ def windowed_aggregate_joins(
     tree: exp.Expression,
     not_null: dict[str, frozenset[str]] | None = None,
     types: dict[str, dict[str, str]] | None = None,
+    assumptions: set[str] | None = None,
 ) -> exp.Expression:
     """Rewrite each eligible select of ``tree`` (module doc); returns the (possibly new) root."""
 
     for select in list(tree.find_all(exp.Select))[::-1]:
         rewritten = _rewrite(select, not_null or {}, types or {})
         if rewritten is not None:
+            if assumptions is not None:
+                assumptions.add(WINDOW_JOIN_ASSUMPTION)
             if select is tree:
                 tree = rewritten
             else:
@@ -63,9 +78,9 @@ def source_of(select: exp.Select) -> exp.Expression | None:
     if source is None or select.args.get("joins") or select.args.get("laterals"):
         return None
     this = source.this
-    if isinstance(this, exp.Table) and not (this.args.get("pivots") or this.args.get("joins") or this.args.get("version")):
+    if isinstance(this, exp.Table) and not (this.args.get("pivots") or this.args.get("joins") or this.args.get("version") or this.args.get("sample")):
         return this
-    if isinstance(this, exp.Subquery) and isinstance(this.this, exp.Select) and this.alias:
+    if isinstance(this, exp.Subquery) and isinstance(this.this, exp.Select) and this.alias and not this.args.get("sample"):
         return this
     return None
 
@@ -76,6 +91,15 @@ def deterministic(node: exp.Expression) -> bool:
     return not any(
         isinstance(n, (exp.Subquery, exp.Exists, exp.Anonymous, exp.Placeholder, exp.Parameter)) or type(n).__name__ in _RUN_DEPENDENT
         for n in node.walk()
+    )
+
+
+def _rereadable(source: exp.Subquery) -> bool:
+    """A derived table that gives the same rows each time it is read: no ``LIMIT``, ``OFFSET``, ``ORDER BY``, window or sample inside."""
+
+    return not any(
+        isinstance(n, (exp.Limit, exp.Offset, exp.Order, exp.Window, exp.TableSample)) or (isinstance(n, exp.Select) and n.args.get("distinct") is not None and n.args["distinct"].args.get("on"))
+        for n in source.walk()
     )
 
 
@@ -140,7 +164,7 @@ def _rewrite(select: exp.Select, not_null: dict, types: dict) -> exp.Select | No
     where = select.args.get("where")
     if where is not None and not deterministic(where):
         return None
-    if isinstance(source, exp.Subquery) and not deterministic(source):
+    if isinstance(source, exp.Subquery) and not (deterministic(source) and _rereadable(source)):
         return None
     for item in select.expressions:
         # a star would also read the grouped columns; an unnamed window has no name the join column could keep
@@ -149,6 +173,8 @@ def _rewrite(select: exp.Select, not_null: dict, types: dict) -> exp.Select | No
     groups: dict[str, list[exp.Window]] = {}
     keys_of: dict[str, list[exp.Expression]] = {}
     for window in windows:
+        if isinstance(window.this, (exp.Sum, exp.Avg)) and _known_float(source, window.this.this, types):
+            return None
         keys = list({k.sql(): k for k in window.args.get("partition_by") or []}.values())
         keys.sort(key=lambda k: k.sql())
         if any(_known_float(source, key, types) for key in keys):

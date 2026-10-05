@@ -4881,7 +4881,7 @@ def normalize(
     tree = canonical_windows(drop_unread_windows(tree), types)
     if window_joins:
         lowered = {t.lower(): {c.lower(): v for c, v in cols.items()} for t, cols in (types or {}).items()}
-        tree = lag_lead_joins(windowed_aggregate_joins(tree, not_null, lowered), keys, not_null, lowered)
+        tree = lag_lead_joins(windowed_aggregate_joins(tree, not_null, lowered, _assumptions), keys, not_null, lowered, _assumptions)
     tree = _isolate_windows(tree)
     if schema:
         # name each bare column's source before any rewrite reads a derived table as its base table, whose

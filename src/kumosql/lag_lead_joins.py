@@ -42,7 +42,7 @@ from __future__ import annotations
 from sqlglot import exp
 
 from .ast_utils import FROM_KEY
-from .window_aggregate_joins import _UNSUPPORTED_CLAUSES, _known_float, _never_null, _owned_windows, _plain, deterministic, source_of
+from .window_aggregate_joins import WINDOW_JOIN_ASSUMPTION, _UNSUPPORTED_CLAUSES, _known_float, _never_null, _owned_windows, _plain, deterministic, source_of
 from .window_order_keys import covers_a_key
 
 
@@ -51,6 +51,7 @@ def lag_lead_joins(
     keys: dict[str, list[tuple[str, ...]]] | None,
     not_null: dict[str, frozenset[str]] | None,
     types: dict[str, dict[str, str]] | None = None,
+    assumptions: set[str] | None = None,
 ) -> exp.Expression:
     """Rewrite each eligible select of ``tree`` (module doc); returns the (possibly new) root."""
 
@@ -59,6 +60,8 @@ def lag_lead_joins(
     for select in list(tree.find_all(exp.Select))[::-1]:
         rewritten = _rewrite(select, keys or {}, not_null or {}, types or {})
         if rewritten is not None:
+            if assumptions is not None:
+                assumptions.add(WINDOW_JOIN_ASSUMPTION)
             if select is tree:
                 tree = rewritten
             else:
