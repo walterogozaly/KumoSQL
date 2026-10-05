@@ -924,8 +924,6 @@ def rewrite_over_model(
 ) -> ModelReuse:
     """Return a verified replacement for ``query_sql`` that reads ``model_name``, or say why not."""
 
-    from .algebraic_equivalence import prove_equivalent_algebraic
-
     try:
         clash = _name_clash((query_sql, model_sql), schema, dialect, model_name)
     except sqlglot.errors.SqlglotError as error:
@@ -1018,19 +1016,8 @@ def rewrite_over_model(
         if _captures_model_reads(replacement, model_name, named_model):
             continue  # the model's definition would read the replacement's WITH table instead of its own source
         replacement_sql = _inline(replacement, model_name, named_model)
-        try:
-            result = prove_equivalent_algebraic(
-                plain_query_sql,
-                replacement_sql,
-                schema=base_schema,
-                constraints=dict(constraints) if constraints else None,
-                types={t: dict(c) for t, c in types.items()} if types else None,
-                timeout_ms=timeout_ms,
-                dialect=dialect,
-                compare_names=False,
-                exact_arithmetic=exact_arithmetic,
-            )
-        except Exception:  # noqa: BLE001 - a prover crash is never a proof
+        result = _prove(plain_query_sql, replacement_sql, base_schema, constraints, types, timeout_ms, dialect, exact_arithmetic)
+        if result is None:
             continue
         if result.status is SmtStatus.PROVEN_EQUIVALENT:
             assumptions = tuple(result.assumptions)
@@ -1045,6 +1032,46 @@ def rewrite_over_model(
 
 
 ORDER_ASSUMPTION = "the rows are compared as a bag; ORDER BY keys are carried over but the order itself is not proven"
+
+
+# the prover's reasons for two sides whose shapes it could not line up (rather than a difference it found)
+_SHAPE_MISMATCH = ("no row-preserving mapping between the queries was found", "a derived table is not joined on all of its columns")
+
+
+def _prove(query_sql, replacement_sql, schema, constraints, types, timeout_ms, dialect, exact_arithmetic):
+    """The prover's verdict on ``query == replacement``, or None when it crashed.
+
+    Declared keys and foreign keys let the prover drop joins and DISTINCTs, which sometimes leaves the two
+    sides in shapes it cannot match although they match without those rewrites; a proof that assumes
+    fewer constraints holds on every database the declared ones allow, so such a pair is tried again
+    with only NOT NULL declared."""
+
+    from .algebraic_equivalence import prove_equivalent_algebraic
+
+    def attempt(declared):
+        try:
+            return prove_equivalent_algebraic(
+                query_sql,
+                replacement_sql,
+                schema=schema,
+                constraints=declared,
+                types={t: dict(c) for t, c in types.items()} if types else None,
+                timeout_ms=timeout_ms,
+                dialect=dialect,
+                compare_names=False,
+                exact_arithmetic=exact_arithmetic,
+            )
+        except Exception:  # noqa: BLE001 - a prover crash is never a proof
+            return None
+
+    declared = dict(constraints) if constraints else None
+    result = attempt(declared)
+    keyed = declared and any(c.keys or c.foreign_keys for c in declared.values())
+    if keyed and result is not None and result.status is SmtStatus.NOT_PROVEN and result.reason in _SHAPE_MISMATCH:
+        plain = attempt({t: TableConstraints(not_null=c.not_null) for t, c in declared.items()})
+        if plain is not None and plain.status is SmtStatus.PROVEN_EQUIVALENT:
+            return plain
+    return result
 
 
 def query_has_order(tree: exp.Expression) -> bool:

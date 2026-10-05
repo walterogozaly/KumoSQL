@@ -17,6 +17,11 @@ Sources (kept separate in every report):
   Calcite's verdict is ``ok`` (Calcite finds a rewrite) or ``noMat`` (Calcite finds none, which is
   not a proof that none exists).
 * ``adapted``: cases written for KumoSQL in ``tests/fixtures/mv_reuse/adapted_cases.json``.
+* ``doris``: Apache Doris 3.0.6 outer-join view tests, copied verbatim by ``tools/extract_doris_mv.py``.
+  Doris's verdict is ``success`` or ``fail`` (which, like Calcite's ``noMat``, is not a proof that no
+  rewrite exists).
+* ``outer-union``: outer-join, key-aware, union-compensation and set-operation cases with a checked
+  answer each, written by ``tools/make_outer_union_mv_cases.py`` (some adapted from StarRocks 3.3.0).
 
 Every replacement is proven by the algebraic prover and then re-run against random databases that
 respect the schema; a proven replacement that differs on any database counts as wrong.
@@ -42,21 +47,25 @@ from kumosql.smt_equivalence import TableConstraints  # noqa: E402
 FIXTURES = ROOT / "tests" / "fixtures" / "mv_reuse"
 
 
-def _t(name, *columns, keys=()):
-    return Table(name, [Column(*c) if isinstance(c, tuple) else Column(c) for c in columns], keys)
+def _t(name, *columns, keys=(), foreign_keys=()):
+    return Table(name, [Column(*c) if isinstance(c, tuple) else Column(c) for c in columns], keys, foreign_keys)
 
 
-# Calcite's HR test schema (reflective Java classes: primitives are NOT NULL, boxed types and strings nullable)
-HR = Schema(
-    [
-        _t("emps", ("empid", "int", True), ("deptno", "int", True), ("name", "text"), ("salary", "float", True), ("commission", "int")),
-        _t("depts", ("deptno", "int", True), ("name", "text")),
-        _t("dependents", ("empid", "int", True), ("name", "text")),
-        _t("locations", ("empid", "int", True), ("name", "text")),
-        _t("events", ("eventid", "int", True), ("ts", "date")),
-        _t("depts2", ("deptno", "int", True), ("inceptiondate", "date")),
-    ]
+_HR_TABLES = (
+    ("emps", ("empid", "int", True), ("deptno", "int", True), ("name", "text"), ("salary", "float", True), ("commission", "int")),
+    ("depts", ("deptno", "int", True), ("name", "text")),
+    ("dependents", ("empid", "int", True), ("name", "text")),
+    ("locations", ("empid", "int", True), ("name", "text")),
+    ("events", ("eventid", "int", True), ("ts", "date")),
+    ("depts2", ("deptno", "int", True), ("inceptiondate", "date")),
 )
+# Calcite's HR test schema as its materialized-view tests declare it (``MaterializationTest.HrFKUKSchema``):
+# reflective Java classes (primitives are NOT NULL, boxed types and strings nullable) and one referential
+# constraint, emps.deptno -> depts.deptno, whose target columns are therefore a unique key of depts.
+_HR_CONSTRAINTS = {"depts": {"keys": [("deptno",)]}, "emps": {"foreign_keys": [(("deptno",), "depts", ("deptno",))]}}
+HR = Schema([_t(name, *columns, **_HR_CONSTRAINTS.get(name, {})) for name, *columns in _HR_TABLES])
+# The same tables with no keys: the adapted shared-model cases and the set-operation cases use it.
+HR_PLAIN = Schema([_t(name, *columns) for name, *columns in _HR_TABLES])
 
 # The slice of Calcite's foodmart schema these tests read; ids are NOT NULL, time_id and product_id are keys.
 FOODMART = Schema(
@@ -86,12 +95,43 @@ FOODMART = Schema(
         _t("product", ("product_class_id", "int", True), ("product_id", "int", True), "product_name", keys=[("product_id",)]),
     ]
 )
-SCHEMAS = {"hr": HR, "jdbc_foodmart": FOODMART, "foodmart": FOODMART}
+SCHEMAS = {"hr": HR, "hr_plain": HR_PLAIN, "jdbc_foodmart": FOODMART, "foodmart": FOODMART}
+
+
+def schema_from_json(spec: dict) -> Schema:
+    """A fixture's schema: table -> [[column, type, not_null], ...] or {"columns": .., "keys": .., "foreign_keys": ..}.
+
+    Dates are also drawn from the date literals the queries mention, since these fixtures filter on them."""
+
+    tables = []
+    for name, table in spec.items():
+        if isinstance(table, list):
+            table = {"columns": table}
+        columns = [Column(c, kind, bool(not_null)) for c, kind, not_null in table["columns"]]
+        keys = [tuple(k) for k in table.get("keys", [])]
+        foreign = [(tuple(cols), parent, tuple(parent_cols)) for cols, parent, parent_cols in table.get("foreign_keys", [])]
+        tables.append(Table(name, columns, keys, foreign))
+    return Schema(tables, date_literals=True)
+
+
+def _fixture_schemas() -> None:
+    for name in ("doris_mv_cases.json", "outer_union_cases.json"):
+        path = FIXTURES / name
+        if path.exists():
+            for key, spec in json.loads(path.read_text(encoding="utf-8")).get("schemas", {}).items():
+                SCHEMAS.setdefault(key, schema_from_json(spec))
+
+
+_fixture_schemas()
 
 
 def constraints_of(schema: Schema) -> dict[str, TableConstraints]:
     return {
-        t.name: TableConstraints(not_null=frozenset(schema.not_null(t)), keys=tuple(tuple(k) for k in t.keys))
+        t.name: TableConstraints(
+            not_null=frozenset(schema.not_null(t)),
+            keys=tuple(tuple(k) for k in t.keys),
+            foreign_keys=tuple((tuple(cols), parent, tuple(parent_cols)) for cols, parent, parent_cols in t.foreign_keys),
+        )
         for t in schema.tables
     }
 
@@ -109,7 +149,15 @@ def load_cases(source: str | None) -> list[dict]:
     adapted = FIXTURES / "adapted_cases.json"
     if source in (None, "adapted") and adapted.exists():
         for case in json.loads(adapted.read_text(encoding="utf-8"))["cases"]:
-            cases.append({**case, "source": "adapted", "origin": case.get("origin", "adapted"), "schema": case.get("schema", "hr")})
+            cases.append({**case, "source": "adapted", "origin": case.get("origin", "adapted"), "schema": case.get("schema", "hr_plain")})
+    doris = FIXTURES / "doris_mv_cases.json"
+    if source in (None, "doris") and doris.exists():
+        for case in json.loads(doris.read_text(encoding="utf-8"))["cases"]:
+            cases.append({**case, "source": "doris", "expect": "rewrite" if case["doris"] == "success" else "none"})
+    outer_union = FIXTURES / "outer_union_cases.json"
+    if source in (None, "outer-union") and outer_union.exists():
+        for case in json.loads(outer_union.read_text(encoding="utf-8"))["cases"]:
+            cases.append({**case, "source": "outer-union"})
     return cases
 
 
@@ -181,7 +229,7 @@ def summarize(cases: list[dict], records: list[dict]) -> dict:
     summary: dict = {"total": len(cases)}
     groups: dict[str, list[tuple[dict, dict]]] = {}
     for case in cases:
-        key = f"{case['source']}:{case['origin']}" if case["source"] == "calcite" else case["source"]
+        key = f"{case['source']}:{case['origin']}" if case["source"] in ("calcite", "doris", "outer-union") else case["source"]
         groups.setdefault(key, []).append((case, by_id[case["id"]]))
         if key != case["source"]:
             groups.setdefault(case["source"], []).append((case, by_id[case["id"]]))
@@ -212,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--baseline", action="store_true")
     parser.add_argument("--held-out", action="store_true", help="run the reserved split instead of the development split")
     parser.add_argument("--all", action="store_true", help="run both splits")
-    parser.add_argument("--source", choices=["calcite", "adapted"])
+    parser.add_argument("--source", choices=["calcite", "adapted", "doris", "outer-union"])
     parser.add_argument("--json", help="write per-case records here")
     parser.add_argument("--timeout-ms", type=int, default=5000)
     parser.add_argument("--trials", type=int, default=150)

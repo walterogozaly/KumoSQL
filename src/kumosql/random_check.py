@@ -42,11 +42,16 @@ class Table:
     name: str
     columns: Sequence[Column]
     keys: Sequence[Sequence[str]] = ()  # unique column sets (primary or unique keys; their columns are never NULL)
+    # each (columns, parent table, parent columns): a row whose columns are all non-NULL has a parent row with
+    # those values (the parent columns are a key of the parent)
+    foreign_keys: Sequence[tuple[Sequence[str], str, Sequence[str]]] = ()
 
 
 @dataclass(frozen=True)
 class Schema:
     tables: Sequence[Table]
+    # also draw dates from the 'YYYY-MM-DD' literals the queries mention (and the day after each)
+    date_literals: bool = False
 
     def table(self, name: str) -> Table:
         for table in self.tables:
@@ -68,7 +73,14 @@ def prover_constraints(schema: Schema) -> dict:
 
     from .smt_equivalence import TableConstraints
 
-    return {t.name: TableConstraints(not_null=frozenset(schema.not_null(t)), keys=tuple(tuple(k) for k in t.keys)) for t in schema.tables}
+    return {
+        t.name: TableConstraints(
+            not_null=frozenset(schema.not_null(t)),
+            keys=tuple(tuple(k) for k in t.keys),
+            foreign_keys=tuple((tuple(cols), parent, tuple(parent_cols)) for cols, parent, parent_cols in t.foreign_keys),
+        )
+        for t in schema.tables
+    }
 
 
 @dataclass(frozen=True)
@@ -102,7 +114,21 @@ def _strings(sqls: Iterable[str]) -> list[str]:
     return found
 
 
-def _domains(sqls: Sequence[str]) -> dict[str, list]:
+def _dates(sqls: Iterable[str]) -> list[str]:
+    import datetime
+
+    found: set[str] = set()
+    for text in _strings(sqls):
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            try:
+                day = datetime.date.fromisoformat(text)
+            except ValueError:
+                continue
+            found.update({day.isoformat(), (day + datetime.timedelta(days=1)).isoformat()})
+    return sorted(found)
+
+
+def _domains(sqls: Sequence[str], date_literals: bool = False) -> dict[str, list]:
     numbers = _numbers(sqls)
     ints = {0, 1, 2, 3}
     floats = {0.0, 1.0, 2.5}
@@ -120,7 +146,7 @@ def _domains(sqls: Sequence[str]) -> dict[str, list]:
         "int": ints_sorted,
         "float": sorted(floats)[:14],
         "text": texts,
-        "date": ["2020-01-01", "2020-06-15", "2021-01-01", "2021-12-31"],
+        "date": ["2020-01-01", "2020-06-15", "2021-01-01", "2021-12-31"] + (_dates(sqls)[:8] if date_literals else []),
         "bool": [True, False],
     }
 
@@ -135,10 +161,29 @@ def _row(table: Table, rng: random.Random, domains: dict[str, list], not_null: s
     return row
 
 
+def _parents_first(schema: Schema) -> list[Table]:
+    """The tables with every foreign key's parent before its child (declaration order otherwise)."""
+
+    order: list[Table] = []
+    names = {t.name for t in schema.tables}
+
+    def visit(table: Table, path: tuple[str, ...]) -> None:
+        if table in order or table.name in path:
+            return
+        for _, parent, _ in table.foreign_keys:
+            if parent in names and parent != table.name:
+                visit(schema.table(parent), path + (table.name,))
+        order.append(table)
+
+    for table in schema.tables:
+        visit(table, ())
+    return order
+
+
 def random_tables(schema: Schema, seed: int, domains: dict[str, list], rows: int = 6, null_rate: float = 0.2) -> dict[str, list[tuple]]:
     rng = random.Random(seed)
     out: dict[str, list[tuple]] = {}
-    for table in schema.tables:
+    for table in _parents_first(schema):  # declaration order when no table has a foreign key
         names = [c.name for c in table.columns]
         not_null = schema.not_null(table)
         count = 0 if seed % 9 == 0 else rng.randint(1, rows)
@@ -146,6 +191,8 @@ def random_tables(schema: Schema, seed: int, domains: dict[str, list], rows: int
         result: list[tuple] = []
         for _ in range(count):
             row = _row(table, rng, domains, not_null, null_rate)
+            if not _reference_parents(table, row, names, out, rng, schema):
+                continue
             clash = False
             for index, key in enumerate(table.keys):
                 signature = (index, tuple(row[names.index(k)] for k in key))
@@ -160,6 +207,27 @@ def random_tables(schema: Schema, seed: int, domains: dict[str, list], rows: int
                 result.append(tuple(row))  # duplicate rows exist when nothing forbids them
         out[table.name] = result
     return out
+
+
+def _reference_parents(table: Table, row: list, names: list[str], drawn: dict[str, list[tuple]], rng: random.Random, schema: Schema) -> bool:
+    """Point each foreign key of ``row`` at a parent row (or leave it NULL); False when that is impossible."""
+
+    for columns, parent, parent_columns in table.foreign_keys:
+        positions = [names.index(c) for c in columns]
+        if any(row[p] is None for p in positions):
+            continue  # a NULL in the key references nothing
+        parent_rows = drawn.get(parent) or []
+        if not parent_rows:
+            nullable = [p for p in positions if table.columns[p].name not in schema.not_null(table)]
+            if not nullable:
+                return False
+            row[nullable[0]] = None
+            continue
+        parent_names = [c.name for c in schema.table(parent).columns]
+        chosen = rng.choice(parent_rows)
+        for p, parent_column in zip(positions, parent_columns):
+            row[p] = chosen[parent_names.index(parent_column)]
+    return True
 
 
 def _connect(schema: Schema, dialect: str = "postgres"):
@@ -271,7 +339,7 @@ def run_all(schema: Schema, queries: Sequence[str], seeds: Iterable[int], *, dia
     import duckdb
 
     a_sql, b_sql = (_duck(q, dialect) for q in queries)
-    domains = _domains(list(queries))
+    domains = _domains(list(queries), schema.date_literals)
     db = _connect(schema, dialect)
     read = _reader(dialect)
     found: dict[str, Witness | None] = {m: None for m in modes}
