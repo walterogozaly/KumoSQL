@@ -404,7 +404,12 @@ def infer(sql_or_tree, catalog: Catalog | None = None, dialect: str = "bigquery"
         try:
             tree = sqlglot.parse_one(sql_or_tree, read=dialect)
         except Exception as exc:  # noqa: BLE001 - an unparsed query has no types
-            return TypedQuery(None, None, (), {}, {}, f"parse error: {exc}"[:200])
+            from .googlesql_text_fallback import rewrite
+
+            fallback = rewrite(sql_or_tree, dialect) if isinstance(exc, sqlglot.errors.ParseError) else None
+            if fallback is None:
+                return TypedQuery(None, None, (), {}, {}, f"parse error: {exc}"[:200])
+            tree, text = fallback.tree, fallback.sql
     else:
         tree = sql_or_tree
     if not isinstance(tree, exp.Query):
