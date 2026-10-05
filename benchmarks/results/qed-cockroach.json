@@ -1,0 +1,21 @@
+{
+  "suite": "QED CockroachDB tests",
+  "order": 21,
+  "size": 820,
+  "score": "707/815 proved, 0 wrong",
+  "metric": "CockroachDB optimizer-test pairs from the QED prover, converted from its relational-algebra JSON to SQL, proved equivalent; 5 more are shown different by a counterexample and are not counted in the 815, 108 unknown. QED itself proves 939 of the same 1,287 cases (published: 1,086 of 1,400).",
+  "docs": "docs/evals/qed-cockroach.md",
+  "command": "python tools/qed_cockroach_bench.py",
+  "date": "2026-10-05",
+  "caveats": "First measurement, measured on master f4206ff with this change; no prover rule was developed on these pairs (not tuned on test, no held-out split). 820 of QED's 1,287 CockroachDB cases convert exactly to SQL; 467 do not (listed with reasons in tests/fixtures/qed_cockroach/qed_cockroach_skipped.jsonl), so 707 proved is 54.9% of all 1,287. Head to head, QED proves 939 of the same 1,287 (73.0%; the paper reports 1,086 of 1,400 in Table 1 and 1,051 in its abstract, on more cases than the repository ships): both prove 647, only KumoSQL 60, only QED 292 (87 converted but unknown, 205 not converted), so QED is ahead. 77 of QED's 292 extra proofs involve unnamed FUNCTION calls or LIMIT without ORDER BY, which QED treats as uninterpreted, so DuckDB cannot check them. The 5 pairs shown different (memo/395, memo/414, memo/418, norm/487, xform/404) are differences in QED's own JSON (a lost inclusive index bound, a unique index and a key-less GROUP BY the JSON cannot express) and stay in the suite as guards; QED does not prove them either, and they leave the denominator. An earlier converter misread opaque-column ordinals inside apply joins (norm/337 looked refuted); fixed before this measurement. The cases derive from CockroachDB v23.1.3's optimizer tests and keep CockroachDB's own licence terms; QED's repository is MIT; see tests/fixtures/qed_cockroach/README.md for what was and was not verified. Conversion uses DECIMAL(19, 2) and VARCHAR(255) because the JSON carries no precision or length, and BOOLEAN columns are real booleans in the DuckDB check.",
+  "evidence": "proof",
+  "correctness": "0 false proofs; every one of the 707 proofs and the 5 counterexamples re-run on 60 random DuckDB databases (30 plain, 30 skewed towards the literals), a counterexample counting only if it reproduces with DuckDB's optimizer off",
+  "coverage": {
+    "proven": 707,
+    "refuted": 5,
+    "unknown": 108,
+    "unsupported": 467
+  },
+  "coverage_of": "All 1,287 QED CockroachDB cases: the 820 scored pairs (proven, refuted, unknown) plus the 467 the conversion cannot reproduce exactly (unsupported).",
+  "held_out": "none"
+}

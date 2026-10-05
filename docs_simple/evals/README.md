@@ -19,6 +19,7 @@ For comparing slow evals between code versions, see [Eval diff](eval-diff.md).
 | Guide | Question it tests |
 | --- | --- |
 | [SQLSolver and related corpora](sqlsolver.md) | Which optimizer query pairs can be proved? |
+| [QED's CockroachDB cases](qed-cockroach.md) | How many of another prover's CockroachDB optimizer rewrites can be proved, and where it still wins |
 | [VeriEQL](verieql.md) | Can queries be proved or separated on constraint-respecting data? |
 | [Singh and Bedathur](singh-bedathur.md) | Do alternative LeetCode solutions agree? |
 | [Logos' TPC-H, DSB and TPC-DS pairs](logos.md) | Are Calcite's rewrites of benchmark queries really equivalent? |

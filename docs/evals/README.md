@@ -21,6 +21,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 | Page | What it scores | Results files |
 | --- | --- | --- |
 | [Algebraic prover on SQLSolver, R-Bot, QED, Cosette, SPES and mined Calcite tests](sqlsolver.md) | Equivalent query pairs proved, with refutations by a replayed counterexample | `sqlsolver-calcite`, `sqlsolver-spark`, `sqlsolver-tpch`, `sqlsolver-tpcc`, `rbot-calcite`, `qed-calcite`, `cosette`, `cosette-adapted`, `spes-only`, `calcite-mined` |
+| [QED's CockroachDB cases](qed-cockroach.md) | 820 of the 1,287 CockroachDB optimizer-test pairs shipped with the QED prover, converted to SQL and proved equivalent, next to QED's own verdict on each case | `qed-cockroach` |
 | [VeriEQL](verieql.md) | LeetCode, Literature and Calcite suites, proofs and counterexamples scored separately | `verieql-leetcode-proof`, `verieql-leetcode-executed`, `verieql-literature-proof`, `verieql-literature-executed`, `verieql-calcite-proof`, `verieql-calcite-executed` |
 | [Logos' TPC-H, DSB and TPC-DS pairs](logos.md) | R-Bot's Calcite rewrites of TPC-H and DSB queries and TPC-DS query variants: proved, or shown different on generated data | `logos-core-proof`, `logos-core-executed` |
 | [Singh and Bedathur](singh-bedathur.md) | 2,800 LeetCode equivalence pairs | `singh-bedathur-leetcode` |

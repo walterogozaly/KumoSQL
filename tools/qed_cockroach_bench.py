@@ -137,6 +137,20 @@ def run(prove=sb.default_prove, trials: int = 30, limit: int | None = None, work
     return out
 
 
+def head_to_head(verdicts: dict) -> dict:
+    """Cross-tabulate QED's verdict on every case (``qed_verdicts.json``) with ours.
+
+    A case QED has but that was not converted counts as ``unsupported``.
+    """
+
+    qed = json.loads((FIXTURES / "qed_verdicts.json").read_text(encoding="utf-8"))["cases"]
+    table: dict[str, int] = {}
+    for name, theirs in qed.items():
+        key = f"qed {theirs} / ours {verdicts.get(name, 'unsupported')}"
+        table[key] = table.get(key, 0) + 1
+    return dict(sorted(table.items()))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--workers", type=int, default=1, help="processes to spread the pairs over")
@@ -148,6 +162,9 @@ def main() -> int:
     for key in ("different", "wrong"):
         if r[key]:
             print(f"  {key}: {', '.join(r[key])}")
+    if args.limit is None:
+        for key, count in head_to_head(r["verdicts"]).items():
+            print(f"  {key}: {count}")
     if args.verdicts:
         args.verdicts.write_text(json.dumps(r["verdicts"], indent=1) + "\n")
     return 1 if r["wrong"] else 0
