@@ -1,4 +1,4 @@
-"""Run the CTE-lifting regression suite against the supported compiled SQLGlot release.
+"""Run parser and rewrite regressions against the supported compiled SQLGlot release.
 
 Each version gets a temporary virtual environment, so matrix runs cannot alter
 the caller's installed packages or the repository checkout.
@@ -19,6 +19,7 @@ import venv
 ROOT = Path(__file__).resolve().parents[1]
 SUPPORTED_SQLGLOT_VERSIONS = ("30.21.0",)
 REGRESSION_TESTS = (
+    "tests/test_match_recognize.py",
     "tests/test_lift_subqueries.py",
     "tests/test_rule_registry.py",
     "tests/test_sqlx.py",

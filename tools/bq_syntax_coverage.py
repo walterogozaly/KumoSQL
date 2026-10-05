@@ -103,7 +103,7 @@ def stage_load_sql(sql: str, parse_status: str):
     errors = [d for d in pipeline.all_diagnostics() if d.code in {"read_error", "asset_unreadable", "sqlx_parse_error"}]
     if errors:
         return pipeline, FAIL, errors[0].message[:160]
-    if "definitions/case.sql" not in {m.path for m in pipeline.models.values()}:
+    if "definitions/case.sql" not in {(m.path or "").replace("\\", "/") for m in pipeline.models.values()}:
         return pipeline, FAIL, "model was not loaded"
     return pipeline, PASS, ""
 
