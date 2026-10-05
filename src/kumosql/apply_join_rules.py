@@ -44,6 +44,7 @@ def apply_join_rules(select: exp.Select, types: dict | None) -> exp.Select | Non
     return (
         pin_lateral_outputs(select, types)
         or lateral_projection(select)
+        or tidy_over_lateral(select)
         or unwrap_lateral_passthrough(select)
         or read_correlated_derived(select)
         or flatten_lateral(select)
@@ -51,6 +52,7 @@ def apply_join_rules(select: exp.Select, types: dict | None) -> exp.Select | Non
         or exists_over_constant_row(select)
         or exists_read_derived(select)
         or carry_range_into_exists(select, types)
+        or name_laterals(select)
     )
 
 
@@ -553,6 +555,80 @@ def unwrap_lateral_passthrough(select: exp.Select) -> exp.Select | None:
         values = {n: _unaliased(e) for n, e in zip(inner_names, new_inner.expressions)}
         new_inner.set("expressions", [exp.alias_(values[c.name.lower()].copy(), name) for c, name in zip(picks, outer_names)])
         target.this.set("this", exp.Subquery(this=new_inner))
+        return copy
+    return None
+
+
+def _has_lateral(select: exp.Select) -> bool:
+    return any(isinstance(j.this, exp.Lateral) for j in select.args.get("joins") or [])
+
+
+def tidy_over_lateral(select: exp.Select) -> exp.Select | None:
+    """Drop a ``WHERE TRUE`` and a pure pass-through wrapper around a select that keeps a lateral join.
+
+    The other rules read such wrappers through, but not past a lateral; two queries that differ only in
+    these layers are the same query.
+    """
+
+    where = select.args.get("where")
+    if _has_lateral(select) and where is not None and isinstance(where.this, exp.Boolean) and where.this.this:
+        copy = select.copy()
+        copy.set("where", None)
+        return copy
+    from_ = _from(select)
+    if from_ is None or not isinstance(from_.this, exp.Subquery) or not isinstance(from_.this.this, exp.Select):
+        return None
+    inner = from_.this.this
+    if (
+        not _has_lateral(inner)
+        or select.args.get("joins")
+        or any(select.args.get(k) for k in _BLOCKING + ("distinct",))
+        or (where is not None and not (isinstance(where.this, exp.Boolean) and where.this.this))
+        or not _plain_scope(inner)
+        or inner.args.get("distinct")
+    ):
+        return None
+    inner_names = _clean_outputs(inner)
+    outer_names = _clean_outputs(select)
+    alias = _alias(from_.this)
+    if inner_names is None or outer_names is None or not alias:
+        return None
+    picks = [_unaliased(e) for e in select.expressions]
+    if any(not (isinstance(c, exp.Column) and c.table.lower() == alias and c.name.lower() in inner_names) for c in picks):
+        return None
+    copy = select.copy()
+    new_inner = _from(copy).this.this
+    values = {n: _unaliased(e) for n, e in zip(inner_names, new_inner.expressions)}
+    new_inner.set("expressions", [exp.alias_(values[c.name.lower()].copy(), name) for c, name in zip(picks, outer_names)])
+    return new_inner
+
+
+def name_laterals(select: exp.Select) -> exp.Select | None:
+    """Give a lateral that stays in the query a name that depends on where it sits, not on how it was spelled."""
+
+    depth, up = 0, select.parent
+    while up is not None:
+        depth += isinstance(up, exp.Select)
+        up = up.parent
+    ordinal = 0
+    for index, join in enumerate(select.args.get("joins") or []):
+        info = _plain_lateral(join)
+        if info is None:
+            continue
+        alias = info[1]
+        wanted = f"kumosql_lat{depth}_{ordinal}"
+        ordinal += 1
+        if alias == wanted:
+            continue
+        if wanted in _scope_aliases(select) or not _only_lateral(select, alias):
+            return None
+        reads = _reads_alias(select, alias)
+        if reads is None:
+            return None
+        copy = select.copy()
+        for column in _reads_alias(copy, alias) or []:
+            column.set("table", exp.to_identifier(wanted))
+        copy.args["joins"][index].this.args["alias"].set("this", exp.to_identifier(wanted))
         return copy
     return None
 
