@@ -89,8 +89,11 @@ _MACRO_DEFINITIONS = (
     "ELSE x END",
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_int64(x) AS CASE WHEN typeof(x) = 'HUGEINT' "
     f"AND (x > 9223372036854775807 OR x < -9223372036854775808) THEN {_fail('INT64 overflow')} ELSE x END",
-    f"CREATE OR REPLACE TEMP MACRO kumo_bq_string(x) AS CASE WHEN typeof(x) IN ('DOUBLE', 'FLOAT') "
-    f"THEN {_fail('FLOAT64 to STRING formats differently')} "
+    # a whole FLOAT64 below 1e15 is its integer's digits in BigQuery ('2'), DuckDB adds '.0'; other values (fractions,
+    # exponents, -0) are written alike or differently depending on magnitude, so they fail
+    f"CREATE OR REPLACE TEMP MACRO kumo_bq_string(x) AS CASE WHEN typeof(x) = 'DOUBLE' AND x = floor(x) AND abs(x) < 1e15 "
+    "AND NOT (x = 0 AND starts_with(CAST(x AS VARCHAR), '-')) THEN CAST(CAST(x AS BIGINT) AS VARCHAR) "
+    f"WHEN typeof(x) IN ('DOUBLE', 'FLOAT') THEN {_fail('FLOAT64 to STRING formats differently')} "
     # BigQuery writes fractional seconds in groups of three digits (.000100), DuckDB as few as needed (.0001)
     "WHEN typeof(x) IN ('TIMESTAMP WITH TIME ZONE', 'TIMESTAMP', 'TIME') "
     "AND regexp_matches(CAST(x AS VARCHAR), '[.]([0-9]{1,2}|[0-9]{4,5})([^0-9]|$)') "

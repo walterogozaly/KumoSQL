@@ -188,7 +188,18 @@ def test_row32_collation_is_refused(db):
 
 
 def test_float_to_string_fails_and_numeric_to_string_drops_trailing_zeros(db):
-    assert fails(db, "SELECT CAST(x AS STRING) FROM UNNEST([CAST(2.0 AS FLOAT64)]) x")  # BigQuery '2', DuckDB '2.0'
+    # a whole FLOAT64 is its integer's digits in BigQuery ('2'; DuckDB writes '2.0'); other values are refused
+    assert one(db, "SELECT CAST(x AS STRING) FROM UNNEST([CAST(2.0 AS FLOAT64)]) x") == "2"
+    assert one(db, "SELECT CAST(x AS STRING) FROM UNNEST([CAST(-28.0 AS FLOAT64)]) x") == "-28"
+    assert one(db, "SELECT CAST(x AS STRING) FROM UNNEST([CAST(0.0 AS FLOAT64)]) x") == "0"
+    assert fails(db, "SELECT CAST(x AS STRING) FROM UNNEST([CAST(0.1 AS FLOAT64)]) x")
+    assert fails(db, "SELECT CAST(x AS STRING) FROM UNNEST([CAST(1e20 AS FLOAT64)]) x")
+    assert fails(db, "SELECT CAST(x AS STRING) FROM UNNEST([-CAST(0.0 AS FLOAT64)]) x")  # '-0' in BigQuery
+    # CONCAT converts its arguments to STRING the same way
+    assert one(db, "SELECT CONCAT('a', CEIL(x), 'b') FROM UNNEST([CAST(2.5 AS FLOAT64)]) x") == "a3b"
+    assert fails(db, "SELECT CONCAT('a', x) FROM UNNEST([CAST(2.5 AS FLOAT64)]) x")
+    assert one(db, "SELECT CONCAT('a', 1, NULL)") is None
+    assert one(db, "SELECT CONCAT(b'a', b'b')") == b"ab"
     assert run(db, "SELECT CAST(NUMERIC '1.5' AS STRING), CAST(CAST(100 AS NUMERIC) AS STRING), CAST(NUMERIC '0.0001' AS STRING)") == [
         ("1.5", "100", "0.0001")
     ]
