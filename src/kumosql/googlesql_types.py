@@ -1095,20 +1095,39 @@ class _Typer:
         if isinstance(alias, exp.TableAlias) and alias.name and not names:
             names = [alias.name]
         exprs = item.expressions
+        if len(exprs) > 1:
+            return self.multiway_unnest(item, scope, ctes, alias)
         if len(exprs) != 1 or len(names) > 1:
             return [_Range(names[0].lower() if names else None, None, node=item)]
         t = self.array_path(exprs[0], scope, ctes) if _is_path(exprs[0]) else self.expr(exprs[0], scope, ctes)
         element: T
-        if t.lit == "empty_array":
-            element = UNKNOWN
-        elif t.type is not None and t.type.kind == "ARRAY":
+        if t.type is not None and t.type.kind == "ARRAY" and t.lit != "null":
             element = known(t.type.element)
-        elif t.lit == "null":
-            element = UNKNOWN
         else:
             element = UNKNOWN
         name = names[0] if names else None
         ranges = [_Range(name.lower() if name else None, None, value=element, node=item, display=name)]
+        offset = item.args.get("offset")
+        if offset:
+            off_name = offset.name if isinstance(offset, exp.Expression) else "offset"
+            ranges.append(_Range(off_name.lower(), None, value=T(INT64), display=off_name))
+        return ranges
+
+    def multiway_unnest(self, item: exp.Unnest, scope: _Scope, ctes, alias) -> list[_Range]:
+        """UNNEST(a, b, ..): a table with one column per array (named by a column list alias, else anonymous), and
+        the WITH OFFSET column as its own range."""
+
+        elements = []
+        for e in item.expressions:
+            t = self.array_path(e, scope, ctes) if _is_path(e) else self.expr(e, scope, ctes)
+            elements.append(known(t.type.element) if t.type is not None and t.type.kind == "ARRAY" and t.lit != "null"
+                            else UNKNOWN)
+        names = [c.name for c in alias.args.get("columns") or []] if isinstance(alias, exp.TableAlias) else []
+        if names and len(names) != len(elements):
+            return [_Range(None, None, node=item)]
+        table = alias.name.lower() if isinstance(alias, exp.TableAlias) and alias.name and not names else None
+        columns = [_Col(names[i] if names else None, _plain(t)) for i, t in enumerate(elements)]
+        ranges = [_Range(table, columns, node=item)]
         offset = item.args.get("offset")
         if offset:
             off_name = offset.name if isinstance(offset, exp.Expression) else "offset"
