@@ -121,7 +121,7 @@ def _mark_table_arguments(tokens: list) -> list:
     count = len(tokens)
     while i < count:
         token = tokens[i]
-        follows_open = bool(out) and out[-1].token_type in (TokenType.L_PAREN, TokenType.COMMA)
+        follows_open = bool(out) and out[-1].token_type in (TokenType.L_PAREN, TokenType.COMMA, TokenType.FARROW)
         if follows_open and _in_native_call(out):
             follows_open = False
         if (
@@ -289,23 +289,38 @@ def _rewrite_verbatim_calls(sql: str, tokens: list) -> str:
     return "".join(pieces) + sql[position:] if pieces else sql
 
 
+_MODEL_PATH = (TokenType.VAR, TokenType.IDENTIFIER, TokenType.DOT, TokenType.DASH, TokenType.NUMBER)
+
+
 def _rewrite_model_arguments(sql: str, tokens: list) -> str:
-    """``MODEL name`` as an argument of an ``ML.fn`` sqlglot does not read (``ML.EVALUATE``, ``ML.DETECT_ANOMALIES``) becomes
-    ``__KUMO_VERBATIM__('MODEL name')``: it prints back as written and, a model not being a table, is no read."""
+    """``MODEL name`` as an argument of a call sqlglot does not read (``ML.EVALUATE``, ``ML.DETECT_ANOMALIES``, ``AI.GENERATE_TABLE``,
+    a table function of the project's own) becomes ``__KUMO_VERBATIM__('MODEL name')``: it prints back as written and, a model not
+    being a table, is no read. After ``(``, ``,`` or ``=>``; the model is a dotted name followed by ``,`` or ``)``, and a call that is
+    not an ``ML.`` or ``AI.`` one must be a named function, so ``SELECT a, model m, b`` stays an alias."""
 
     pieces: list[str] = []
     position = 0
     for index, token in enumerate(tokens):
-        if token.text.upper() != "MODEL" or index == 0 or index + 1 >= len(tokens):
+        if token.text.upper() != "MODEL" or index == 0 or index + 1 >= len(tokens) or token.start < position:
             continue
-        if tokens[index - 1].token_type not in (TokenType.L_PAREN, TokenType.COMMA):
+        if tokens[index - 1].token_type not in (TokenType.L_PAREN, TokenType.COMMA, TokenType.FARROW):
             continue
-        name = _ml_call(tokens, _open_call(tokens[:index]))
-        if name is None or name in BigQuery.Parser.FUNCTION_PARSERS:
+        opened = _open_call(tokens[:index])
+        name = _ml_call(tokens, opened)
+        if name is not None and name in BigQuery.Parser.FUNCTION_PARSERS:
             continue
         end = index + 1
-        while end + 1 < len(tokens) and tokens[end + 1].token_type not in (TokenType.COMMA, TokenType.R_PAREN):
-            end += 1
+        if name is None:
+            if opened is None or opened == 0 or tokens[opened - 1].token_type not in (TokenType.VAR, TokenType.IDENTIFIER):
+                continue
+            while end < len(tokens) and tokens[end].token_type in _MODEL_PATH:
+                end += 1
+            if end == index + 1 or end >= len(tokens) or tokens[end].token_type not in (TokenType.COMMA, TokenType.R_PAREN):
+                continue
+            end -= 1
+        else:
+            while end + 1 < len(tokens) and tokens[end + 1].token_type not in (TokenType.COMMA, TokenType.R_PAREN):
+                end += 1
         text = sql[token.start : tokens[end].end + 1]
         pieces += [sql[position : token.start], f"{VERBATIM}({_quoted(text)})"]
         position = tokens[end].end + 1
@@ -688,6 +703,15 @@ def _check_literals(sql: str, tokens: list) -> None:
                 raise UnclosedLiteral(f"Unclosed literal: a quoted string or name that is not triple-quoted runs past the end of line {token.line}")
 
 
+# sqlglot 26 reads on after a syntax error when it is asked to collect errors (``ErrorLevel.RAISE``) and can crash on the broken
+# state it is left with, so a failure that is not a ``ParseError`` is a parse failure too.
+_PARSE_FAILURES = (ParseError, AttributeError, IndexError, TypeError, KeyError)
+
+
+def _as_parse_error(caught: Exception) -> ParseError:
+    return caught if isinstance(caught, ParseError) else ParseError(f"Could not read the statement ({type(caught).__name__}: {caught})")
+
+
 def install() -> None:
     global _installed
     if _installed:
@@ -705,7 +729,8 @@ def install() -> None:
             return self.parser(**opts).parse(tokens, sql)  # what the dialect's own parse does
         except UnclosedLiteral:
             raise
-        except ParseError as error:
+        except _PARSE_FAILURES as caught:
+            error = _as_parse_error(caught)
             rewritten = sql
             for rewrite in (
                 _rewrite_raw_bytes, _rewrite_verbatim_calls, _rewrite_model_arguments, _rewrite_pipe_operators, _rewrite_pipe_with,
@@ -721,8 +746,11 @@ def install() -> None:
                     raise error from None
             marked = _mark_table_arguments(_merge_table_function_kind(tokens))
             if len(marked) == len(tokens) and all(a is b for a, b in zip(marked, tokens)):
-                raise
-            return list(_resolve_markers(_resolve_table_arguments(self.parser(**opts).parse(marked, sql))))
+                raise error from None
+            try:
+                return list(_resolve_markers(_resolve_table_arguments(self.parser(**opts).parse(marked, sql))))
+            except _PARSE_FAILURES as caught:
+                raise _as_parse_error(caught) from None
 
     BigQuery.parse = parse_with_table_arguments
     # Releases differ in how a generator finds its handler (a method named after the class, a per-class table, a cache of both),
