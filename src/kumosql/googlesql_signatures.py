@@ -161,6 +161,21 @@ _fixed(GType.array(FLOAT64), "LAX_DOUBLE_ARRAY", "DOUBLE_ARRAY", "FLOAT64_ARRAY"
 _fixed(GType.array(GEOGRAPHY), "ST_DUMP", "ST_DUMPPOINTS", "ST_INTERIORRINGS")
 _fixed(GType.struct([("xmin", FLOAT64), ("ymin", FLOAT64), ("xmax", FLOAT64), ("ymax", FLOAT64)]),
        "ST_BOUNDINGBOX", "ST_EXTENT")
+# KLL sketches (kll_functions.md): INIT and MERGE_PARTIAL give the sketch, MERGE and EXTRACT the quantiles or one point.
+for _kind, _type in (("INT64", INT64), ("DOUBLE", FLOAT64), ("FLOAT64", FLOAT64)):
+    FIXED[f"KLL_QUANTILES.INIT_{_kind}"] = BYTES
+    for _verb in ("MERGE", "EXTRACT"):
+        FIXED[f"KLL_QUANTILES.{_verb}_{_kind}"] = GType.array(_type)
+        FIXED[f"KLL_QUANTILES.{_verb}_POINT_{_kind}"] = _type
+FIXED["KLL_QUANTILES.INIT_UINT64"] = BYTES
+FIXED["KLL_QUANTILES.MERGE_PARTIAL"] = BYTES
+for _verb in ("MERGE", "EXTRACT"):
+    FIXED[f"KLL_QUANTILES.{_verb}_UINT64"] = GType.array(GType("UINT64"))
+    FIXED[f"KLL_QUANTILES.{_verb}_POINT_UINT64"] = GType("UINT64")
+_fixed(BOOL, "AI.IF", "REGEXP_MATCH")
+_fixed(FLOAT64, "AI.SCORE")
+_fixed(STRING, "AEAD.DECRYPT_STRING", "DETERMINISTIC_DECRYPT_STRING", "ZSTD_DECOMPRESS_TO_STRING")
+_fixed(BYTES, "BIT_CAST_TO_BYTES", "ZSTD_COMPRESS", "ZSTD_DECOMPRESS_TO_BYTES")
 # GoogleSQL-only types, exact as documented (json_functions.md, bit_functions.md).
 for _name, _type in (("INT32", "INT32"), ("UINT32", "UINT32"), ("UINT64", "UINT64"), ("FLOAT", "FLOAT32"),
                      ("LAX_INT32", "INT32"), ("LAX_UINT32", "UINT32"), ("LAX_UINT64", "UINT64"),
