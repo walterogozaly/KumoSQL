@@ -37,6 +37,7 @@ Because the firing is checked on the tree the rule saw, a difference is a bug in
 ```shell
 python tools/rule_fuzz.py run --corpus gen --seed 1 --count 1500 --jobs 4 --reduce 3 --out run.json
 python tools/rule_fuzz.py run --corpus evals --jobs 4 --out evals.json
+python tools/rule_fuzz.py run --corpus target:scalar_folding --seed 31 --count 11 --jobs 4 --reduce 0
 python tools/rule_fuzz.py report run.json                   # fired / checked / bugs per rule
 python tools/rule_fuzz.py show run.json --rule distinct_rules
 python tools/rule_fuzz.py query "SELECT ..." --schema t:id=INT64,x=INT64 --key t:id
