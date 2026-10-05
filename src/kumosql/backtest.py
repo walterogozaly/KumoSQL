@@ -145,20 +145,40 @@ def score(
     resamples: int = 2000,
     seed: int = 7,
     level: float = 0.95,
+    groups: Sequence[object] | None = None,
+    skip: Sequence[str] = (),
 ) -> dict:
-    """Rank and calibration metrics with percentile bootstrap intervals."""
+    """Rank and calibration metrics with percentile bootstrap intervals.
+
+    ``groups`` labels each change with the thing it shares with others (the query it speeds up, the
+    view it stores). When given, whole groups are resampled instead of single changes, so repeated
+    measurements of one query do not make an interval look narrower than the evidence is.
+    ``skip`` names metrics to leave out (Kendall's tau costs quadratic time per resample, which is
+    too slow for thousands of changes).
+    """
 
     if len(predicted) != len(measured):
         raise ValueError("predicted and measured must have the same length")
+    if groups is not None and len(groups) != len(predicted):
+        raise ValueError("groups must label every change")
     n = len(predicted)
-    metrics = dict(METRICS)
+    members: list[list[int]] = []
+    if groups is not None:
+        by_group: dict[object, list[int]] = {}
+        for i, g in enumerate(groups):
+            by_group.setdefault(g, []).append(i)
+        members = list(by_group.values())
+    metrics = {name: fn for name, fn in METRICS.items() if name not in skip}
     metrics[f"top_{k}_precision"] = lambda p, m: top_k_precision(p, m, k)
     point = {name: fn(predicted, measured) for name, fn in metrics.items()}
     rng = random.Random(seed)
     samples: dict[str, list[float]] = {name: [] for name in metrics}
-    if n >= 3:
+    if n >= 3 and (groups is None or len(members) >= 2):
         for _ in range(resamples):
-            idx = [rng.randrange(n) for _ in range(n)]
+            if groups is None:
+                idx = [rng.randrange(n) for _ in range(n)]
+            else:
+                idx = [i for _ in members for i in members[rng.randrange(len(members))]]
             p = [predicted[i] for i in idx]
             m = [measured[i] for i in idx]
             for name, fn in metrics.items():
@@ -166,7 +186,10 @@ def score(
                 if value is not None and not math.isnan(value):
                     samples[name].append(value)
     low, high = (1 - level) / 2, 1 - (1 - level) / 2
-    out: dict = {"changes": n, "k": k, "level": level, "resamples": resamples if n >= 3 else 0}
+    resampled = n >= 3 and (groups is None or len(members) >= 2)
+    out: dict = {"changes": n, "k": k, "level": level, "resamples": resamples if resampled else 0}
+    if groups is not None:
+        out["groups"] = len(members)
     for name in metrics:
         values = sorted(samples[name])
         interval = [_percentile(values, low), _percentile(values, high)] if values else None

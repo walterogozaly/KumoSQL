@@ -22,7 +22,7 @@ from __future__ import annotations
 from sqlglot import exp
 
 from .estimator import Estimator
-from .planner import optimize, plan_cost
+from .planner import Plan, optimize, plan_cost
 from .query import Edge, JoinQuery
 
 VIEW = "__stored_view__"
@@ -49,13 +49,42 @@ def _width(query: JoinQuery, alias: str) -> int:
     return max(len(columns_used(query, alias)), 1)
 
 
-def query_features(query: JoinQuery, estimator: Estimator, rows: dict[str, float]) -> dict[str, float]:
-    """Scan and join work of ``query`` as written."""
+#: A hash table with more build rows than this no longer fits in cache, and each matching probe row gets dearer.
+BIG_BUILD_ROWS = 131_072
+
+
+def hash_join_work(plan: Plan) -> dict[str, float]:
+    """What the hash joins of a plan do, the right input being the build side (the smaller one).
+
+    ``build`` and ``probe`` are the rows entering each join's build and probe side, ``out`` the rows
+    each join produces (their sum is C_out), ``out_big_build`` the part of ``out`` produced by
+    joins whose build side is over :data:`BIG_BUILD_ROWS` rows, ``peak`` the largest join output
+    and ``joins`` the number of joins.
+    """
+
+    work = {"build": 0.0, "probe": 0.0, "out": 0.0, "out_big_build": 0.0, "peak": 0.0, "joins": 0.0}
+    for join in plan.joins():
+        build, probe = sorted((join.left.card, join.right.card))
+        work["build"] += build
+        work["probe"] += probe
+        work["out"] += join.card
+        work["peak"] = max(work["peak"], join.card)
+        work["joins"] += 1
+        if build > BIG_BUILD_ROWS:
+            work["out_big_build"] += join.card
+    return work
+
+
+def query_features(query: JoinQuery, estimator: Estimator, rows: dict[str, float], *, plan_work: bool = False) -> dict[str, float]:
+    """Scan and join work of ``query`` as written (with ``plan_work``, the hash-join work of the plan too)."""
 
     card = lambda subset: estimator.estimate(query, subset)  # noqa: E731
     plan = optimize(query, card)
     scan = sum(rows[table] * _width(query, alias) for alias, table in query.tables.items())
-    return {"scan": float(scan), "join": float(plan_cost(plan, card)), "query": 1.0}
+    work = {"scan": float(scan), "join": float(plan_cost(plan, card)), "query": 1.0}
+    if plan_work:
+        work.update(hash_join_work(plan))
+    return work
 
 
 def contract(query: JoinQuery, group: frozenset[str]) -> JoinQuery:
@@ -78,6 +107,8 @@ def query_over_view_features(
     estimator: Estimator,
     rows: dict[str, float],
     view_rows: float,
+    *,
+    plan_work: bool = False,
 ) -> dict[str, float]:
     """Scan and join work of ``query`` when the join of ``group`` is read from a stored view of ``view_rows`` rows."""
 
@@ -92,7 +123,10 @@ def query_over_view_features(
     plan = optimize(contracted, card)
     width = max(sum(_width(query, alias) for alias in group), 1)
     scan = sum(rows[table] * _width(query, alias) for alias, table in query.tables.items() if alias not in group)
-    return {"scan": float(scan + view_rows * width), "join": float(plan_cost(plan, card)), "query": 1.0}
+    work = {"scan": float(scan + view_rows * width), "join": float(plan_cost(plan, card)), "query": 1.0}
+    if plan_work:
+        work.update(hash_join_work(plan))
+    return work
 
 
 def build_features(view: JoinQuery, estimator: Estimator, rows: dict[str, float]) -> dict[str, float]:
@@ -111,4 +145,4 @@ def build_features(view: JoinQuery, estimator: Estimator, rows: dict[str, float]
     }
 
 
-__all__ = ["VIEW", "build_features", "columns_used", "contract", "query_features", "query_over_view_features"]
+__all__ = ["BIG_BUILD_ROWS", "VIEW", "build_features", "hash_join_work", "columns_used", "contract", "query_features", "query_over_view_features"]
