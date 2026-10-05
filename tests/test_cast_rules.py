@@ -7,8 +7,8 @@ from kumosql.algebraic_equivalence import prove_equivalent_algebraic
 from kumosql.cast_rules import fold_casts_and_constant_cases
 from kumosql.duckdb_load import run_unoptimized
 
-TYPES = {"t": {"i": "int", "b": "bigint", "s": "varchar(20)", "d": "date", "n": "decimal(5,2)", "ti": "tinyint"}}
-SCHEMA = {"t": ["i", "b", "s", "d", "n", "ti"], "u": ["k", "x"], "v": ["k", "y"]}
+TYPES = {"t": {"i": "int", "b": "bigint", "s": "varchar(20)", "d": "date", "n": "decimal(5,2)", "ti": "tinyint", "ts": "timestamp(6)"}}
+SCHEMA = {"t": ["i", "b", "s", "d", "n", "ti", "ts"], "u": ["k", "x"], "v": ["k", "y"]}
 
 
 def _fold(sql, dialect="mysql"):
@@ -55,6 +55,15 @@ def test_literals_fold_only_when_they_fit_exactly():
 
 def test_nested_identical_casts_collapse():
     assert _fold("SELECT CAST(CAST(s AS DATE) AS DATE) FROM t") == "SELECT CAST(s AS DATE) FROM t"
+
+
+def test_string_and_timestamp_casts_fold_only_without_truncation_or_rounding():
+    assert _fold("SELECT CAST(s AS VARCHAR(40)) FROM t") == "SELECT s FROM t"
+    assert _fold("SELECT CAST(s AS TEXT) FROM t") == "SELECT s FROM t"
+    assert _fold("SELECT CAST(s AS VARCHAR(10)) FROM t") is None
+    assert _fold("SELECT CAST(ts AS TIMESTAMP(6)) FROM t") == "SELECT ts FROM t"
+    assert _fold("SELECT CAST(ts AS TIMESTAMP(3)) FROM t") is None
+    assert _fold("SELECT CAST(ts AS TIMESTAMP) FROM t") is None
 
 
 def test_constant_case_conditions():

@@ -2,7 +2,7 @@
 
 QED (https://github.com/qed-solver/prover, MIT, VLDB 2024) ships about 440
 query pairs from Apache Calcite's optimizer tests as relational-algebra JSON.
-``tools/qed_to_sql.py`` turns 375 of them into SQL (``tests/fixtures/qed``;
+``tools/qed_to_sql.py`` turns 390 of them into SQL (``tests/fixtures/qed``;
 the rest are skipped with a reason, never guessed). For every pair this
 reports ``proved``, ``different`` (not proved, and a random DuckDB database
 shows the two queries disagree; these leave the score's denominator, since

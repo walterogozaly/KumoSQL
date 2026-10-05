@@ -1,26 +1,20 @@
 {"name": "testAggregateCaseToFilter", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
-{"name": "testAggregateDynamicFunction", "reason": "unsupported operator CURRENT_TIMESTAMP"}
-{"name": "testAggregateJoinRemove10", "reason": "multi-column COUNT(DISTINCT)"}
 {"name": "testAggregateRemove1", "reason": "unsupported aggregate GROUPING"}
 {"name": "testAnyInProjectNullable", "reason": "unsupported aggregate LITERAL_AGG"}
-{"name": "testCastInAggregateExpandDistinctAggregatesRule", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
+{"name": "testCastInAggregateExpandDistinctAggregatesRule", "reason": "aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query)"}
 {"name": "testCastInAggregateReduceFunctions", "reason": "integer-typed STDDEV/VAR aggregate (Calcite integer arithmetic not modelled)"}
-{"name": "testDistinctCount2", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
+{"name": "testDistinctCount2", "reason": "aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query)"}
 {"name": "testDistinctCount3", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
-{"name": "testDistinctCountGroupingSets1", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
-{"name": "testDistinctCountGroupingSets2", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
-{"name": "testDistinctCountMixed", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
-{"name": "testDistinctCountMixed2", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
-{"name": "testDistinctCountMixedJoin", "reason": "multi-column COUNT(DISTINCT)"}
-{"name": "testDistinctCountMultiple", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
-{"name": "testDistinctCountMultipleNoGroup", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
-{"name": "testDistinctCountMultipleViaJoin", "reason": "multi-column COUNT(DISTINCT)"}
-{"name": "testDistinctCountWithoutGroupBy", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
+{"name": "testDistinctCountGroupingSets1", "reason": "aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query)"}
+{"name": "testDistinctCountGroupingSets2", "reason": "aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query)"}
+{"name": "testDistinctCountMixed", "reason": "aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query)"}
+{"name": "testDistinctCountMixed2", "reason": "aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query)"}
+{"name": "testDistinctCountMultiple", "reason": "aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query)"}
+{"name": "testDistinctCountMultipleNoGroup", "reason": "aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query)"}
+{"name": "testDistinctCountWithoutGroupBy", "reason": "aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query)"}
 {"name": "testDistinctWithDiffFiltersAndSameGroupSet", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
-{"name": "testDistinctWithFilterAndGroupBy", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
-{"name": "testDistinctWithFilterWithoutGroupBy", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
-{"name": "testDistinctWithMultipleInputs", "reason": "multi-column COUNT(DISTINCT)"}
-{"name": "testDistinctWithMultipleInputsAndGroupby", "reason": "multi-column COUNT(DISTINCT)"}
+{"name": "testDistinctWithFilterAndGroupBy", "reason": "aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query)"}
+{"name": "testDistinctWithFilterWithoutGroupBy", "reason": "aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query)"}
 {"name": "testEmptyTable", "reason": "table is empty only by test-harness convention (not expressible in the schema)"}
 {"name": "testEmptyTableTransformsComplexQueryToSingleTableScan", "reason": "table is empty only by test-harness convention (not expressible in the schema)"}
 {"name": "testExpandFilterIn", "reason": "unsupported aggregate LITERAL_AGG"}
@@ -31,23 +25,14 @@
 {"name": "testExpandProjectInNullable", "reason": "unsupported aggregate LITERAL_AGG"}
 {"name": "testExpandProjectScalar", "reason": "unsupported aggregate SINGLE_VALUE"}
 {"name": "testJoinConditionPushdown4", "reason": "implicit cross-type comparison"}
-{"name": "testJoinProjectTransposeWindow", "reason": "window function"}
-{"name": "testProjectCorrelateTransposeRuleAntiCorrelate", "reason": "projection with no columns"}
-{"name": "testProjectCorrelateTransposeRuleSemiCorrelate", "reason": "projection with no columns"}
-{"name": "testProjectFilterTransposeRuleOnEmptyRowType", "reason": "projection with no columns"}
 {"name": "testProjectJoinTransposeItem", "reason": "column type ANY"}
-{"name": "testProjectSetOpTranspose", "reason": "window function"}
 {"name": "testPushAggregateThroughJoin7", "reason": "nondeterministic aggregate ANY_VALUE"}
 {"name": "testPushAggregateThroughJoin8", "reason": "unsupported aggregate SINGLE_VALUE"}
 {"name": "testPushCountFilterThroughUnion", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
-{"name": "testPushProjectWithOverPastJoin1", "reason": "window function"}
-{"name": "testPushProjectWithOverPastJoin2", "reason": "window function"}
-{"name": "testPushProjectWithOverPastJoin3", "reason": "window function"}
 {"name": "testReduceAggregateFunctionsByGroup", "reason": "nondeterministic aggregate ANY_VALUE"}
 {"name": "testReduceAllAggregateFunctions", "reason": "integer-typed STDDEV/VAR aggregate (Calcite integer arithmetic not modelled)"}
 {"name": "testReduceAverageAndSumWithNoReduceStddevAndVar", "reason": "integer-typed STDDEV/VAR aggregate (Calcite integer arithmetic not modelled)"}
 {"name": "testReduceAverageAndVarWithNoReduceStddev", "reason": "integer-typed STDDEV/VAR aggregate (Calcite integer arithmetic not modelled)"}
-{"name": "testReduceConstants", "reason": "unsupported operator ROW"}
 {"name": "testReduceDynamic", "reason": "unsupported operator USER"}
 {"name": "testReduceWithNonTypePredicate", "reason": "aggregate WITHIN DISTINCT (not represented in QED's IR)"}
 {"name": "testSortJoinTranspose6", "reason": "LIMIT/OFFSET without ORDER BY (nondeterministic)"}
@@ -58,12 +43,12 @@
 {"name": "testSpatialDWithinToHilbertNegative", "reason": "unsupported operator ST_POINT"}
 {"name": "testSpatialDWithinToHilbertZero", "reason": "unsupported operator ST_POINT"}
 {"name": "testSpatialReduce", "reason": "unsupported operator ST_POINT"}
-{"name": "testWithinDistinct", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
-{"name": "testWithinDistinctCountDistinct", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
-{"name": "testWithinDistinctFilteredAggs", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
-{"name": "testWithinDistinctFilteredAggsSameFilter", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
+{"name": "testWithinDistinct", "reason": "aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query)"}
+{"name": "testWithinDistinctCountDistinct", "reason": "aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query)"}
+{"name": "testWithinDistinctFilteredAggs", "reason": "aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query)"}
+{"name": "testWithinDistinctFilteredAggsSameFilter", "reason": "aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query)"}
 {"name": "testWithinDistinctFilteredAggsUniformDistinctKeys", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
 {"name": "testWithinDistinctFilteredAggsUniformDistinctKeysNoThrow", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
-{"name": "testWithinDistinctNoThrow", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
+{"name": "testWithinDistinctNoThrow", "reason": "aggregate FILTER clause and grouping sets (neither is represented in QED's IR; QED proves the plain GROUP BY reading, not Calcite's query)"}
 {"name": "testWithinDistinctUniformDistinctKeys", "reason": "aggregate FILTER clause (not represented in QED's IR)"}
 {"name": "testWithinDistinctUniformDistinctKeysNoThrow", "reason": "aggregate WITHIN DISTINCT (not represented in QED's IR)"}

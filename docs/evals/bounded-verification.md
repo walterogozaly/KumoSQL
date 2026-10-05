@@ -65,7 +65,7 @@ Each run first takes the eval's own baseline verdict (unbounded prover and execu
 
 ## Results
 
-Measured 2026-10-02 at 3 rows per table.
+Measured 2026-10-02 at 3 rows per table; QED Calcite rerun 2026-10-06 after converter coverage expanded.
 
 | Suite | Pairs | Bounded, 3 rows | Different (replayed) | Timeout | Unsupported | Unknown |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -73,7 +73,7 @@ Measured 2026-10-02 at 3 rows per table.
 | SQLSolver Spark SQL | 127 | 106 | 0 | 0 | 20 | 1 |
 | SQLSolver TPC-H | 22 | 7 | 0 | 4 | 11 | 0 |
 | SQLSolver TPC-C | 19 | 19 | 0 | 0 | 0 | 0 |
-| QED Calcite | 375 | 363 | 0 | 3 | 9 | 0 |
+| QED Calcite | 390 | 361 | 0 | 3 | 26 | 0 |
 | R-Bot Calcite | 45 | 23 | 0 | 0 | 22 | 0 |
 | Cosette examples | 60 | 52 | 6 | 0 | 2 | 0 |
 | SPES Calcite | 34 | 26 | 3 | 0 | 5 | 0 |

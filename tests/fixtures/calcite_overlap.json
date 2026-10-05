@@ -31,9 +31,9 @@
   },
   "qed": {
    "file": "tests/fixtures/qed/qed_calcite_pairs.jsonl",
-   "read_from": "origin/claude/rbot-prover-1 at 1cfce4a0468b2b0fca224676089fbd2727485949",
+   "read_from": "working tree at b72b9dd7e04644162ccf22ef761c0381f7f66e36",
    "upstream": "https://github.com/qed-solver/prover",
-   "commit": "31f4b6c271440942ecaca1e1111d4beeabf1f14c"
+   "commit": "9e9c2621d6d922007694a72f9cc2d5ed0de2eccd"
   },
   "verieql": {
    "present": false,
@@ -58,25 +58,25 @@
   "spes_only": 34,
   "cosette": 33,
   "rbot": 45,
-  "qed": 375
+  "qed": 390
  },
- "unique_names_all_corpora": 430,
+ "unique_names_all_corpora": 444,
  "pairwise_overlap": {
   "sqlsolver&spes": 232,
   "sqlsolver&cosette_json": 232,
   "sqlsolver&spes_only": 34,
   "sqlsolver&cosette": 33,
   "sqlsolver&rbot": 21,
-  "sqlsolver&qed": 181,
+  "sqlsolver&qed": 182,
   "spes&cosette_json": 232,
   "spes&spes_only": 34,
   "spes&cosette": 33,
   "spes&rbot": 21,
-  "spes&qed": 181,
+  "spes&qed": 182,
   "cosette_json&spes_only": 34,
   "cosette_json&cosette": 33,
   "cosette_json&rbot": 21,
-  "cosette_json&qed": 181,
+  "cosette_json&qed": 182,
   "spes_only&cosette": 7,
   "spes_only&rbot": 4,
   "spes_only&qed": 29,
@@ -91,7 +91,7 @@
   "spes_only": 0,
   "cosette": 0,
   "rbot": 4,
-  "qed": 174
+  "qed": 188
  },
  "scored_before_this_change": [
   "sqlsolver",
@@ -125,6 +125,9 @@
    "cosette_json",
    "qed"
   ],
+  "testAggregateDynamicFunction": [
+   "qed"
+  ],
   "testAggregateExtractProjectRule": [
    "qed"
   ],
@@ -142,6 +145,9 @@
    "qed"
   ],
   "testAggregateJoinRemove1": [
+   "qed"
+  ],
+  "testAggregateJoinRemove10": [
    "qed"
   ],
   "testAggregateJoinRemove11": [
@@ -350,6 +356,9 @@
    "spes",
    "cosette_json"
   ],
+  "testDistinctCountMixedJoin": [
+   "qed"
+  ],
   "testDistinctCountMultiple": [
    "sqlsolver",
    "spes",
@@ -359,6 +368,9 @@
    "sqlsolver",
    "spes",
    "cosette_json"
+  ],
+  "testDistinctCountMultipleViaJoin": [
+   "qed"
   ],
   "testDistinctCountWithExpandSumType": [
    "rbot",
@@ -393,6 +405,12 @@
    "spes",
    "cosette_json",
    "rbot",
+   "qed"
+  ],
+  "testDistinctWithMultipleInputs": [
+   "qed"
+  ],
+  "testDistinctWithMultipleInputsAndGroupby": [
    "qed"
   ],
   "testEmptyAggregate": [
@@ -734,6 +752,9 @@
   "testJoinProjectTranspose8": [
    "qed"
   ],
+  "testJoinProjectTransposeWindow": [
+   "qed"
+  ],
   "testJoinPushTransitivePredicatesRule2": [
    "qed"
   ],
@@ -880,7 +901,16 @@
   "testProjectAggregateMergeSum0AndSum": [
    "qed"
   ],
+  "testProjectCorrelateTransposeRuleAntiCorrelate": [
+   "qed"
+  ],
   "testProjectCorrelateTransposeRuleLeftCorrelate": [
+   "qed"
+  ],
+  "testProjectCorrelateTransposeRuleSemiCorrelate": [
+   "qed"
+  ],
+  "testProjectFilterTransposeRuleOnEmptyRowType": [
    "qed"
   ],
   "testProjectJoinRemove1": [
@@ -893,6 +923,9 @@
    "qed"
   ],
   "testProjectJoinRemove7": [
+   "qed"
+  ],
+  "testProjectSetOpTranspose": [
    "qed"
   ],
   "testPullAggregateThroughUnion": [
@@ -1404,6 +1437,15 @@
   "testPushProjectWithIsNotDistinctFromPastJoin": [
    "qed"
   ],
+  "testPushProjectWithOverPastJoin1": [
+   "qed"
+  ],
+  "testPushProjectWithOverPastJoin2": [
+   "qed"
+  ],
+  "testPushProjectWithOverPastJoin3": [
+   "qed"
+  ],
   "testPushSemiJoinConditions": [
    "qed"
   ],
@@ -1530,7 +1572,8 @@
   "testReduceConstants": [
    "sqlsolver",
    "spes",
-   "cosette_json"
+   "cosette_json",
+   "qed"
   ],
   "testReduceConstants2": [
    "sqlsolver",

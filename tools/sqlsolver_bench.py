@@ -120,8 +120,10 @@ def _duck_type(column: Column) -> str:
         return "VARCHAR"
     if base in {"DECIMAL", "DOUBLE", "FLOAT", "NUMERIC"}:
         return "DOUBLE"
-    if base in {"DATE", "TIMESTAMP", "DATETIME"}:
+    if base == "DATE":
         return "DATE"
+    if base in {"TIMESTAMP", "DATETIME"}:
+        return "TIMESTAMP"  # a DATE column would make CAST(x AS TIMESTAMP) change the value, a false counterexample
     return "BIGINT"
 
 
@@ -155,7 +157,7 @@ def random_rows(table: Table, rng: random.Random, numbers: list | None = None) -
     key_columns = {c for key in ([table.primary_key] if table.primary_key else []) + list(table.unique) for c in key}
     for column in table.columns:
         kind = _duck_type(column)
-        domain = {"VARCHAR": ["a", "b", "c"], "DATE": DATES}.get(kind, numbers or [0, 1, 2, 3])
+        domain = {"VARCHAR": ["a", "b", "c"], "DATE": DATES, "TIMESTAMP": DATES}.get(kind, numbers or [0, 1, 2, 3])
         if numbers is not None and column.name not in key_columns and rng.random() < 0.5:
             domain = rng.sample(domain, min(len(domain), rng.choice([1, 2])))
         domains[column.name] = domain
@@ -356,7 +358,7 @@ def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60
     return targeted_differ(left_sql, right_sql, used)
 
 
-_TARGETED_TYPES = {"VARCHAR": "STRING", "DOUBLE": "FLOAT64", "DATE": "DATE", "BIGINT": "INT64"}
+_TARGETED_TYPES = {"VARCHAR": "STRING", "DOUBLE": "FLOAT64", "DATE": "DATE", "TIMESTAMP": "TIMESTAMP", "BIGINT": "INT64"}
 
 
 def targeted_differ(left_sql: str, right_sql: str, used: list[Table]):

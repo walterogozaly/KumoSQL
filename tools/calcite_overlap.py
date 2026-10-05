@@ -115,7 +115,7 @@ def main() -> None:
                  "upstream": "https://github.com/curtis-sun/LLM4Rewrite"},
         "qed": {"file": QED_PATH, "read_from": qed_from,
                 "upstream": "https://github.com/qed-solver/prover",
-                "commit": "31f4b6c271440942ecaca1e1111d4beeabf1f14c"},
+                "commit": "9e9c2621d6d922007694a72f9cc2d5ed0de2eccd"},
         "verieql": {"present": False,
                     "note": "no VeriEQL fixture under tests/fixtures on origin/master"},
     }

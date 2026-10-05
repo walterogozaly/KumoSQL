@@ -3,7 +3,7 @@
 SQL pairs converted from the Calcite test corpus of the QED prover.
 
 * Source: https://github.com/qed-solver/prover, `tests/calcite/*.json`
-* Commit: `31f4b6c271440942ecaca1e1111d4beeabf1f14c`
+* Commit: `9e9c2621d6d922007694a72f9cc2d5ed0de2eccd`
 * Licence: MIT, (c) 2021 The QED Team (see `LICENSE`)
 * Converter: `tools/qed_to_sql.py` (regenerate with
   `python tools/qed_to_sql.py --src <prover>/tests/calcite`)
@@ -24,29 +24,24 @@ inequivalent pairs.
 
 ## Result
 
-444 files: **375 converted**, 69 skipped.
+444 files: **390 converted**, 54 skipped.
 
 | skipped | reason |
 | ---: | --- |
-| 23 | aggregate FILTER clause (not represented in QED's IR) |
+| 16 | aggregate FILTER and grouping sets (neither is represented in QED's IR) |
+| 7 | aggregate FILTER clause (not represented in QED's IR) |
 | 7 | unsupported operator ST_POINT |
-| 5 | multi-column COUNT(DISTINCT) |
 | 5 | unsupported aggregate LITERAL_AGG |
-| 5 | window function |
 | 4 | integer-typed STDDEV/VAR aggregate (Calcite integer arithmetic not modelled) |
 | 4 | unsupported aggregate SINGLE_VALUE |
-| 3 | projection with no columns |
 | 2 | table is empty only by test-harness convention (not expressible in the schema) |
 | 2 | nondeterministic aggregate ANY_VALUE |
 | 2 | aggregate WITHIN DISTINCT (not represented in QED's IR) |
-| 1 | unsupported operator CURRENT_TIMESTAMP |
 | 1 | unsupported aggregate GROUPING |
 | 1 | implicit cross-type comparison |
 | 1 | column type ANY |
-| 1 | unsupported operator ROW |
 | 1 | unsupported operator USER |
 | 1 | LIMIT/OFFSET without ORDER BY (nondeterministic) |
-
 (The first matching reason is recorded, so a case that has several is counted once.)
 
 ## Conversion notes
@@ -60,10 +55,14 @@ inequivalent pairs.
 * Subqueries (EXISTS, IN, scalar, ANY/ALL) and the right side of `correlate`
   follow QED's convention: ordinals count the enclosing relation's columns first,
   then the subquery's own input. These become correlated references
-  (`LATERAL` for INNER/LEFT correlate, `[NOT] EXISTS` for SEMI/ANTI).
+  (`LATERAL` for INNER/LEFT correlate, [NOT] EXISTS for SEMI/ANTI).
 * `union` is UNION ALL, `distinct` is SELECT DISTINCT, `intersect` and `except`
   are the set forms (the Calcite plans say `all=[false]`). SEMI/ANTI joins are
-  `[NOT] EXISTS`.
+  [NOT] EXISTS. Multi-column COUNT(DISTINCT ...) and modeled window functions
+  with supported OVER clauses are emitted directly.
+* `CURRENT_TIMESTAMP` is emitted as a dynamic SQL expression. A zero-column
+  projection is represented only when its parent observes row cardinality, and
+  Calcite ROW fields are flattened to their component columns.
 * `SEARCH`/Sarg is expanded to comparisons; `IS NOT DISTINCT FROM` is `<=>`;
   `||` is `CONCAT`; integer `/` is `DIV`; AVG over an integer type is
   `SUM DIV COUNT` (Calcite types it as an integer); `+ - *` on integers cast
@@ -74,18 +73,18 @@ inequivalent pairs.
 * Keys: the first key whose columns are all NOT NULL is `PRIMARY KEY`, the rest
   are `UNIQUE`.
 * Skipped, never guessed: aggregate FILTER / WITHIN DISTINCT (the IR drops them;
-  detected from the `help` plan text), window functions, GROUPING, LITERAL_AGG,
-  SINGLE_VALUE, ANY_VALUE, geospatial and dynamic functions, struct (`ANY`)
-  columns, implicit cross-type comparisons, tables that are empty only by
-  Calcite test-harness convention, LIMIT without ORDER BY, and anything else
-  the converter does not model exactly.
+  detected from the `help` plan text), GROUPING, LITERAL_AGG, SINGLE_VALUE,
+  ANY_VALUE, geospatial functions, struct (`ANY`) columns, implicit cross-type
+  comparisons, tables that are empty only by Calcite test-harness convention,
+  LIMIT without ORDER BY, and anything else the converter does not model exactly.
+  Grouping sets are skipped when their plan also has a FILTER clause that QED's
+  IR omits.
 
 ## Validation
 
 `tools/validate_qed_pairs.py` creates each case's schema in DuckDB (sqlglot
 transpiles MySQL to DuckDB), fills it with random small databases that respect
 NOT NULL and keys (NULLs sort first), runs both sides and compares the result
-multisets. Latest run (8 databases per case): all converted cases run; both sides
-agree on every database for all but one case, which DuckDB cannot execute
-(`testExpandJoinExists`: "Cannot perform non-inner join on subquery"). This is
-a consistency check of the conversion, not a proof of equivalence.
+multisets. The proof benchmark also executes each pair on random DuckDB
+databases; it reports 371 proved, 19 unknown, 0 different, and 0 wrong across
+the 390 converted cases. This checks conversion consistency, not equivalence.

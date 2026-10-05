@@ -44,3 +44,29 @@ def test_duckdb_runs_a_sample():
             con.execute(stmt)
         for key in ("sql_a", "sql_b"):
             con.execute(sqlglot.transpile(case[key], read="mysql", write="duckdb")[0]).fetchall()
+
+
+def test_newly_supported_converter_shapes_are_present():
+    by_name = {case["name"]: case for case in CASES}
+    for name in (
+        "testJoinProjectTransposeWindow",
+        "testPushProjectWithOverPastJoin1",
+        "testAggregateDynamicFunction",
+        "testAggregateJoinRemove10",
+        "testProjectCorrelateTransposeRuleAntiCorrelate",
+        "testProjectCorrelateTransposeRuleSemiCorrelate",
+        "testProjectFilterTransposeRuleOnEmptyRowType",
+        "testReduceConstants",
+    ):
+        assert name in by_name
+    assert "OVER (" in by_name["testPushProjectWithOverPastJoin1"]["sql_a"]
+    assert "CURRENT_TIMESTAMP" in by_name["testAggregateDynamicFunction"]["sql_a"]
+    assert "COUNT(DISTINCT" in by_name["testAggregateJoinRemove10"]["sql_a"]
+    assert "ROW" not in by_name["testReduceConstants"]["sql_a"]
+
+
+def test_grouping_sets_with_lost_filter_stay_skipped():
+    skipped = {json.loads(line)["name"]: json.loads(line)["reason"] for line in (FIXTURES / "qed_calcite_skipped.jsonl").read_text().splitlines()}
+    reason = skipped["testDistinctCountGroupingSets1"]
+    assert "FILTER" in reason
+    assert "grouping sets" in reason
