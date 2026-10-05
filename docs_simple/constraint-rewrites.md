@@ -20,7 +20,7 @@ JOIN customers AS c ON o.customer_id = c.id
 
 You might want to read only `orders`. That is valid under the relevant declared guarantees: every order has a non-NULL customer ID, it refers to a customer that exists, and `customers.id` is unique.
 
-Without a matching customer, the join drops an order. With two matching customers, it duplicates the order. A nullable customer ID can also be dropped by the join. Reading other customer attributes or applying extra parent filters can prevent the simplification.
+Without a matching customer, the join drops an order. With two matching customers, it duplicates the order. A nullable customer ID can also be dropped by the join. The simplification requires the `ON` clause to contain only the key equality; extra conditions keep the join. If an earlier outer join may have padded the child row with NULLs, the declared NOT NULL fact does not apply to those rows. A `WHERE child.customer_id IS NOT NULL` filter can remove them before the join is simplified.
 
 ## Find which facts the proof needs
 
