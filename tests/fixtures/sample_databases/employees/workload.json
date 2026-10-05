@@ -1,0 +1,592 @@
+{
+ "about": "Employees workload for tools/sample_db_bench.py. origin 'upstream-view': the views of upstream employees.sql and objects.sql (name = upstream view name), adapted to BigQuery SQL as 'adaptation' says; 'upstream-procedure': the SELECTs of the upstream stored functions and of the show_departments procedure with their parameters bound to the values in 'adaptation'; 'upstream-test': the record-count comparison of upstream's test_employees_md5.sql, adapted (its checksum probes use MySQL session variables and are checked by the harness instead, not run through the rewrites); 'authored': written for this eval. The adapted upstream queries are adaptations of CC BY-SA 3.0 text and are shared under the same licence (see NOTICE.md).",
+ "queries": [
+  {
+   "id": "emp-view-dept-emp-latest-date",
+   "origin": "upstream-view",
+   "name": "dept_emp_latest_date",
+   "adaptation": "none beyond the MySQL statement's CREATE OR REPLACE VIEW header",
+   "sql": "SELECT emp_no, MAX(from_date) AS from_date, MAX(to_date) AS to_date\nFROM dept_emp\nGROUP BY emp_no",
+   "features": [
+    "aggregation on part of a key"
+   ]
+  },
+  {
+   "id": "emp-view-current-dept-emp",
+   "origin": "upstream-view",
+   "name": "current_dept_emp",
+   "adaptation": "the view dept_emp_latest_date it reads is inlined as a derived table (the harness keeps the loaded database read-only, so no view is created); the MySQL # comment is dropped",
+   "sql": "SELECT l.emp_no, d.dept_no, l.from_date, l.to_date\nFROM dept_emp AS d\nINNER JOIN (SELECT emp_no, MAX(from_date) AS from_date, MAX(to_date) AS to_date FROM dept_emp GROUP BY emp_no) AS l\n  ON d.emp_no = l.emp_no AND d.from_date = l.from_date AND l.to_date = d.to_date",
+   "features": [
+    "join with a derived aggregate",
+    "date keys"
+   ]
+  },
+  {
+   "id": "emp-view-v-full-employees",
+   "origin": "upstream-view",
+   "name": "v_full_employees",
+   "adaptation": "the stored function emp_dept_name(emp_no) (which calls emp_dept_id) is inlined as the correlated scalar subqueries of the two function bodies, MySQL's `set @max_date` bookkeeping dropped",
+   "sql": "SELECT e.emp_no, e.first_name, e.last_name, e.birth_date, e.gender, e.hire_date,\n  (SELECT dep.dept_name FROM departments AS dep WHERE dep.dept_no = (SELECT de.dept_no FROM dept_emp AS de WHERE de.emp_no = e.emp_no AND de.from_date = (SELECT MAX(de2.from_date) FROM dept_emp AS de2 WHERE de2.emp_no = e.emp_no) LIMIT 1)) AS department\nFROM employees AS e",
+   "features": [
+    "correlated scalar subquery",
+    "limit in a scalar subquery"
+   ]
+  },
+  {
+   "id": "emp-view-v-full-departments",
+   "origin": "upstream-view",
+   "name": "v_full_departments",
+   "adaptation": "the stored function current_manager(dept_no) (which calls emp_name) is inlined as the correlated scalar subqueries of the two function bodies",
+   "sql": "SELECT d.dept_no, d.dept_name, (SELECT CONCAT(e.first_name, ' ', e.last_name) FROM employees AS e WHERE e.emp_no = (SELECT m.emp_no FROM dept_manager AS m WHERE m.dept_no = d.dept_no AND m.from_date = (SELECT MAX(m2.from_date) FROM dept_manager AS m2 WHERE m2.dept_no = d.dept_no) LIMIT 1)) AS manager\nFROM departments AS d",
+   "features": [
+    "correlated scalar subquery",
+    "limit in a scalar subquery"
+   ]
+  },
+  {
+   "id": "emp-func-emp-dept-id",
+   "origin": "upstream-procedure",
+   "name": "emp_dept_id",
+   "adaptation": "the function body's two statements become one SELECT (the `set @max_date` bookkeeping is dropped); parameter employee_id bound to 10001",
+   "sql": "SELECT (SELECT de.dept_no FROM dept_emp AS de WHERE de.emp_no = 10001 AND de.from_date = (SELECT MAX(de2.from_date) FROM dept_emp AS de2 WHERE de2.emp_no = 10001) LIMIT 1) AS dept_no"
+  },
+  {
+   "id": "emp-func-emp-dept-name",
+   "origin": "upstream-procedure",
+   "name": "emp_dept_name",
+   "adaptation": "emp_dept_id is inlined; parameter employee_id bound to 10001",
+   "sql": "SELECT (SELECT dep.dept_name FROM departments AS dep WHERE dep.dept_no = (SELECT de.dept_no FROM dept_emp AS de WHERE de.emp_no = 10001 AND de.from_date = (SELECT MAX(de2.from_date) FROM dept_emp AS de2 WHERE de2.emp_no = 10001) LIMIT 1)) AS dept_name"
+  },
+  {
+   "id": "emp-func-emp-name",
+   "origin": "upstream-procedure",
+   "name": "emp_name",
+   "adaptation": "CONCAT(first_name, ' ', last_name) is BigQuery's too; parameter employee_id bound to 10001",
+   "sql": "SELECT CONCAT(first_name, ' ', last_name) AS name FROM employees WHERE emp_no = 10001"
+  },
+  {
+   "id": "emp-func-current-manager",
+   "origin": "upstream-procedure",
+   "name": "current_manager",
+   "adaptation": "emp_name is inlined; parameter dept_id bound to 'd005'",
+   "sql": "SELECT (SELECT CONCAT(e.first_name, ' ', e.last_name) FROM employees AS e WHERE e.emp_no = (SELECT m.emp_no FROM dept_manager AS m WHERE m.dept_no = 'd005' AND m.from_date = (SELECT MAX(m2.from_date) FROM dept_manager AS m2 WHERE m2.dept_no = 'd005') LIMIT 1)) AS manager"
+  },
+  {
+   "id": "emp-proc-show-departments",
+   "origin": "upstream-procedure",
+   "name": "show_departments",
+   "adaptation": "the procedure's temporary tables department_max_date and department_people become CTEs, v_full_departments is inlined; MySQL accepts the non-aggregated dept_name and manager under GROUP BY dept_no, BigQuery needs them in the GROUP BY",
+   "sql": "WITH department_max_date AS (\n  SELECT emp_no, MAX(from_date) AS dept_from_date, MAX(to_date) AS dept_to_date FROM dept_emp GROUP BY emp_no\n),\ndepartment_people AS (\n  SELECT dmd.emp_no, de.dept_no\n  FROM department_max_date AS dmd\n  INNER JOIN dept_emp AS de ON dmd.dept_from_date = de.from_date AND dmd.dept_to_date = de.to_date AND dmd.emp_no = de.emp_no\n),\nv_full_departments AS (\n  SELECT d.dept_no, d.dept_name, (SELECT CONCAT(e.first_name, ' ', e.last_name) FROM employees AS e WHERE e.emp_no = (SELECT m.emp_no FROM dept_manager AS m WHERE m.dept_no = d.dept_no AND m.from_date = (SELECT MAX(m2.from_date) FROM dept_manager AS m2 WHERE m2.dept_no = d.dept_no) LIMIT 1)) AS manager FROM departments AS d\n)\nSELECT v.dept_no, v.dept_name, v.manager, COUNT(*) AS employees\nFROM v_full_departments AS v\nINNER JOIN department_people AS p ON v.dept_no = p.dept_no\nGROUP BY v.dept_no, v.dept_name, v.manager",
+   "features": [
+    "cte",
+    "aggregation",
+    "date keys"
+   ]
+  },
+  {
+   "id": "emp-test-record-counts",
+   "origin": "upstream-test",
+   "name": "test_employees_md5.sql",
+   "adaptation": "the test script's comparison of expected_values with found_values (SELECT e.table_name, IF(e.recs = f.recs, 'OK', 'not ok')), with both tables as inline UNION ALL selects (expected counts from the script's INSERT INTO expected_values, found counts from its COUNT(*) subqueries) and IF written as CASE",
+   "sql": "SELECT e.table_name, CASE WHEN e.recs = f.recs THEN 'OK' ELSE 'not ok' END AS records_match\nFROM (\n  SELECT 'employees' AS table_name, 300024 AS recs UNION ALL SELECT 'departments', 9 UNION ALL SELECT 'dept_manager', 24\n  UNION ALL SELECT 'dept_emp', 331603 UNION ALL SELECT 'titles', 443308 UNION ALL SELECT 'salaries', 2844047\n) AS e\nINNER JOIN (\n  SELECT 'employees' AS table_name, COUNT(*) AS recs FROM employees UNION ALL SELECT 'departments', COUNT(*) FROM departments\n  UNION ALL SELECT 'dept_manager', COUNT(*) FROM dept_manager UNION ALL SELECT 'dept_emp', COUNT(*) FROM dept_emp\n  UNION ALL SELECT 'titles', COUNT(*) FROM titles UNION ALL SELECT 'salaries', COUNT(*) FROM salaries\n) AS f ON e.table_name = f.table_name\nORDER BY e.table_name",
+   "expect": [
+    [
+     "departments",
+     "OK"
+    ],
+    [
+     "dept_emp",
+     "OK"
+    ],
+    [
+     "dept_manager",
+     "OK"
+    ],
+    [
+     "employees",
+     "OK"
+    ],
+    [
+     "salaries",
+     "OK"
+    ],
+    [
+     "titles",
+     "OK"
+    ]
+   ],
+   "features": [
+    "union all",
+    "inline tables"
+   ]
+  },
+  {
+   "id": "emp-a01-distinct-on-key",
+   "origin": "authored",
+   "features": [
+    "distinct on a key"
+   ],
+   "sql": "SELECT DISTINCT emp_no, first_name, last_name FROM employees"
+  },
+  {
+   "id": "emp-a02-distinct-on-composite-key",
+   "origin": "authored",
+   "features": [
+    "distinct on a composite key with a date"
+   ],
+   "sql": "SELECT DISTINCT emp_no, from_date FROM salaries WHERE salary > 140000"
+  },
+  {
+   "id": "emp-a03-not-in-with-nulls",
+   "origin": "authored",
+   "features": [
+    "not in over a nullable column"
+   ],
+   "sql": "SELECT COUNT(*) AS n FROM dept_emp WHERE to_date NOT IN (SELECT to_date FROM titles WHERE emp_no <= 10100)"
+  },
+  {
+   "id": "emp-a04-in-subquery",
+   "origin": "authored",
+   "features": [
+    "in subquery"
+   ],
+   "sql": "SELECT emp_no, first_name, last_name FROM employees WHERE emp_no IN (SELECT emp_no FROM dept_manager)"
+  },
+  {
+   "id": "emp-a05-exists-correlated",
+   "origin": "authored",
+   "features": [
+    "exists"
+   ],
+   "sql": "SELECT e.emp_no, e.last_name FROM employees AS e WHERE EXISTS (SELECT 1 FROM dept_manager AS m WHERE m.emp_no = e.emp_no)"
+  },
+  {
+   "id": "emp-a06-not-exists-not-managers",
+   "origin": "authored",
+   "features": [
+    "not exists"
+   ],
+   "sql": "SELECT COUNT(*) AS n FROM employees AS e WHERE NOT EXISTS (SELECT 1 FROM dept_manager AS m WHERE m.emp_no = e.emp_no)"
+  },
+  {
+   "id": "emp-a07-cte-with-unused",
+   "origin": "authored",
+   "features": [
+    "cte",
+    "unused cte"
+   ],
+   "sql": "WITH unused AS (SELECT * FROM salaries),\nmanagers AS (SELECT emp_no, dept_no FROM dept_manager WHERE to_date = DATE '9999-01-01'),\nnames AS (SELECT emp_no, last_name FROM employees)\nSELECT m.dept_no, n.last_name\nFROM managers AS m\nJOIN names AS n ON n.emp_no = m.emp_no"
+  },
+  {
+   "id": "emp-a08-derived-table-trivial-predicate",
+   "origin": "authored",
+   "features": [
+    "derived table",
+    "trivial predicate",
+    "redundant parentheses"
+   ],
+   "sql": "SELECT t.emp_no, t.last_name\nFROM (SELECT emp_no, last_name, gender FROM employees WHERE 1 = 1 AND TRUE) AS t\nWHERE ((t.gender = 'F')) AND t.emp_no < 10100"
+  },
+  {
+   "id": "emp-a09-join-to-parent-on-fk",
+   "origin": "authored",
+   "features": [
+    "join on a not null foreign key"
+   ],
+   "sql": "SELECT s.emp_no, s.salary\nFROM salaries AS s\nJOIN employees AS e ON e.emp_no = s.emp_no\nWHERE s.salary > 140000"
+  },
+  {
+   "id": "emp-a10-left-join-on-parent-key",
+   "origin": "authored",
+   "features": [
+    "left join on a key"
+   ],
+   "sql": "SELECT d.emp_no, d.dept_no\nFROM dept_emp AS d\nLEFT JOIN departments AS dep ON dep.dept_no = d.dept_no\nWHERE d.emp_no < 10100"
+  },
+  {
+   "id": "emp-a11-two-hop-parents",
+   "origin": "authored",
+   "features": [
+    "two joins eliminated by foreign keys"
+   ],
+   "sql": "SELECT m.emp_no, m.dept_no\nFROM dept_manager AS m\nJOIN employees AS e ON e.emp_no = m.emp_no\nJOIN departments AS dep ON dep.dept_no = m.dept_no"
+  },
+  {
+   "id": "emp-a12-group-by-key-and-dependents",
+   "origin": "authored",
+   "features": [
+    "group by a key and its dependents"
+   ],
+   "sql": "SELECT e.emp_no, e.first_name, e.last_name, COUNT(*) AS raises, MAX(s.salary) AS top\nFROM employees AS e\nJOIN salaries AS s ON s.emp_no = e.emp_no\nWHERE e.emp_no < 20000\nGROUP BY e.emp_no, e.first_name, e.last_name"
+  },
+  {
+   "id": "emp-a13-having-on-group-key",
+   "origin": "authored",
+   "features": [
+    "having on the group key"
+   ],
+   "sql": "SELECT dept_no, COUNT(*) AS staff FROM dept_emp GROUP BY dept_no HAVING dept_no <> 'd009'"
+  },
+  {
+   "id": "emp-a14-filter-over-group-by",
+   "origin": "authored",
+   "features": [
+    "derived table",
+    "filter pushdown"
+   ],
+   "sql": "SELECT emp_no, top\nFROM (SELECT emp_no, MAX(salary) AS top FROM salaries GROUP BY emp_no) AS t\nWHERE emp_no < 10100"
+  },
+  {
+   "id": "emp-a15-union-all-genders",
+   "origin": "authored",
+   "features": [
+    "union all"
+   ],
+   "sql": "SELECT emp_no, last_name FROM employees WHERE gender = 'F' AND emp_no < 10100\nUNION ALL\nSELECT emp_no, last_name FROM employees WHERE gender = 'M' AND emp_no < 10100"
+  },
+  {
+   "id": "emp-a16-union-hire-and-birth-years",
+   "origin": "authored",
+   "features": [
+    "union"
+   ],
+   "sql": "SELECT EXTRACT(YEAR FROM hire_date) AS year FROM employees\nUNION DISTINCT\nSELECT EXTRACT(YEAR FROM birth_date) AS year FROM employees"
+  },
+  {
+   "id": "emp-a17-intersect-managers-and-staff",
+   "origin": "authored",
+   "features": [
+    "intersect"
+   ],
+   "sql": "SELECT emp_no FROM dept_manager\nINTERSECT DISTINCT\nSELECT emp_no FROM dept_emp"
+  },
+  {
+   "id": "emp-a18-except-unmanaged-departments",
+   "origin": "authored",
+   "features": [
+    "except"
+   ],
+   "sql": "SELECT dept_no FROM departments\nEXCEPT DISTINCT\nSELECT dept_no FROM dept_manager"
+  },
+  {
+   "id": "emp-a19-rank-salaries",
+   "origin": "authored",
+   "features": [
+    "window rank"
+   ],
+   "sql": "SELECT emp_no, from_date, salary, RANK() OVER (PARTITION BY emp_no ORDER BY salary DESC) AS salary_rank\nFROM salaries\nWHERE emp_no <= 10100"
+  },
+  {
+   "id": "emp-a20-running-total",
+   "origin": "authored",
+   "features": [
+    "window running sum",
+    "date order"
+   ],
+   "sql": "SELECT emp_no, from_date, salary, SUM(salary) OVER (PARTITION BY emp_no ORDER BY from_date) AS earned\nFROM salaries\nWHERE emp_no <= 10050"
+  },
+  {
+   "id": "emp-a21-raise-over-previous",
+   "origin": "authored",
+   "features": [
+    "window lag",
+    "date order"
+   ],
+   "sql": "SELECT emp_no, from_date, salary - LAG(salary) OVER (PARTITION BY emp_no ORDER BY from_date) AS raise\nFROM salaries\nWHERE emp_no <= 10100"
+  },
+  {
+   "id": "emp-a22-hires-per-year",
+   "origin": "authored",
+   "features": [
+    "date function",
+    "aggregation"
+   ],
+   "sql": "SELECT EXTRACT(YEAR FROM hire_date) AS year, COUNT(*) AS hired FROM employees GROUP BY EXTRACT(YEAR FROM hire_date)"
+  },
+  {
+   "id": "emp-a23-salary-period-length",
+   "origin": "authored",
+   "features": [
+    "date arithmetic"
+   ],
+   "sql": "SELECT emp_no, from_date, DATE_DIFF(to_date, from_date, DAY) AS days\nFROM salaries\nWHERE emp_no <= 10100 AND to_date < DATE '9999-01-01'"
+  },
+  {
+   "id": "emp-a24-current-salaries-by-sentinel",
+   "origin": "authored",
+   "features": [
+    "sentinel date",
+    "aggregation"
+   ],
+   "sql": "SELECT COUNT(*) AS current_salaries, AVG(salary) AS average FROM salaries WHERE to_date = DATE '9999-01-01'"
+  },
+  {
+   "id": "emp-a25-titles-open-or-null",
+   "origin": "authored",
+   "features": [
+    "nullable date",
+    "is null"
+   ],
+   "sql": "SELECT COUNT(*) AS n FROM titles WHERE to_date IS NULL OR to_date = DATE '9999-01-01'"
+  },
+  {
+   "id": "emp-a26-self-join-on-key",
+   "origin": "authored",
+   "features": [
+    "self join on a key"
+   ],
+   "sql": "SELECT a.emp_no, a.last_name, b.first_name\nFROM employees AS a\nJOIN employees AS b ON a.emp_no = b.emp_no\nWHERE a.emp_no < 10100"
+  },
+  {
+   "id": "emp-a27-consecutive-salaries",
+   "origin": "authored",
+   "features": [
+    "self join on part of a composite key",
+    "date join"
+   ],
+   "sql": "SELECT a.emp_no, a.salary AS before, b.salary AS after\nFROM salaries AS a\nJOIN salaries AS b ON b.emp_no = a.emp_no AND b.from_date = a.to_date\nWHERE a.emp_no < 10100"
+  },
+  {
+   "id": "emp-a28-count-distinct-key",
+   "origin": "authored",
+   "features": [
+    "count distinct on a key"
+   ],
+   "sql": "SELECT COUNT(DISTINCT emp_no) AS n FROM employees"
+  },
+  {
+   "id": "emp-a29-count-distinct-non-key",
+   "origin": "authored",
+   "features": [
+    "count distinct"
+   ],
+   "sql": "SELECT COUNT(DISTINCT last_name) AS n FROM employees"
+  },
+  {
+   "id": "emp-a30-case-gender",
+   "origin": "authored",
+   "features": [
+    "case"
+   ],
+   "sql": "SELECT emp_no, CASE WHEN gender = 'F' THEN 'female' WHEN gender = 'M' THEN 'male' ELSE 'other' END AS gender_name FROM employees WHERE emp_no < 10100"
+  },
+  {
+   "id": "emp-a31-like-in-between",
+   "origin": "authored",
+   "features": [
+    "like",
+    "in list",
+    "between"
+   ],
+   "sql": "SELECT emp_no, first_name FROM employees WHERE last_name LIKE 'Fa%' AND gender IN ('F') AND hire_date BETWEEN DATE '1990-01-01' AND DATE '1990-12-31'"
+  },
+  {
+   "id": "emp-a32-top-paid",
+   "origin": "authored",
+   "features": [
+    "order by",
+    "limit"
+   ],
+   "sql": "SELECT emp_no, salary FROM salaries ORDER BY salary DESC, emp_no, from_date LIMIT 10"
+  },
+  {
+   "id": "emp-a33-manager-history",
+   "origin": "authored",
+   "features": [
+    "three-way join on keys",
+    "date columns"
+   ],
+   "sql": "SELECT d.dept_name, e.first_name, e.last_name, m.from_date, m.to_date\nFROM dept_manager AS m\nJOIN employees AS e ON e.emp_no = m.emp_no\nJOIN departments AS d ON d.dept_no = m.dept_no"
+  },
+  {
+   "id": "emp-a34-staff-per-department",
+   "origin": "authored",
+   "features": [
+    "aggregation",
+    "join to parent"
+   ],
+   "sql": "SELECT dep.dept_name, COUNT(*) AS staff\nFROM dept_emp AS d\nJOIN departments AS dep ON dep.dept_no = d.dept_no\nWHERE d.to_date = DATE '9999-01-01'\nGROUP BY dep.dept_name"
+  },
+  {
+   "id": "emp-a35-average-salary-by-department",
+   "origin": "authored",
+   "features": [
+    "join of three tables",
+    "aggregation"
+   ],
+   "sql": "SELECT d.dept_no, AVG(s.salary) AS average\nFROM dept_emp AS d\nJOIN salaries AS s ON s.emp_no = d.emp_no AND s.to_date = DATE '9999-01-01'\nWHERE d.to_date = DATE '9999-01-01'\nGROUP BY d.dept_no"
+  },
+  {
+   "id": "emp-a36-latest-salary-correlated",
+   "origin": "authored",
+   "features": [
+    "correlated scalar subquery"
+   ],
+   "sql": "SELECT e.emp_no, (SELECT MAX(s.salary) FROM salaries AS s WHERE s.emp_no = e.emp_no) AS top\nFROM employees AS e\nWHERE e.emp_no < 10100"
+  },
+  {
+   "id": "emp-a37-in-two-subqueries",
+   "origin": "authored",
+   "features": [
+    "in",
+    "two subqueries"
+   ],
+   "sql": "SELECT e.emp_no, e.last_name\nFROM employees AS e\nWHERE e.emp_no IN (SELECT emp_no FROM titles WHERE title = 'Manager')\nAND e.emp_no IN (SELECT emp_no FROM dept_manager)"
+  },
+  {
+   "id": "emp-a38-coalesce-nullable-end",
+   "origin": "authored",
+   "features": [
+    "coalesce on a nullable column"
+   ],
+   "sql": "SELECT emp_no, title, COALESCE(to_date, DATE '9999-01-01') AS ends FROM titles WHERE emp_no < 10100"
+  },
+  {
+   "id": "emp-a39-count-nullable",
+   "origin": "authored",
+   "features": [
+    "count of a nullable column"
+   ],
+   "sql": "SELECT COUNT(*) AS titles, COUNT(to_date) AS closed FROM titles"
+  },
+  {
+   "id": "emp-a40-left-join-null-rejecting",
+   "origin": "authored",
+   "features": [
+    "outer join",
+    "null-rejecting filter"
+   ],
+   "sql": "SELECT t.emp_no, m.dept_no\nFROM titles AS t\nLEFT JOIN dept_manager AS m ON m.emp_no = t.emp_no\nWHERE m.dept_no = 'd001'"
+  },
+  {
+   "id": "emp-a41-pushdown-through-join",
+   "origin": "authored",
+   "features": [
+    "aggregation",
+    "filter after a join"
+   ],
+   "sql": "SELECT t.title, COUNT(*) AS n\nFROM titles AS t\nJOIN employees AS e ON e.emp_no = t.emp_no\nWHERE e.gender = 'F'\nGROUP BY t.title"
+  },
+  {
+   "id": "emp-a42-distinct-after-fanout",
+   "origin": "authored",
+   "features": [
+    "distinct",
+    "one to many"
+   ],
+   "sql": "SELECT DISTINCT e.emp_no, e.last_name\nFROM employees AS e\nJOIN titles AS t ON t.emp_no = e.emp_no\nWHERE e.emp_no < 10100"
+  },
+  {
+   "id": "emp-a43-title-distribution",
+   "origin": "authored",
+   "features": [
+    "aggregation"
+   ],
+   "sql": "SELECT title, COUNT(*) AS n, MIN(from_date) AS first_seen FROM titles GROUP BY title"
+  },
+  {
+   "id": "emp-a44-gender-by-hire-year",
+   "origin": "authored",
+   "features": [
+    "two group keys",
+    "date function"
+   ],
+   "sql": "SELECT gender, EXTRACT(YEAR FROM hire_date) AS year, COUNT(*) AS n FROM employees GROUP BY gender, EXTRACT(YEAR FROM hire_date)"
+  },
+  {
+   "id": "emp-a45-exact-year-salaries",
+   "origin": "authored",
+   "features": [
+    "date arithmetic",
+    "predicate on two dates"
+   ],
+   "sql": "SELECT COUNT(*) AS n FROM salaries WHERE DATE_ADD(from_date, INTERVAL 1 YEAR) = to_date"
+  },
+  {
+   "id": "emp-a46-aggregate-over-aggregate",
+   "origin": "authored",
+   "features": [
+    "nested aggregation"
+   ],
+   "sql": "SELECT AVG(top) AS average_top FROM (SELECT emp_no, MAX(salary) AS top FROM salaries GROUP BY emp_no) AS t"
+  },
+  {
+   "id": "emp-a47-order-by-in-subquery",
+   "origin": "authored",
+   "features": [
+    "useless order by"
+   ],
+   "sql": "SELECT COUNT(*) AS n FROM (SELECT emp_no, salary FROM salaries ORDER BY salary) AS t WHERE salary > 100000"
+  },
+  {
+   "id": "emp-a48-select-star-from-derived",
+   "origin": "authored",
+   "features": [
+    "derived table",
+    "select star"
+   ],
+   "sql": "SELECT * FROM (SELECT * FROM (SELECT * FROM departments) AS a) AS b"
+  },
+  {
+   "id": "emp-a49-title-and-department-start",
+   "origin": "authored",
+   "features": [
+    "join on a date column of both keys"
+   ],
+   "sql": "SELECT d.emp_no, d.dept_no, t.title\nFROM dept_emp AS d\nJOIN titles AS t ON t.emp_no = d.emp_no AND t.from_date = d.from_date\nWHERE d.emp_no < 10500"
+  },
+  {
+   "id": "emp-a50-union-all-salary-bands",
+   "origin": "authored",
+   "features": [
+    "union all",
+    "filters on one column"
+   ],
+   "sql": "SELECT emp_no, salary FROM salaries WHERE salary < 40000 AND emp_no < 10100\nUNION ALL\nSELECT emp_no, salary FROM salaries WHERE salary >= 40000 AND emp_no < 10100"
+  },
+  {
+   "id": "emp-a51-constant-predicates",
+   "origin": "authored",
+   "features": [
+    "trivial predicates"
+   ],
+   "sql": "SELECT emp_no, salary FROM salaries WHERE 1 = 1 AND salary > 150000 AND NOT FALSE"
+  },
+  {
+   "id": "emp-a52-name-initials",
+   "origin": "authored",
+   "features": [
+    "string functions",
+    "aggregation"
+   ],
+   "sql": "SELECT SUBSTR(last_name, 1, 1) AS initial, COUNT(*) AS n, MAX(LENGTH(last_name)) AS longest FROM employees GROUP BY SUBSTR(last_name, 1, 1)"
+  },
+  {
+   "id": "emp-a53-managers-who-work-there",
+   "origin": "authored",
+   "features": [
+    "join on a composite key"
+   ],
+   "sql": "SELECT m.emp_no, m.dept_no\nFROM dept_manager AS m\nJOIN dept_emp AS d ON d.emp_no = m.emp_no AND d.dept_no = m.dept_no"
+  },
+  {
+   "id": "emp-a54-salary-and-title-same-start",
+   "origin": "authored",
+   "features": [
+    "join on a date column of both keys",
+    "aggregation"
+   ],
+   "sql": "SELECT t.title, AVG(s.salary) AS average\nFROM titles AS t\nJOIN salaries AS s ON s.emp_no = t.emp_no AND s.from_date = t.from_date\nGROUP BY t.title"
+  },
+  {
+   "id": "emp-a55-employees-per-department-in-1995",
+   "origin": "authored",
+   "features": [
+    "date range",
+    "aggregation"
+   ],
+   "sql": "SELECT dept_no, COUNT(*) AS staff FROM dept_emp WHERE from_date <= DATE '1995-01-01' AND to_date > DATE '1995-01-01' GROUP BY dept_no"
+  }
+ ]
+}

@@ -537,6 +537,9 @@ class Adapter:
     #: complete a NOT NULL foreign key column a counterexample leaves out with a fresh value (and a parent row
     #: for it) instead of the type's default, which can coincide with a value the counterexample uses elsewhere
     fresh_foreign_key_values: bool = False
+    #: True: the data is downloaded at run time (a licence that forbids committing it, or a size that does); such an
+    #: adapter lives in ``DOWNLOADED``, is not part of a default run, and its tests skip when the download fails
+    downloaded: bool = False
 
     @property
     def folder(self) -> Path:
@@ -564,6 +567,22 @@ class Adapter:
         """The views the upstream script creates, by name (a database whose script reads differently overrides this)."""
 
         return read_views(self.upstream_text())
+
+    def upstream_row_counts(self) -> Counter:
+        """Rows per adapted table that the upstream script inserts (plus those its triggers add); an adapter whose rows
+        are too many to materialise counts them instead."""
+
+        inserted: Counter = Counter()
+        for upstream_table, rows in self.upstream_rows().items():
+            inserted[self.renames.get(upstream_table, upstream_table)] += len(rows)
+        for table, added in self.trigger_rows(self.inserted_rows()).items():
+            inserted[table] += len(added)  # rows an upstream trigger adds while loading
+        return inserted
+
+    def extra_checks(self, con) -> list[str]:
+        """Further checks of the loaded database against upstream (problems found; none by default)."""
+
+        return []
 
     def omitted(self, table: str, column: str, index: int) -> Raw:
         """The value of a column an INSERT leaves out (``index``: the row's place among the table's rows): NULL by default."""
@@ -1483,6 +1502,22 @@ ADAPTERS: dict[str, Adapter] = {
     for a in (Chinook(), Northwind(), Sakila(), Pagila(), OracleHR(), OracleCO())
 }
 
+# Adapters whose data is downloaded at run time (CC BY-SA and other terms that forbid committing it). They are kept out of
+# ``ADAPTERS`` so that a default run and the tests that loop over every database never touch the network; name one with
+# ``--database``. ``adapter_named`` finds either kind. Each lives in its own module and is built from this one.
+def _downloaded_adapters() -> dict[str, Adapter]:
+    import sample_db_employees
+
+    this = sys.modules[__name__]
+    return {a.name: a for a in (sample_db_employees.make_adapter(this),)}
+
+
+DOWNLOADED: dict[str, Adapter] = _downloaded_adapters()
+
+
+def adapter_named(name: str) -> Adapter:
+    return ADAPTERS[name] if name in ADAPTERS else DOWNLOADED[name]
+
 
 # ---------------------------------------------------------------- load checks
 
@@ -1530,11 +1565,7 @@ def check_database(adapter: Adapter, con=None) -> dict:
         declared["primary_keys"] += bool(table.primary_key)
         declared["foreign_keys"] += len(table.foreign_keys)
         declared["not_null"] += len(table.not_null)
-    inserted = Counter()
-    for upstream_table, rows in adapter.upstream_rows().items():
-        inserted[adapter.renames.get(upstream_table, upstream_table)] += len(rows)
-    for table, added in adapter.trigger_rows(adapter.inserted_rows()).items():
-        inserted[table] += len(added)  # rows an upstream trigger adds while loading
+    inserted = adapter.upstream_row_counts()
     upstream_views = adapter.upstream_views()
     for query in adapter.workload():
         if query["origin"] == "upstream-view" and query["name"] not in upstream_views:
@@ -1597,6 +1628,7 @@ def check_database(adapter: Adapter, con=None) -> dict:
                 problems.append(
                     f"upstream asserts {expected} for {sql[:70]!r}, got {got[:3]}"
                 )
+        problems += adapter.extra_checks(con)
     finally:
         if own:
             con.close()
@@ -1685,7 +1717,7 @@ def rewrite_cases(job: tuple[str, list[str], bool]) -> list[dict]:
     from kumosql import query_optimizer as qo
 
     name, query_ids, optimizer = job
-    adapter = ADAPTERS[name]
+    adapter = adapter_named(name)
     wanted = set(query_ids)
     queries = [q for q in adapter.workload() if q["id"] in wanted]
     con = adapter.connect()
@@ -2131,7 +2163,7 @@ def decide_pairs(job: tuple[str, list[dict]]) -> list[dict]:
     """Decide the listed pairs of one database (loading the real database once)."""
 
     name, pairs = job
-    con = ADAPTERS[name].connect()
+    con = adapter_named(name).connect()
     try:
         return [decide_pair(name, pair, con) for pair in pairs]
     finally:
@@ -2146,7 +2178,7 @@ def decide_pair(name: str, pair: dict, con) -> dict:
     from kumosql.equivalence import prove_equivalent
     from kumosql.smt_equivalence import SmtStatus
 
-    adapter = ADAPTERS[name]
+    adapter = adapter_named(name)
     drop = tuple(pair.get("drop", ()))
     left, right = pair["left"], pair["right"]
     columns, types = adapter.prover_schema()
@@ -2571,7 +2603,12 @@ def database_results_rows(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--database", choices=sorted(ADAPTERS), action="append")
+    parser.add_argument(
+        "--database",
+        choices=sorted([*ADAPTERS, *DOWNLOADED]),
+        action="append",
+        help="default: every database with committed data (the run-time downloads, such as employees, are named)",
+    )
     parser.add_argument(
         "--check",
         action="store_true",
@@ -2615,7 +2652,7 @@ def main(argv: list[str] | None = None) -> int:
     from bench_common import quiet
 
     quiet()
-    adapters = [ADAPTERS[n] for n in (args.database or sorted(ADAPTERS))]
+    adapters = [adapter_named(n) for n in (args.database or sorted(ADAPTERS))]
     failed = False
     reports = []
     for adapter in adapters:
