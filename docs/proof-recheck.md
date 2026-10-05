@@ -11,7 +11,7 @@ python tools/proof_recheck.py singh --pairs KEY1,KEY2 --budget 20000
 python tools/proof_recheck.py verieql --every 40 --budget 150 --seconds 30 --out /tmp/rc
 ```
 
-`--out` takes a folder for one `<eval>.jsonl` per eval, one record per pair; a rerun skips pairs already written unless `--fresh`. A machine with 4 cores is oversubscribed by more than about `--jobs 2` of the heavier evals. The raw output is large, so it is not committed.
+`--out` takes a folder for one `<eval>.jsonl` per eval, one record per pair; a rerun skips pairs already written unless `--fresh`. `--since <folder>` skips the pairs an earlier run already re-checked (survived or differs) and runs only the rest: pairs it did not prove then, timeouts, unrunnable ones and pairs added since, which is how to re-check what a prover change newly proves. A machine with 4 cores is oversubscribed by more than about `--jobs 2` of the heavier evals. The raw output is large, so it is not committed.
 
 ## The search
 
@@ -29,6 +29,7 @@ An adapter proves each pair exactly as its eval does (same entry point, options 
 | Evals | Module |
 | --- | --- |
 | `sqlsolver-calcite`, `sqlsolver-spark`, `sqlsolver-tpch`, `sqlsolver-tpcc`, `qed-calcite`, `calcite-mined`, `rbot-calcite`, `cosette`, `spes-only` | `calcite_family.py` |
+| the same `sqlsolver-calcite` and `sqlsolver-spark` adapters, with the three pairs round one could not run made runnable | `calcite_unrunnable.py` (loads after `calcite_family.py` and replaces those two entries) |
 | `singh`, `singh-fractions`, `singh-leetcode-types` | `singh.py` |
 | `verieql` (pairs are named `<suite>:<VeriEQL index>`) | `verieql.py` |
 | `sqlancer-tlp-norec`, `unsafe-rewrite-detection`, `rewrite-composition`, `join-rewrites`, `constraint-rewrites` | `fuzz_rewrites.py` |
@@ -41,6 +42,7 @@ Each adapter was checked against its eval's harness: the same prover entry point
 
 Notes on individual families:
 
+- **Calcite family, round two.** `calcite_unrunnable.py` adds the `unix_timestamp` and `single_value` macros to every SQLSolver Calcite and Spark case and hand-translates the DuckDB SQL of two pairs for DuckDB: the scalar subqueries of the left-join pair become a one-row derived table cross-joined to the left side, and the integer branches of the Spark `CASE` are cast to string as Spark does. Each override applies only to the exact source text, and the prover reads the same SQL as the eval; the tests include a negative control for both.
 - **Fuzz and rewrite evals.** Pairs come from the eval's own generators (SQLancer and unsafe-rewrite cases, replayed composition chains, the join and constraint cases) and are proved with the eval's entry point. `constraint-rewrites` yields three kinds of pair per case: the main proof under every offered fact (the one the eval scores), the proof under only the needed facts (`<id>@needed`), and each single-fact ablation the prover would prove (`<id>@without:<fact>`, which the eval says is none).
 - **View reuse and containment.** The right side is the view-inlined query the eval's check runs; the view as written is kept in the record's `meta`. Containment pairs run as subset or sub-bag checks.
 - **Dialect evals.** `dlbench` runs both queries as the prover read them (SQLite stays SQLite); `dlbench-target` runs the source against the translation read in the target's dialect through DuckDB, an extension of the eval for every target but DuckDB. SQL-RewriteBench, WeTune and ClickBench run the optimizer's proven rewrites on DuckDB, without the PostgreSQL cost guard or PostgreSQL execution those evals use. Spider 2.0 runs the format and cleanup rewrites over tables inferred from the SQL, so about 57% of its proven pairs are unrunnable in DuckDB.
@@ -96,4 +98,4 @@ The Singh runs also found a rule the proofs use that is unsound for MySQL: a str
 
 `tests/test_proof_recheck.py` covers the engine: it finds a duplicate-sensitive difference, lets an equivalent pair survive, keeps databases legal under keys, NOT NULL and foreign keys, honours each comparison mode, ignores row-order dependence and integer-versus-double noise, and keeps an integer-only difference. Run it with `python tools/run_tests.py --label "proof recheck" --target tests/test_proof_recheck.py tests/test_proof_recheck.py`.
 
-The adapter tests are `tests/test_proof_recheck_fuzz_reuse.py`, `tests/test_proof_recheck_dialect.py` (including the tie probe) and `tests/test_proof_recheck_pipelines_bounded.py`: they check that each adapter imports, lists its items and builds a case or a verdict for a tiny pair, and the tie probe's cases.
+The adapter tests are `tests/test_proof_recheck_fuzz_reuse.py`, `tests/test_proof_recheck_dialect.py` (including the tie probe) and `tests/test_proof_recheck_pipelines_bounded.py` and `tests/test_proof_recheck_calcite.py` (the three formerly unrunnable SQLSolver pairs): they check that each adapter imports, lists its items and builds a case or a verdict for a tiny pair, and the tie probe's cases.

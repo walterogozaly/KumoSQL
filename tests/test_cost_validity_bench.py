@@ -194,3 +194,119 @@ def test_documented_limits_of_the_comparator():
     assert _outcome("SELECT CAST(1.001 AS DOUBLE) AS v", "SELECT CAST(1.002 AS DOUBLE) AS v") == "different_rows"
     # Agreement is on one dataset: no row has k in 11..19, so these differ in meaning but not here.
     assert _outcome("SELECT x FROM t WHERE k = 10", "SELECT x FROM t WHERE k < 15") == "same_rows"
+
+
+# The advisor part: store_view and unstore_table recommendations on synthetic projects, executed in DuckDB.
+# Each case is built and run inside its own test, so the tests share nothing and can run in parallel.
+
+
+def _by_id(records):
+    return {r["id"]: r for r in records}
+
+
+def _advise_case(name):
+    import cost_validity_projects as projects
+
+    case = next(c for c in projects.cases() if c.name == name)
+    records = cvb.advisor_records(case)
+    return _by_id(records), cvb.summarize_advisor(records)
+
+
+def test_advisor_retail_stores_the_hot_aggregate_and_refuses_the_clock_view():
+    rec, summary = _advise_case("retail")
+    daily = rec["store:p.core.daily"]
+    assert (daily["label"], daily["recommended"], daily["chosen"], daily["outcome"]) == ("proven", True, True, "same_rows")
+    assert daily["saving_per_day"] > 0 and daily["reads_compared"] > 0
+    # Un-storing a table that nothing reads is proven, recommended and agrees.
+    mart = rec["unstore:p.core.mart"]
+    assert (mart["label"], mart["recommended"], mart["outcome"]) == ("proven", True, "same_rows")
+    # A view reading CURRENT_DATE is refused, and the execution shows why: the table keeps yesterday's date until the refresh.
+    clock = rec["store:p.core.recent"]
+    assert (clock["label"], clock["recommended"], clock["chosen"]) == ("changes_results", False, False)
+    assert clock["outcome"] == "different_rows" and clock["first_difference"]["phase"] == "between runs"
+    # A view over a declared source is conditional: listed with its conditions, never counted, and stale between runs.
+    direct = rec["store:p.core.direct"]
+    assert (direct["label"], direct["recommended"], direct["chosen"]) == ("conditional", False, False)
+    assert direct["conditions"] and direct["outcome"] == "different_rows"
+    # The chosen set runs together without a difference, and only proven changes are in it.
+    selection = rec["selection"]
+    assert selection["members"] == ["store:p.core.daily", "unstore:p.core.mart"] and selection["outcome"] == "same_rows"
+    assert selection["counted_unproven"] == [] and "store:p.core.direct" in selection["listed_as_needs_proof"]
+    assert summary["wrong"] == 0 and summary["unproven_counted_as_saving"] == 0
+
+
+def test_advisor_sampling_refuses_random_and_uuid_views_even_through_a_view():
+    rec, summary = _advise_case("sampling")
+    for node in ("sample", "tagged", "tagged_totals"):
+        row = rec[f"store:p.stage.{node}"]
+        assert (row["label"], row["recommended"], row["chosen"]) == ("changes_results", False, False), node
+        assert row["outcome"] == "different_rows", node
+    assert "GENERATE_UUID" in rec["store:p.stage.tagged_totals"]["reason"]  # found by expanding the view it reads
+    assert rec["store:p.stage.per_session"]["recommended"] and rec["store:p.stage.per_session"]["outcome"] == "same_rows"
+    # A hot view over a proven view is proven too but does not pay for its own refresh: not recommended.
+    busy = rec["store:p.stage.busy"]
+    assert (busy["label"], busy["recommended"], busy["outcome"]) == ("proven", False, "same_rows")
+    assert summary["wrong"] == 0 and summary["refused"] == 3 and summary["refused_difference_seen"] == 3
+
+
+def test_advisor_staleness_never_counts_an_unproven_saving():
+    rec, summary = _advise_case("staleness")
+    facts = rec["store:p.sales.order_facts"]
+    # The biggest saving of the project, but its inputs follow different schedules: it needs proof.
+    assert facts["label"] == "conditional" and facts["saving_per_day"] > rec["store:p.sales.revenue_by_customer"]["saving_per_day"]
+    assert not facts["recommended"] and not facts["chosen"] and facts["conditions"]
+    selection = rec["selection"]
+    assert "store:p.sales.order_facts" not in selection["members"]
+    assert "store:p.sales.order_facts" in selection["listed_as_needs_proof"] and selection["counted_unproven"] == []
+    assert rec["unstore:p.sales.rollup"]["recommended"] and rec["unstore:p.sales.rollup"]["outcome"] == "same_rows"
+    # Un-storing a table that reads a source (stale until refreshed) or stamps a clock changes what readers see.
+    for node, label in (("order_copy", "conditional"), ("snapshot", "changes_results")):
+        row = rec[f"unstore:p.sales.{node}"]
+        assert (row["label"], row["recommended"], row["outcome"]) == (label, False, "different_rows"), node
+    assert summary["wrong"] == 0 and summary["candidates"] == 7
+
+
+def test_the_executed_comparison_does_see_a_change_that_alters_results():
+    import cost_validity_projects as projects
+
+    case = projects.retail()
+    stored = cvb.execute_change(case, store=frozenset(["p.core.recent"]))
+    assert stored["outcome"] == "different_rows" and stored["differences"] > 0
+    assert cvb.execute_change(case, store=frozenset(["p.core.daily"]))["outcome"] == "same_rows"
+    # Nothing changed: the two worlds are the same project.
+    none = cvb.execute_change(case)
+    assert none["outcome"] == "same_rows" and none["reads_compared"] == 60
+
+
+def test_advisor_summary_counts_a_wrong_proven_change_and_an_unproven_saving():
+    def single(id, label, outcome, recommended=False):
+        return {"case": "c", "id": id, "kind": "store_view", "label": label, "outcome": outcome, "recommended": recommended, "chosen": False, "reads_compared": 3}
+
+    def selection(members, outcome="same_rows", counted=()):
+        return {"case": "c", "id": "selection", "kind": "selection", "members": members, "outcome": outcome, "reads_compared": 3, "counted_unproven": list(counted)}
+
+    good = [single("a", "proven", "same_rows", True), single("b", "conditional", "different_rows"), single("c", "changes_results", "different_rows"), selection(["a"])]
+    s = cvb.summarize_advisor(good)
+    assert (s["wrong"], s["recommended"], s["needs_proof"], s["needs_proof_difference_seen"], s["refused_difference_seen"]) == (0, 1, 1, 1, 1)
+    # A not-proven change that differs is the expected refusal. A proven one that differs is wrong, as is a chosen set that differs.
+    assert cvb.summarize_advisor([single("a", "proven", "different_rows", True), selection(["a"])])["wrong"] == 1
+    assert cvb.summarize_advisor([single("a", "proven", "same_rows", True), selection(["a"], "different_schema")])["wrong"] == 1
+    assert cvb.summarize_advisor([single("a", "proven", "rewrite_error")])["wrong"] == 1
+    # Counting a conditional change as a saving is wrong even if it executes identically.
+    assert cvb.summarize_advisor([single("b", "conditional", "same_rows"), selection(["b"], counted=["b"])])["wrong"] == 1
+    # A difference that DuckDB's unoptimized run does not reproduce is not judged, either way.
+    odd = cvb.summarize_advisor([single("a", "proven", "optimizer_disagrees", True)])
+    assert (odd["wrong"], odd["not_judged"]) == (0, 1)
+
+
+def test_duckdb_sql_flattens_names_keeps_aliases_and_fixes_the_clock():
+    from datetime import datetime, timezone
+
+    import cost_validity_projects as projects
+
+    pipeline = projects.staleness().pipeline()
+    sql = "SELECT o.id, CURRENT_DATE() AS d, CURRENT_TIMESTAMP() AS t FROM `p.sales.orders_clean` AS o"
+    out = cvb.duckdb_sql(pipeline, sql, datetime(2026, 9, 3, 12, 30, tzinfo=timezone.utc))
+    assert "p__sales__orders_clean" in out and "AS o" in out
+    assert "CAST('2026-09-03' AS DATE)" in out and "CAST('2026-09-03 12:30:00' AS TIMESTAMP)" in out
+    assert "CURRENT_" not in out.upper()

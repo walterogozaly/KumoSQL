@@ -9,46 +9,16 @@
   const list = $("sm-list");
   const detail = $("sm-detail");
   const filter = $("sm-filter");
-  const LABELS = {
-    proven: "Proven",
-    proven_with_assumptions: "Proven under assumptions",
-    unchanged: "Unchanged",
-    unknown: "Unknown",
-    differs: "Differs",
-  };
   let groups = [];
   let selected = null;
 
-  const h = (tag, attrs = {}, ...children) => {
-    const element = document.createElement(tag);
-    for (const [key, value] of Object.entries(attrs)) {
-      if (key === "class") element.className = value;
-      else if (key === "text") element.textContent = value;
-      else if (key.startsWith("on")) element.addEventListener(key.slice(2), value);
-      else if (value !== false && value != null) element.setAttribute(key, value === true ? "" : value);
-    }
-    element.append(...children.filter(Boolean));
-    return element;
-  };
+  const { LABELS, h, call, tag, short, checksTable, list: bullets, assumptions, diffCard } = window.KumoPatch;
 
   function say(message, error = false) {
     status.textContent = message;
     status.classList.toggle("error", error);
   }
 
-  async function call(method, url, body) {
-    const response = await fetch(url, {
-      method,
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || response.statusText);
-    return data;
-  }
-
-  const tag = (label) => h("span", { class: "sm-tag", "data-label": label, text: LABELS[label] || label });
-  const short = (key) => key.split(".").pop();
   const models = (group) => [...new Set(group.sites.map((site) => short(site.model)))];
 
   function renderList() {
@@ -91,50 +61,14 @@
       results);
   }
 
-  function diffView(text) {
-    const pre = h("pre", { class: "sm-diff" });
-    for (const line of text.split("\n")) {
-      const kind = line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff ") || line.startsWith("new file") || line.startsWith("@@")
-        ? "meta" : line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "";
-      pre.append(h("span", { class: kind, text: line || " " }));
-    }
-    return pre;
-  }
-
-  function download(patch) {
-    const link = h("a", {
-      href: URL.createObjectURL(new Blob([patch.diff], { type: "text/x-diff" })),
-      download: `${patch.name}.diff`,
-    });
-    document.body.append(link);
-    link.click();
-    link.remove();
-  }
-
   function renderPatch(patch, box) {
-    const rows = patch.checks.map((check) => h("tr", {},
-      h("td", { title: check.model, text: short(check.model) }),
-      h("td", { text: check.role === "edited" ? "Edited" : "Reads an edited model" }),
-      h("td", {}, tag(check.label)),
-      h("td", { class: "sm-reason", text: check.reason })));
-    const copy = h("button", { type: "button", class: "secondary-button", text: "Copy" });
-    copy.addEventListener("click", () => navigator.clipboard.writeText(patch.diff).then(() => say("Copied")).catch((error) => say(error.message, true)));
     box.replaceChildren(
       h("div", { class: "sm-card" },
         h("div", { class: "sm-verdict" }, h("h2", { text: patch.new_file }), tag(patch.verdict)),
-        patch.diagnostics.length ? h("ul", { class: "sm-sites" }, ...patch.diagnostics.map((text) => h("li", { text }))) : null,
-        rows.length ? h("table", { class: "sm-checks" },
-          h("thead", {}, h("tr", {}, ...["Model", "Change", "Result", "Prover"].map((text) => h("th", { text })))),
-          h("tbody", {}, ...rows)) : null,
-        patch.assumptions.length ? h("details", {},
-          h("summary", { text: `${patch.assumptions.length} assumptions` }),
-          h("ul", { class: "sm-assumptions" }, ...patch.assumptions.map((text) => h("li", { text })))) : null),
-      h("div", { class: "sm-card" },
-        h("div", { class: "sm-verdict" },
-          h("h2", { text: `${patch.changed_files.length} files` }),
-          copy,
-          h("button", { type: "button", class: "secondary-button", text: "Download", onclick: () => download(patch) })),
-        diffView(patch.diff)));
+        bullets(patch.diagnostics),
+        checksTable(patch.checks, { edited: "Edited", downstream: "Reads an edited model" }),
+        assumptions(patch.assumptions)),
+      diffCard(patch.diff, patch.changed_files.length, `${patch.name}.diff`, say));
   }
 
   async function generate(group, name, kind, button, box) {

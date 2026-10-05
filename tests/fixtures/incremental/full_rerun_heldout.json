@@ -1,0 +1,908 @@
+{
+ "version": 1,
+ "cases": [
+  {
+   "id": "ho-merge-rerun-time-filter-touch",
+   "family": "full_rerun_merge",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\nWHERE ts >= TIMESTAMP '2024-01-01 02:00:00'\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_late",
+     "insert_boundary",
+     "update_touch",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 02:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 1, TIMESTAMP '2024-01-01 03:00:00', 2)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (4, 1, TIMESTAMP '2024-01-01 00:00:00', 5)",
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (5, 2, TIMESTAMP '2024-01-01 03:00:00', 1)"
+     ],
+     [
+      "UPDATE events SET v = 7, ts = TIMESTAMP '2024-01-01 04:00:00' WHERE id = 1"
+     ],
+     [
+      "UPDATE events SET v = 9, ts = TIMESTAMP '2024-01-01 05:00:00' WHERE id = 3",
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (6, 2, TIMESTAMP '2024-01-01 06:00:00', 3)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "full re-run merged on the source key: the filter is on event time, which only update_touch changes and only forward (to newest+1h), so a row that passes ts >= the constant keeps passing; no kind removes a row or repeats a key, so the key set of the full query only grows and each MERGE rewrites every row and inserts the new ones",
+   "cases_version": 1
+  },
+  {
+   "id": "ho-merge-rerun-status-filter-update",
+   "family": "full_rerun_merge",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, status, amount FROM ${ref(\"orders\")}\nWHERE status != 'cancelled'\n",
+   "sources": {
+    "orders": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "status": "STRING",
+      "amount": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "update",
+     "empty"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO orders (id, customer_id, ts, status, amount) VALUES (1, 10, TIMESTAMP '2024-01-01 00:00:00', 'open', 5)",
+     "INSERT INTO orders (id, customer_id, ts, status, amount) VALUES (2, 11, TIMESTAMP '2024-01-01 01:00:00', 'open', 7)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO orders (id, customer_id, ts, status, amount) VALUES (3, 10, TIMESTAMP '2024-01-01 02:00:00', 'shipped', 4)",
+      "UPDATE orders SET amount = 6 WHERE id = 2"
+     ],
+     [
+      "UPDATE orders SET status = 'cancelled' WHERE id = 1"
+     ]
+    ],
+    "diverges_at": 2
+   },
+   "ignore_columns": [],
+   "note": "an update that sets status to 'cancelled' takes the row out of the full query, but MERGE never deletes, so the old 'open' row stays in the table",
+   "cases_version": 1
+  },
+  {
+   "id": "ho-merge-rerun-left-join-dimension-delete",
+   "family": "full_rerun_merge",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT o.id, o.customer_id, o.ts, o.amount, c.tier\nFROM ${ref(\"orders\")} o\nLEFT JOIN ${ref(\"customers\")} c ON c.id = o.customer_id\n",
+   "sources": {
+    "orders": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "amount": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "customers": {
+     "columns": {
+      "id": "INT64",
+      "tier": "STRING"
+     },
+     "key": [
+      "id"
+     ]
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "update",
+     "delete",
+     "empty"
+    ],
+    "tables": [
+     "customers"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO customers (id, tier) VALUES (10, 'gold')",
+     "INSERT INTO customers (id, tier) VALUES (11, 'silver')",
+     "INSERT INTO orders (id, customer_id, ts, amount) VALUES (1, 10, TIMESTAMP '2024-01-01 00:00:00', 5)",
+     "INSERT INTO orders (id, customer_id, ts, amount) VALUES (2, 11, TIMESTAMP '2024-01-01 01:00:00', 7)",
+     "INSERT INTO orders (id, customer_id, ts, amount) VALUES (3, 12, TIMESTAMP '2024-01-01 02:00:00', 4)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO customers (id, tier) VALUES (12, 'bronze')"
+     ],
+     [
+      "DELETE FROM customers WHERE id = 10"
+     ],
+     [
+      "UPDATE customers SET tier = 'gold' WHERE id = 11",
+      "INSERT INTO customers (id, tier) VALUES (13, 'silver')"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "only customers changes and its key stays unique (no duplicate kind), so the LEFT JOIN on that key yields exactly one row per order whatever happens to customers (a NULL tier after a delete); the order id set never changes and each MERGE rewrites every row",
+   "cases_version": 1
+  },
+  {
+   "id": "ho-merge-rerun-inner-join-dimension-delete",
+   "family": "full_rerun_merge",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT o.id, o.customer_id, o.ts, o.amount, c.tier\nFROM ${ref(\"orders\")} o\nJOIN ${ref(\"customers\")} c ON c.id = o.customer_id\n",
+   "sources": {
+    "orders": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "amount": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "customers": {
+     "columns": {
+      "id": "INT64",
+      "tier": "STRING"
+     },
+     "key": [
+      "id"
+     ]
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "update",
+     "delete",
+     "empty"
+    ],
+    "tables": [
+     "customers"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO customers (id, tier) VALUES (10, 'gold')",
+     "INSERT INTO customers (id, tier) VALUES (11, 'silver')",
+     "INSERT INTO orders (id, customer_id, ts, amount) VALUES (1, 10, TIMESTAMP '2024-01-01 00:00:00', 5)",
+     "INSERT INTO orders (id, customer_id, ts, amount) VALUES (2, 11, TIMESTAMP '2024-01-01 01:00:00', 7)",
+     "INSERT INTO orders (id, customer_id, ts, amount) VALUES (3, 12, TIMESTAMP '2024-01-01 02:00:00', 4)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO customers (id, tier) VALUES (12, 'bronze')",
+      "UPDATE customers SET tier = 'gold' WHERE id = 11"
+     ],
+     [
+      "DELETE FROM customers WHERE id = 10"
+     ]
+    ],
+    "diverges_at": 2
+   },
+   "ignore_columns": [],
+   "note": "deleting a customer drops its orders from the inner join, but MERGE never deletes, so those order rows stay in the table",
+   "cases_version": 1
+  },
+  {
+   "id": "ho-merge-rerun-group-by-order",
+   "family": "full_rerun_merge",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"order_id\"] }\nSELECT order_id, COUNT(*) AS line_count, SUM(qty) AS units, MAX(ts) AS last_ts\nFROM ${ref(\"order_lines\")}\n${when(incremental(), \"WHERE 1 = 1\")}\nGROUP BY order_id\n",
+   "sources": {
+    "order_lines": {
+     "columns": {
+      "order_id": "INT64",
+      "line_no": "INT64",
+      "ts": "TIMESTAMP",
+      "qty": "INT64"
+     },
+     "key": [
+      "order_id",
+      "line_no"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_late",
+     "insert_boundary",
+     "duplicate",
+     "update",
+     "update_touch",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO order_lines (order_id, line_no, ts, qty) VALUES (100, 1, TIMESTAMP '2024-01-01 00:00:00', 2)",
+     "INSERT INTO order_lines (order_id, line_no, ts, qty) VALUES (100, 2, TIMESTAMP '2024-01-01 01:00:00', 1)",
+     "INSERT INTO order_lines (order_id, line_no, ts, qty) VALUES (101, 1, TIMESTAMP '2024-01-01 01:00:00', 5)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO order_lines (order_id, line_no, ts, qty) VALUES (102, 1, TIMESTAMP '2024-01-01 02:00:00', 1)",
+      "INSERT INTO order_lines (order_id, line_no, ts, qty) VALUES (100, 2, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ],
+     [
+      "INSERT INTO order_lines (order_id, line_no, ts, qty) VALUES (101, 2, TIMESTAMP '2024-01-01 00:00:00', 3)",
+      "UPDATE order_lines SET qty = 4 WHERE order_id = 100 AND line_no = 1"
+     ],
+     [
+      "UPDATE order_lines SET qty = 6, ts = TIMESTAMP '2024-01-01 03:00:00' WHERE order_id = 102 AND line_no = 1",
+      "INSERT INTO order_lines (order_id, line_no, ts, qty) VALUES (103, 1, TIMESTAMP '2024-01-01 03:00:00', 1)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "one output row per order_id; order_id is part of the source key, so it is never NULL and updates never change it, and no allowed kind removes the last row of an order (duplicate only adds a copy), so groups never disappear and each MERGE rewrites every group; the WHERE 1 = 1 filter is trivially true",
+   "cases_version": 1
+  },
+  {
+   "id": "ho-merge-rerun-having-single-order",
+   "family": "full_rerun_merge",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"customer_id\"] }\nSELECT customer_id, COUNT(*) AS order_count, MIN(ts) AS first_order_ts\nFROM ${ref(\"orders\")}\nGROUP BY customer_id\nHAVING COUNT(*) = 1\n",
+   "sources": {
+    "orders": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "amount": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "empty"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO orders (id, customer_id, ts, amount) VALUES (1, 10, TIMESTAMP '2024-01-01 00:00:00', 5)",
+     "INSERT INTO orders (id, customer_id, ts, amount) VALUES (2, 11, TIMESTAMP '2024-01-01 01:00:00', 3)"
+    ],
+    "batches": [
+     [],
+     [
+      "INSERT INTO orders (id, customer_id, ts, amount) VALUES (3, 12, TIMESTAMP '2024-01-01 02:00:00', 4)"
+     ],
+     [
+      "INSERT INTO orders (id, customer_id, ts, amount) VALUES (4, 10, TIMESTAMP '2024-01-01 03:00:00', 6)"
+     ]
+    ],
+    "diverges_at": 3
+   },
+   "ignore_columns": [],
+   "note": "a second order for a customer removes it from the HAVING COUNT(*) = 1 result, but MERGE never deletes, so its row stays",
+   "cases_version": 1
+  },
+  {
+   "id": "ho-merge-rerun-qualify-latest",
+   "family": "full_rerun_merge",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\nWHERE TRUE\nQUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY ts DESC, v DESC, customer_id DESC) = 1\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_late",
+     "insert_boundary",
+     "duplicate",
+     "update",
+     "update_touch",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 1, TIMESTAMP '2024-01-01 01:00:00', 2)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)",
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 02:00:00', 3)"
+     ],
+     [
+      "UPDATE events SET v = 5 WHERE id = 1 AND customer_id = 0 AND ts = TIMESTAMP '2024-01-01 00:00:00' AND v = 1"
+     ],
+     [
+      "UPDATE events SET customer_id = 2, ts = TIMESTAMP '2024-01-01 03:00:00' WHERE id = 2",
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (4, 1, TIMESTAMP '2024-01-01 00:00:00', 1)",
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (5, 1, TIMESTAMP '2024-01-01 03:00:00', 2)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 02:00:00', 3)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "ROW_NUMBER keeps one row per id and its ORDER BY (ts, v, customer_id) ties only between identical rows; ids are never NULL and no kind removes the last copy of an id, so the key set only grows and each MERGE rewrites every row",
+   "cases_version": 1
+  },
+  {
+   "id": "ho-merge-rerun-in-known-customers",
+   "family": "full_rerun_merge",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, amount FROM ${ref(\"orders\")}\nWHERE customer_id IN (SELECT id FROM ${ref(\"customers\")})\n",
+   "sources": {
+    "orders": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "amount": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "customers": {
+     "columns": {
+      "id": "INT64",
+      "tier": "STRING"
+     },
+     "key": [
+      "id"
+     ]
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "update",
+     "duplicate",
+     "empty"
+    ],
+    "tables": [
+     "customers"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO customers (id, tier) VALUES (10, 'gold')",
+     "INSERT INTO orders (id, customer_id, ts, amount) VALUES (1, 10, TIMESTAMP '2024-01-01 00:00:00', 5)",
+     "INSERT INTO orders (id, customer_id, ts, amount) VALUES (2, 11, TIMESTAMP '2024-01-01 01:00:00', 3)",
+     "INSERT INTO orders (id, customer_id, ts, amount) VALUES (3, 12, TIMESTAMP '2024-01-01 02:00:00', 4)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO customers (id, tier) VALUES (11, 'silver')"
+     ],
+     [
+      "INSERT INTO customers (id, tier) VALUES (10, 'gold')"
+     ],
+     [
+      "UPDATE customers SET tier = 'bronze' WHERE id = 11",
+      "INSERT INTO customers (id, tier) VALUES (12, 'gold')"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "orders never change and IN is a semi-join, so each order appears at most once even after a customer row is re-delivered; customer ids are only added (no delete, updates leave the key alone), so orders only enter the result and each MERGE inserts them",
+   "cases_version": 1
+  },
+  {
+   "id": "ho-merge-rerun-top-amounts",
+   "family": "full_rerun_merge",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT id, customer_id, ts, amount FROM ${ref(\"orders\")}\nORDER BY amount DESC, id\nLIMIT 3\n",
+   "sources": {
+    "orders": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "amount": "FLOAT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "empty"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO orders (id, customer_id, ts, amount) VALUES (1, 10, TIMESTAMP '2024-01-01 00:00:00', 50.0)",
+     "INSERT INTO orders (id, customer_id, ts, amount) VALUES (2, 11, TIMESTAMP '2024-01-01 01:00:00', 40.0)",
+     "INSERT INTO orders (id, customer_id, ts, amount) VALUES (3, 12, TIMESTAMP '2024-01-01 02:00:00', 30.0)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO orders (id, customer_id, ts, amount) VALUES (4, 10, TIMESTAMP '2024-01-01 03:00:00', 10.0)"
+     ],
+     [
+      "INSERT INTO orders (id, customer_id, ts, amount) VALUES (5, 11, TIMESTAMP '2024-01-01 04:00:00', 45.0)"
+     ]
+    ],
+    "diverges_at": 2
+   },
+   "ignore_columns": [],
+   "note": "a larger new order pushes the third row out of the top 3, but MERGE never deletes, so the table keeps four rows",
+   "cases_version": 1
+  },
+  {
+   "id": "ho-merge-rerun-payments-fanout",
+   "family": "full_rerun_merge",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT o.id, o.customer_id, o.ts, o.amount, p.method AS payment_method\nFROM ${ref(\"orders\")} o\nLEFT JOIN ${ref(\"payments\")} p ON p.order_id = o.id\n",
+   "sources": {
+    "orders": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "amount": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "payments": {
+     "columns": {
+      "id": "INT64",
+      "order_id": "INT64",
+      "ts": "TIMESTAMP",
+      "method": "STRING"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "empty"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO orders (id, customer_id, ts, amount) VALUES (1, 10, TIMESTAMP '2024-01-01 00:00:00', 50)",
+     "INSERT INTO orders (id, customer_id, ts, amount) VALUES (2, 11, TIMESTAMP '2024-01-01 01:00:00', 20)",
+     "INSERT INTO payments (id, order_id, ts, method) VALUES (100, 1, TIMESTAMP '2024-01-01 00:00:00', 'card')"
+    ],
+    "batches": [
+     [
+      "INSERT INTO payments (id, order_id, ts, method) VALUES (101, 2, TIMESTAMP '2024-01-01 01:00:00', 'card')"
+     ],
+     [
+      "INSERT INTO payments (id, order_id, ts, method) VALUES (102, 1, TIMESTAMP '2024-01-01 02:00:00', 'voucher')"
+     ]
+    ],
+    "diverges_at": 2
+   },
+   "ignore_columns": [],
+   "note": "payments.order_id is not a key, so a second payment for an order gives the full query two rows with that order id and the MERGE matches one target row twice, which BigQuery rejects",
+   "cases_version": 1
+  },
+  {
+   "id": "ho-post-grant-union-all-channels",
+   "family": "post_operations",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"channel\", \"order_id\"] }\npost_operations {\n  GRANT `roles/bigquery.dataViewer` ON TABLE ${self()} TO \"group:analysts@example.com\"\n}\nSELECT 'web' AS channel, id AS order_id, ts, amount FROM ${ref(\"web_orders\")}\nUNION ALL\nSELECT 'store' AS channel, id AS order_id, ts, amount FROM ${ref(\"store_orders\")}\n",
+   "sources": {
+    "web_orders": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "amount": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    },
+    "store_orders": {
+     "columns": {
+      "id": "INT64",
+      "store_id": "INT64",
+      "ts": "TIMESTAMP",
+      "amount": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_late",
+     "insert_boundary",
+     "update",
+     "update_touch",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO web_orders (id, customer_id, ts, amount) VALUES (1, 10, TIMESTAMP '2024-01-01 00:00:00', 5)",
+     "INSERT INTO web_orders (id, customer_id, ts, amount) VALUES (2, 11, TIMESTAMP '2024-01-01 01:00:00', 3)",
+     "INSERT INTO store_orders (id, store_id, ts, amount) VALUES (1, 7, TIMESTAMP '2024-01-01 02:00:00', 8)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO web_orders (id, customer_id, ts, amount) VALUES (3, 10, TIMESTAMP '2024-01-01 02:00:00', 4)",
+      "INSERT INTO store_orders (id, store_id, ts, amount) VALUES (2, 7, TIMESTAMP '2024-01-01 00:00:00', 2)"
+     ],
+     [
+      "UPDATE web_orders SET amount = 9 WHERE id = 1",
+      "UPDATE store_orders SET amount = 1, ts = TIMESTAMP '2024-01-01 03:00:00' WHERE id = 2"
+     ],
+     [
+      "INSERT INTO store_orders (id, store_id, ts, amount) VALUES (3, 8, TIMESTAMP '2024-01-01 03:00:00', 6)",
+      "INSERT INTO web_orders (id, customer_id, ts, amount) VALUES (4, 12, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "the GRANT changes access, not contents; (channel, order_id) is unique because the literal channel separates the two branches and id is each source's key, and no kind removes a row or repeats a key, so the key set only grows and each MERGE rewrites every row",
+   "cases_version": 1
+  },
+  {
+   "id": "ho-post-grant-customers-without-orders",
+   "family": "post_operations",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\", uniqueKey: [\"id\"] }\nSELECT c.id, c.name, c.signup_date\nFROM ${ref(\"customers\")} c\nWHERE NOT EXISTS (SELECT 1 FROM ${ref(\"orders\")} o WHERE o.customer_id = c.id)\npost_operations {\n  GRANT `roles/bigquery.dataViewer` ON TABLE ${self()} TO \"group:analysts@example.com\"\n}\n",
+   "sources": {
+    "customers": {
+     "columns": {
+      "id": "INT64",
+      "name": "STRING",
+      "signup_date": "DATE"
+     },
+     "key": [
+      "id"
+     ]
+    },
+    "orders": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "amount": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "empty"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO customers (id, name, signup_date) VALUES (10, 'ann', DATE '2024-01-01')",
+     "INSERT INTO customers (id, name, signup_date) VALUES (11, 'bob', DATE '2024-01-01')",
+     "INSERT INTO orders (id, customer_id, ts, amount) VALUES (1, 11, TIMESTAMP '2024-01-01 01:00:00', 5)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO customers (id, name, signup_date) VALUES (12, 'cy', DATE '2024-01-02')"
+     ],
+     [
+      "INSERT INTO orders (id, customer_id, ts, amount) VALUES (2, 10, TIMESTAMP '2024-01-01 02:00:00', 4)"
+     ]
+    ],
+    "diverges_at": 2
+   },
+   "ignore_columns": [],
+   "note": "the GRANT is data-neutral; the model is wrong because a customer's first order removes it from the NOT EXISTS result and MERGE never deletes its row",
+   "cases_version": 1
+  },
+  {
+   "id": "ho-declare-watermark-no-coalesce",
+   "family": "script_variable_watermark",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npre_operations {\n  DECLARE wm DEFAULT (\n    ${when(incremental(), `SELECT MAX(ts) FROM ${self()}`, `SELECT TIMESTAMP '1970-01-01'`)}\n  )\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\nWHERE ts > wm\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "empty"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 01:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 1
+   },
+   "ignore_columns": [],
+   "note": "after a first build on an empty source every later run declares wm = MAX(ts) of an empty table = NULL, ts > NULL keeps nothing and no row is ever loaded, while the full query (wm = 1970) returns every row",
+   "cases_version": 1
+  },
+  {
+   "id": "ho-declare-watermark-coalesce",
+   "family": "script_variable_watermark",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npre_operations {\n  DECLARE wm DEFAULT (\n    ${when(incremental(), `SELECT COALESCE(MAX(ts), TIMESTAMP '1970-01-01') FROM ${self()}`, `SELECT TIMESTAMP '1970-01-01'`)}\n  )\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\nWHERE ts > wm\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [],
+    "batches": [
+     [],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 1, TIMESTAMP '2024-01-01 01:00:00', 2)",
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ],
+     []
+    ]
+   },
+   "ignore_columns": [],
+   "note": "DECLARE runs in the same script just before the INSERT, so wm is the newest loaded ts (1970 when the table is empty, the same as the full build's wm); the table holds every row after 1970 and insert_new rows are later than everything seen, so each run appends exactly the new rows",
+   "cases_version": 1
+  },
+  {
+   "id": "ho-reload-window-after-remaining-max",
+   "family": "delete_reload_window",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npre_operations {\n  ${when(incremental(), `DELETE FROM ${self()} WHERE ts >= TIMESTAMP_SUB((SELECT MAX(ts) FROM ${self()}), INTERVAL 3 HOUR)`)}\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_boundary",
+     "empty"
+    ]
+   },
+   "label": "safe",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 04:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 1, TIMESTAMP '2024-01-01 08:00:00', 2)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (4, 1, TIMESTAMP '2024-01-01 08:00:00', 1)",
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (5, 0, TIMESTAMP '2024-01-01 09:00:00', 1)"
+     ],
+     [],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (6, 2, TIMESTAMP '2024-01-01 15:00:00', 3)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (7, 0, TIMESTAMP '2024-01-01 15:00:00', 2)"
+     ]
+    ]
+   },
+   "ignore_columns": [],
+   "note": "the delete empties [M - 3h, M] (M = newest loaded) and the query reloads every source row after the newest row left (all rows if none is left), so kept and reloaded rows never overlap and nothing between them is missed; without late rows, updates, deletes or re-deliveries every new row is at or after M and is reloaded (the 1970 default is assumed to precede every event time, as for every COALESCE watermark in the corpus)",
+   "cases_version": 1
+  },
+  {
+   "id": "ho-reload-window-late-beyond-window",
+   "family": "delete_reload_window",
+   "origin": "authored",
+   "split": "held_out",
+   "target": "model_inc",
+   "sqlx": "config { type: \"incremental\" }\npre_operations {\n  ${when(incremental(), `DELETE FROM ${self()} WHERE ts >= TIMESTAMP_SUB((SELECT MAX(ts) FROM ${self()}), INTERVAL 3 HOUR)`)}\n}\nSELECT id, customer_id, ts, v FROM ${ref(\"events\")}\n${when(incremental(), `WHERE ts > COALESCE((SELECT MAX(ts) FROM ${self()}), TIMESTAMP '1970-01-01')`)}\n",
+   "sources": {
+    "events": {
+     "columns": {
+      "id": "INT64",
+      "customer_id": "INT64",
+      "ts": "TIMESTAMP",
+      "v": "INT64"
+     },
+     "key": [
+      "id"
+     ],
+     "time_column": "ts"
+    }
+   },
+   "contract": {
+    "kinds": [
+     "insert_new",
+     "insert_late",
+     "empty"
+    ]
+   },
+   "label": "diverges",
+   "script": {
+    "initial": [
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (1, 0, TIMESTAMP '2024-01-01 00:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (2, 0, TIMESTAMP '2024-01-01 04:00:00', 1)",
+     "INSERT INTO events (id, customer_id, ts, v) VALUES (3, 1, TIMESTAMP '2024-01-01 08:00:00', 2)"
+    ],
+    "batches": [
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (4, 1, TIMESTAMP '2024-01-01 06:00:00', 1)"
+     ],
+     [
+      "INSERT INTO events (id, customer_id, ts, v) VALUES (5, 0, TIMESTAMP '2024-01-01 02:00:00', 1)"
+     ]
+    ],
+    "diverges_at": 2
+   },
+   "ignore_columns": [],
+   "note": "a late row inside the 3-hour window is reloaded (batch 1), but one older than the newest row the delete keeps (04:00 here) is never read, so the window is narrower than how late rows can be",
+   "cases_version": 1
+  }
+ ]
+}

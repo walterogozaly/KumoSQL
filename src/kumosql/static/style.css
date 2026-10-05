@@ -692,6 +692,8 @@ select.sp-input { min-width: 200px; }
 .sp-queries { align-items: stretch; }
 .sp-query { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; resize: vertical; }
 .sp-pre { margin: 6px 0 0; padding: 8px; overflow: auto; font-size: 12px; white-space: pre-wrap; }
+.sp-except { margin: 8px 0 0; padding: 6px 10px; border-left: 3px solid var(--accent); background: var(--accent-soft); color: var(--text); font-size: 13px; }
+.sp-except-sql { color: var(--accent-text); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
 
 .ds-dialog { width: min(560px, 92vw); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); color: var(--text); padding: 18px 20px; }
 .ds-dialog::backdrop { background: rgb(0 0 0 / 0.35); }

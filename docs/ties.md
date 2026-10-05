@@ -48,6 +48,31 @@ Every other site is `unknown`, with `fix` saying what would pin it down: a known
 
 A window nobody reads (a column a reader never uses) is not a site, and neither is a top-level `ORDER BY` without `LIMIT`: the result is a bag of rows, so presentation order does not change it.
 
+## Witnesses
+
+`unknown` says the result may depend on ties; a *tie witness* shows it. `kumosql.tie_witness.find_tie_witness` looks for a small database and two physical orders of its rows on which DuckDB (one thread, BigQuery SQL through `bigquery_on_duckdb`) returns two different bags. DuckDB with `SET threads=1` breaks ties in windows, `LIMIT` and `ARRAY_AGG` by storage order, so the difference replays.
+
+```python
+from kumosql.result_equivalence import DataRules
+from kumosql.tie_witness import find_tie_witness, replay
+
+schema = {"events": {"id": "INT64", "user_id": "INT64", "ts": "TIMESTAMP", "value": "INT64"}}
+rules = {"events": DataRules(frozenset({"id"}), (("id",),))}  # id is a NOT NULL key
+witness = find_tie_witness(
+    "SELECT user_id, ts, value FROM events "
+    "QUALIFY ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts DESC) = 1",
+    schema, rules,
+)
+witness["tables"]    # {"events": [two rows of one user with the same ts, different value]}
+witness["orders"]    # {"first": {"events": [0, 1]}, "second": {"events": [1, 0]}}
+witness["results"]   # the two different result bags
+replay(witness)      # True: rebuilds the database from the JSON and checks it again
+```
+
+The search runs the query on the databases of `targeted_data.database_suite` built around it, plus variants whose rows agree on every non-key column but one (equal sort keys, different payload). On the first database where a storage order from `refute._orders` changes the result, it drops rows greedily while the result still depends on the order, which usually leaves two tied rows. Every database keeps the declared NOT NULL columns, keys and foreign keys (`refute.legal`), so a witness never contradicts a fact the analysis rested on. Each order is then run twice and once more with DuckDB's optimizer off (`duckdb_load.run_unoptimized`); a difference that does not repeat, or that the unoptimized run does not show, is dropped, so a random function or an engine bug cannot make a witness. `replay` repeats all of these checks on a stored witness (and rejects one whose rows break a recorded key or NOT NULL column).
+
+A witness belongs to the whole query: it does not say which of the query's sites caused the difference. No witness does not mean the query is deterministic: the search is bounded and tries a few dozen small databases. The tests check the other direction on a list of queries: none the analysis calls `deterministic` gets a witness.
+
 ## Checks
 
 `tests/test_tie_determinism.py` lists the verdicts for 50 queries without and with a declared key, and runs every query judged deterministic on DuckDB with its table's rows stored in every order (DuckDB on one thread breaks ties by storage order): each returns the same rows every time.

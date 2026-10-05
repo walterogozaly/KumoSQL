@@ -33,6 +33,32 @@ def test_python_repr_timing_and_memory_keys_are_masked():
     assert a != c
 
 
+def test_seconds_suffix_fields_are_masked_but_result_counts_are_not():
+    a = eval_diff.normalize('{"queries": 40, "rewrite_seconds": 12.8, "counterexample_seconds": 0.45}')
+    b = eval_diff.normalize('{"queries": 40, "rewrite_seconds": 3.1, "counterexample_seconds": 9.2}')
+    c = eval_diff.normalize('{"queries": 41, "rewrite_seconds": 3.1, "counterexample_seconds": 9.2}')
+    assert a == b
+    assert a != c
+
+
+def test_sampled_commands_require_a_supported_harness():
+    cases = {
+        "python tools/targeted_data_bench.py --split all": "python tools/targeted_data_bench.py --split all --limit 25",
+        "python tools/bounded_bench.py run leetcode --rows 3": "python tools/bounded_bench.py run leetcode --rows 3 --limit 25",
+        "python tools/conditional_bench.py singh": "python tools/conditional_bench.py singh --sample 25",
+        "python tools/conditional_bench.py verieql --every 8": "python tools/conditional_bench.py verieql --every 8 --limit 25",
+        "python tools/engine_suites.py --suite duckdb-slt": "python tools/engine_suites.py --suite duckdb-slt --limit 25",
+        "python tools/singh_bedathur_bench.py": "python tools/singh_bedathur_bench.py --sample 25",
+    }
+    for original, expected in cases.items():
+        command, reason = eval_diff.sampled_command(original, 25)
+        assert command == expected
+        assert reason is None
+    command, reason = eval_diff.sampled_command("python tools/qed_bench.py", 25)
+    assert command is None
+    assert reason == "no deterministic sample mode for this command"
+
+
 def test_commands_come_from_results_files(tmp_path):
     results = tmp_path / "benchmarks" / "results"
     results.mkdir(parents=True)
@@ -45,3 +71,42 @@ def test_commands_come_from_results_files(tmp_path):
     for name, command in rows.items():
         (results / f"{name}.json").write_text(json.dumps({"command": command}), encoding="utf-8")
     assert eval_diff.commands(tmp_path) == {"python tools/a.py --scale": ["a", "b"]}
+
+
+def test_run_uses_current_python_and_records_failure(tmp_path):
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    (tools / "probe.py").write_text(
+        "import os,sys\nprint(sys.executable)\nprint(os.environ['PYTHONHASHSEED'])\nraise SystemExit(7)\n",
+        encoding="utf-8",
+    )
+    result = eval_diff.run(tmp_path, "python tools/probe.py", 10)
+    import sys
+    assert result.returncode == 7
+    assert sys.executable in result.output
+    assert result.output.splitlines()[-1] == "0"
+    assert result.state == "finished"
+    assert result.seconds >= 0
+
+
+def test_run_timeout_returns_uncomparable_result(tmp_path):
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    (tools / "probe.py").write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
+    result = eval_diff.run(tmp_path, "python tools/probe.py", 1)
+    assert result.returncode == -1
+    assert result.state == "timed out"
+    assert "process tree terminated" in result.output
+    assert result.seconds < 15
+
+
+def test_matching_failures_do_not_count_as_agreement(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(eval_diff, "commands", lambda root: {"python tools/probe.py": ["probe"]})
+    monkeypatch.setattr(eval_diff.subprocess, "run", lambda *a, **kw: None)
+    monkeypatch.setattr(eval_diff, "run", lambda *a: eval_diff.RunResult(2, "same failure", 0.01))
+    timings = tmp_path / "timings.json"
+    assert eval_diff.main(["--serial", "--timings", str(timings)]) == 1
+    output = capsys.readouterr().out
+    assert "0 comparisons completed; 0 differ; 1 could not be compared" in output
+    row = json.loads(timings.read_text())["runs"][0]
+    assert row["base_exit"] == row["checkout_exit"] == 2

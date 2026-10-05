@@ -4642,6 +4642,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="when the pair is not proven, look for facts (NOT NULL, unique keys, foreign keys) that would make it equivalent; exit 3",
     )
+    parser.add_argument(
+        "--explain-difference",
+        action="store_true",
+        help="when the pair is refuted, add except_when: a verified predicate P such that the queries are equivalent except when P holds",
+    )
     args = parser.parse_args(argv)
     with open(args.left, encoding="utf-8") as handle:
         left = handle.read()
@@ -4670,6 +4675,15 @@ def main(argv: list[str] | None = None) -> int:
             "left_rows": [list(r) for r in result.counterexample.left_rows],
             "right_rows": [list(r) for r in result.counterexample.right_rows],
         }
+    if args.explain_difference and result.status is SmtStatus.NOT_EQUIVALENT:
+        from .difference_surface import except_when
+
+        options: dict = {"timeout_ms": args.timeout_ms}
+        if schema is not None:
+            options["schema"] = schema
+        found = except_when(left, right, **options)
+        if found is not None:
+            payload["except_when"] = found
     json.dump(payload, sys.stdout, indent=2, default=str)
     sys.stdout.write("\n")
     if result.conditionally_proven:

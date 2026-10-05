@@ -27,7 +27,17 @@ apart in the output:
 A recommendation counts as valid only if it is correct; its benefit is then
 reported as estimated and as observed, never mixed.
 
+``--advisor`` adds a third source that needs no database server and no network: the materialization
+advisor's ``store_view`` and ``unstore_table`` recommendations on synthetic Dataform projects
+(``tools/cost_validity_projects.py``). A recommendation there changes where a model is computed, not any
+SQL, so the proof is the advisor's evidence label and the check is an executed comparison in DuckDB: the
+project runs for a few simulated days with and without the change (sources grow, stored models refresh in
+one run, and every query and every model is read between runs and after the refresh) and the two worlds
+must return the same rows. A change that is not proven (``conditional``, ``unknown``) is listed as needing
+proof and may never be counted as a saving or be chosen; a ``changes_results`` change must be refused.
+
     python tools/cost_validity_bench.py --workload tpcds=queries/tpcds --workload dsb=queries/dsb --out results.json
+    python tools/cost_validity_bench.py --advisor --out advisor.json
 """
 
 from __future__ import annotations
@@ -35,6 +45,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
+from datetime import timedelta
 import json
 from pathlib import Path
 import statistics
@@ -47,7 +58,10 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import sqlglot  # noqa: E402
 
+import cost_validity_projects as projects  # noqa: E402
 from kumosql import query_optimizer as qo  # noqa: E402
+from kumosql.advisor import STORED_KINDS, advise  # noqa: E402
+from kumosql.cost_model import Pricing  # noqa: E402
 from kumosql.rewrite import apply_rules, canonical_rule_order  # noqa: E402
 from rewrite_bench import FLOAT_PLACES, Executor, _catalog, _explain_cost, _jsonable, _norm  # noqa: E402
 from sqlglot import exp  # noqa: E402
@@ -325,9 +339,253 @@ def summarize(records: list[dict], source: str) -> dict:
     }
 
 
+# ------------------------------------------------------------------ advisor: store_view and unstore_table
+
+#: What an advisor label and its executed comparison mean. Copied into the saved records.
+ADVISOR_ASSUMPTIONS = (
+    "the data is a few dozen synthetic rows per table that grow every simulated day; sources change only between runs",
+    "stored models refresh in one run in dependency order, once a day, and are read outside that run",
+    "BigQuery SQL is transpiled to DuckDB for both sides alike; the transpiler is not under test",
+    "a clock function is replaced by the simulated day's date or timestamp; RAND and UUID are DuckDB's, seeded and single-threaded",
+    "a difference counts only when DuckDB with its optimizer off returns the same difference",
+)
+CLOCK_TYPES = (exp.CurrentTimestamp, exp.CurrentDatetime)
+
+
+def _flat(key: str) -> str:
+    return key.replace(".", "__")
+
+
+def duckdb_sql(pipeline, sql: str, clock) -> str:
+    """BigQuery ``sql`` over the project's nodes as DuckDB SQL, with the clock set to ``clock``."""
+
+    def swap(node: exp.Expression) -> exp.Expression:
+        if isinstance(node, exp.Table):
+            key = pipeline.resolve(node)
+            if key:
+                new = exp.table_(_flat(key))
+                if node.args.get("alias") is not None:
+                    new.set("alias", node.args["alias"].copy())
+                return new
+        if isinstance(node, exp.CurrentDate):
+            return exp.cast(exp.Literal.string(clock.date().isoformat()), "date")
+        if isinstance(node, CLOCK_TYPES):
+            return exp.cast(exp.Literal.string(clock.strftime("%Y-%m-%d %H:%M:%S")), "timestamp")
+        return node
+
+    return sqlglot.parse_one(sql, read="bigquery").transform(swap).sql(dialect="duckdb")
+
+
+class World:
+    """The project in DuckDB with a given set of models stored as tables and the rest as views."""
+
+    def __init__(self, case: "projects.Case", stored: frozenset[str]):
+        import duckdb
+
+        self.pipeline = case.pipeline()
+        self.stored = stored
+        self.order = [k for k in self.pipeline.topological_order() if k in self.pipeline.models]
+        self.sql = {key: sql for key, (_, sql) in case.models.items()}
+        self.con = duckdb.connect()
+        self.con.execute("PRAGMA threads=1")
+        self.con.execute("SELECT setseed(0.5)")
+        for key, source in case.sources.items():
+            columns = ", ".join(f"{name} {projects.DUCKDB_TYPES[kind]}" for name, kind in source.schema.items())
+            self.con.execute(f"CREATE TABLE {_flat(key)} ({columns})")
+            self.add_rows(key, source.initial())
+        self.build(projects.START, tables=True)
+
+    def add_rows(self, key: str, rows: list[tuple]) -> None:
+        width = len(rows[0])
+        self.con.executemany(f"INSERT INTO {_flat(key)} VALUES ({', '.join('?' * width)})", rows)
+
+    def build(self, clock, *, tables: bool) -> None:
+        """Define every view as of ``clock``; with ``tables``, also refresh every stored model, in dependency order."""
+
+        for key in self.order:
+            text = duckdb_sql(self.pipeline, self.sql[key], clock)
+            if key in self.stored:
+                if tables:
+                    self.con.execute(f"CREATE OR REPLACE TABLE {_flat(key)} AS {text}")
+            else:
+                self.con.execute(f"CREATE OR REPLACE VIEW {_flat(key)} AS {text}")
+
+    def read(self, sql: str, clock, *, unoptimized: bool = False) -> tuple[list[tuple], list[tuple]]:
+        from kumosql.duckdb_load import run_unoptimized
+
+        text = duckdb_sql(self.pipeline, sql, clock)
+        if unoptimized:
+            return _rows(_jsonable(run_unoptimized(self.con, text)[0])), []
+        cursor = self.con.execute(text)
+        return _rows(_jsonable(cursor.fetchall())), [(d[0], str(d[1])) for d in cursor.description]
+
+
+def read_queries(case: "projects.Case") -> list[str]:
+    """Every query the project's readers run, and a full read of every model."""
+
+    return [r.sql for r in case.readers] + [f"SELECT * FROM `{key}`" for key in case.models]
+
+
+def execute_change(case: "projects.Case", store: frozenset[str] = frozenset(), unstore: frozenset[str] = frozenset()) -> dict:
+    """Run the project with and without a change for the case's simulated days and compare every read.
+
+    Each day the sources grow, then every query and model is read before the refresh (between runs) and
+    after it. ``outcome`` is ``same_rows``, ``different_rows`` (rows differ and DuckDB with its optimizer
+    off returns the same difference), ``different_schema``, ``rewrite_error``, ``baseline_error`` or
+    ``optimizer_disagrees`` (a difference that disappears with the optimizer off, not counted either way).
+    """
+
+    baseline = frozenset(k for k, (kind, _) in case.models.items() if kind in STORED_KINDS)
+    before, after = World(case, baseline), World(case, (baseline | store) - unstore)
+    queries = read_queries(case)
+    found: list[dict] = []
+    reads = 0
+    errors: dict[str, str] = {}
+    for day in range(1, case.sim_days + 1):
+        clock = projects.START + timedelta(days=day)
+        for world in (before, after):
+            for key, source in case.sources.items():
+                world.add_rows(key, source.daily(day))
+        for phase in ("between runs", "after the refresh"):
+            for world in (before, after):
+                world.build(clock, tables=phase == "after the refresh")
+            for sql in queries:
+                try:
+                    a = before.read(sql, clock)
+                except Exception as error:  # noqa: BLE001 - a database error is a result
+                    errors.setdefault("baseline_error", f"{type(error).__name__}: {str(error)[:120]}")
+                    continue
+                try:
+                    b = after.read(sql, clock)
+                except Exception as error:  # noqa: BLE001
+                    errors.setdefault("rewrite_error", f"{type(error).__name__}: {str(error)[:120]}")
+                    continue
+                reads += 1
+                if a[1] != b[1]:
+                    found.append({"kind": "schema", "phase": phase, "day": day, "query": sql})
+                elif Counter(a[0]) != Counter(b[0]):
+                    again = before.read(sql, clock, unoptimized=True)[0], after.read(sql, clock, unoptimized=True)[0]
+                    confirmed = Counter(again[0]) != Counter(again[1])
+                    found.append({"kind": "rows" if confirmed else "optimizer", "phase": phase, "day": day, "query": sql})
+    kinds = {f["kind"] for f in found}
+    if "rewrite_error" in errors:
+        outcome = "rewrite_error"
+    elif "rows" in kinds:
+        outcome = "different_rows"
+    elif "schema" in kinds:
+        outcome = "different_schema"
+    elif "optimizer" in kinds:
+        outcome = "optimizer_disagrees"
+    elif "baseline_error" in errors:
+        outcome = "baseline_error"
+    else:
+        outcome = "same_rows"
+    record: dict = {"outcome": outcome, "reads_compared": reads, "differences": len(found)}
+    if found:
+        record["first_difference"] = found[0]
+    if errors:
+        record["errors"] = errors
+    return record
+
+
+def advisor_records(case: "projects.Case") -> list[dict]:
+    """The advisor's candidates for one case, each executed on its own, and the chosen set executed together."""
+
+    advice = advise(case.pipeline(), case.jobs(), sizes=case.sizes, pricing=Pricing(), schedules=case.schedules)
+    payload = advice.to_json()
+    recommended = {c["id"] for c in payload["recommendations"]}
+    records = []
+    for c in advice.candidates:
+        change = {"store": frozenset([c["node"]])} if c["kind"] == "store_view" else {"unstore": frozenset([c["node"]])}
+        record = {
+            "case": case.name, "id": c["id"], "kind": c["kind"], "label": c["evidence"]["label"],
+            "reason": c["evidence"]["reason"], "recommended": c["id"] in recommended, "chosen": c["chosen"],
+            "saving_per_day": c["saving_per_day"], "saving_basis": c["saving_basis"],
+            "assumptions": list(ADVISOR_ASSUMPTIONS), **execute_change(case, **change),
+        }
+        if c["evidence"].get("conditions"):
+            record["conditions"] = c["evidence"]["conditions"]
+        records.append(record)
+    chosen = [c for c in advice.candidates if c["chosen"]]
+    selection = {
+        "case": case.name, "id": "selection", "kind": "selection", "members": [c["id"] for c in chosen],
+        "saving_per_day": payload["selection"]["saving_per_day"],
+        "listed_as_needs_proof": [c["id"] for c in payload["needs_proof"]],
+        # anything the advisor counts as a saving (recommended or chosen) whose evidence is not proven
+        "counted_unproven": sorted({c["id"] for c in [*payload["recommendations"], *chosen] if c["evidence"]["label"] != "proven"}),
+    }
+    if chosen:
+        selection.update(execute_change(
+            case,
+            store=frozenset(c["node"] for c in chosen if c["kind"] == "store_view"),
+            unstore=frozenset(c["node"] for c in chosen if c["kind"] == "unstore_table"),
+        ))
+    else:
+        selection.update({"outcome": "same_rows", "reads_compared": 0, "differences": 0})
+    records.append(selection)
+    return records
+
+
+WRONG_OUTCOMES = ("different_rows", "different_schema", "rewrite_error")
+
+
+def summarize_advisor(records: list[dict]) -> dict:
+    """Counts for the advisor records. Proof label and executed agreement are counted apart.
+
+    ``wrong`` is a proven change that executed differently, a chosen set that executed differently, or an
+    unproven change counted as a saving (recommended or chosen). A change that is not proven is reported by
+    whether its refusal was warranted (``difference_seen``); that never counts as wrong.
+    """
+
+    singles = [r for r in records if r["kind"] != "selection"]
+    selections = [r for r in records if r["kind"] == "selection"]
+    by_label = Counter(r["label"] for r in singles)
+    proven = [r for r in singles if r["label"] == "proven"]
+    recommended = [r for r in singles if r["recommended"]]
+    needs_proof = [r for r in singles if r["label"] in ("conditional", "unknown")]
+    refused = [r for r in singles if r["label"] == "changes_results"]
+    chosen_sets = [r for r in selections if r["members"]]
+    counted_unproven = sum(len(r["counted_unproven"]) for r in selections)
+
+    def differing(rows: list[dict]) -> int:
+        return sum(r["outcome"] in WRONG_OUTCOMES for r in rows)
+
+    return {
+        "cases": len({r["case"] for r in records}),
+        "candidates": len(singles),
+        "store_view": sum(r["kind"] == "store_view" for r in singles),
+        "unstore_table": sum(r["kind"] == "unstore_table" for r in singles),
+        "proven": len(proven),
+        "conditional": by_label["conditional"],
+        "unknown": by_label["unknown"],
+        "changes_results": len(refused),
+        "recommended": len(recommended),
+        "recommended_same_rows": sum(r["outcome"] == "same_rows" for r in recommended),
+        "proven_same_rows": sum(r["outcome"] == "same_rows" for r in proven),
+        "proven_different": differing(proven),
+        "chosen_sets": len(chosen_sets),
+        "chosen_sets_same_rows": sum(r["outcome"] == "same_rows" for r in chosen_sets),
+        "chosen_sets_different": differing(chosen_sets),
+        "needs_proof": len(needs_proof),
+        "needs_proof_difference_seen": differing(needs_proof),
+        "refused": len(refused),
+        "refused_difference_seen": differing(refused),
+        "unproven_counted_as_saving": counted_unproven,
+        "not_judged": sum(r["outcome"] in ("baseline_error", "optimizer_disagrees") for r in records),
+        "reads_compared": sum(r["reads_compared"] for r in records),
+        "wrong": differing(proven) + differing(chosen_sets) + counted_unproven,
+    }
+
+
+def run_advisor(cases: list["projects.Case"] | None = None) -> tuple[dict, list[dict]]:
+    records = [r for case in (cases or projects.cases()) for r in advisor_records(case)]
+    return summarize_advisor(records), records
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--workload", action="append", required=True, help="DB=DIR of .sql files, run on database DB")
+    parser.add_argument("--workload", action="append", help="DB=DIR of .sql files, run on database DB")
+    parser.add_argument("--advisor", action="store_true", help="also judge the materialization advisor's store_view and unstore_table recommendations (offline, DuckDB)")
     parser.add_argument("--host", default="/tmp")
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--timeout", type=float, default=60.0, help="seconds per statement")
@@ -336,6 +594,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path)
     parser.add_argument("--rejudge", type=Path, help="reuse the recommendations of an earlier --out file and only execute them again")
     args = parser.parse_args(argv)
+    if not args.workload and not args.advisor:
+        parser.error("give --workload DB=DIR, --advisor, or both")
+
+    advisor = None
+    if args.advisor:
+        advisor = run_advisor()
+        print("advisor", json.dumps(advisor[0]))
+        for r in advisor[1]:
+            print(f"{r['case']:<10} {r['id']:<40} {r.get('label', ''):<16} {r['outcome']}", flush=True)
+    if not args.workload:
+        if args.out:
+            args.out.write_text(json.dumps({"summary": {"advisor": advisor[0]}, "advisor": advisor[1]}, indent=1, default=str))
+        return 1 if advisor[0]["wrong"] else 0
 
     queries = [q for spec in args.workload for q in load_workload(spec)]
     if args.only:
@@ -373,8 +644,11 @@ def main(argv: list[str] | None = None) -> int:
     for source, s in summary.items():
         print(source, json.dumps(s))
     if args.out:
-        args.out.write_text(json.dumps({"summary": summary, "queries": records}, indent=1, default=str))
+        extra = {"advisor": advisor[1]} if advisor else {}
+        everything = {**summary, **({"advisor": advisor[0]} if advisor else {})}
+        args.out.write_text(json.dumps({"summary": everything, "queries": records, **extra}, indent=1, default=str))
     wrong = sum(s["different_rows"] + s["different_schema"] + s["rewrite_errors"] for s in summary.values())
+    wrong += advisor[0]["wrong"] if advisor else 0
     return 1 if wrong else 0
 
 

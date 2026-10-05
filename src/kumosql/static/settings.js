@@ -753,11 +753,12 @@
       queryVerdict.textContent = "Comparing…";
       queryDetail.replaceChildren();
       try {
-        const result = await repoCall("POST", "/api/prove-queries", { left: queryA.value, right: queryB.value });
+        const result = await repoCall("POST", "/api/prove-queries", { left: queryA.value, right: queryB.value, explain: true });
         queryVerdict.textContent = result.status === "proven_equivalent" ? "Equivalent."
           : result.status === "proven_conditionally" ? `Equivalent under ${result.conditions.length} ${result.conditions.length === 1 ? "condition" : "conditions"}.`
           : result.status === "not_equivalent" ? `Different results: ${result.reason}` : `Not proven: ${result.reason}${boundedLine(result.bounded)}`;
         if (result.status === "proven_conditionally") queryDetail.append(conditionsOf(result.conditions));
+        if (result.except_when) queryDetail.append(h("p", { class: "sp-except" }, "Equivalent except when ", h("code", { class: "sp-except-sql", text: result.except_when.sql })));
         if (!result.counterexample && result.bounded && result.bounded.counterexample) {
           const found = Object.entries(result.bounded.counterexample.tables).map(([name, items]) => `${name}: ${items.map((row) => JSON.stringify(row)).join(" ")}`);
           queryDetail.append(h("pre", { class: "sp-pre", text: found.join("\n") }));

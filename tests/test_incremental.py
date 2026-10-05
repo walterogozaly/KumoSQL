@@ -12,13 +12,12 @@ from kumosql.incremental import (  # noqa: E402
     IncrementalError,
     SourceTable,
     check_incremental,
-    prove_watermark,
+    prove,
     first_divergence,
     parse_incremental_sqlx,
     replay,
     search_divergence,
 )
-from kumosql.incremental_rules import prove_more  # noqa: E402
 
 _path = Path(__file__).resolve().parent.parent / "tools" / "incremental_bench.py"
 _spec = importlib.util.spec_from_file_location("incremental_bench", _path)
@@ -93,12 +92,12 @@ def test_proof_rules_answer_safe_only_inside_their_contract():
 
 
 def test_proven_cases_never_diverge_under_a_deeper_search():
-    for case in bench.load_cases():
+    for case in bench.load_cases("dev"):
         m, sources = bench.build(case)
         contract = case["contract"]
         tables = tuple(contract.get("tables") or ()) or None
         kinds = frozenset(contract["kinds"])
-        if (prove_watermark(m, sources, kinds) or prove_more(m, sources, kinds, tables)) is not None:
+        if prove(m, sources, kinds, tables) is not None:
             found = search_divergence(m, sources, contract["kinds"], seeds=25, batches=5, seed=7, tables=tables)
             assert found is None, case["id"]
 

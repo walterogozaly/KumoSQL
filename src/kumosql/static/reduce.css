@@ -1,0 +1,35 @@
+/* Layout of the Reduce page. The verdict tag, cards, checks table and diff reuse shared-models.css (sm-*). */
+.rd-page { max-width: 1280px; margin: 0 auto; padding: 16px 24px 48px; }
+.rd-head { display: flex; align-items: center; gap: 10px; min-height: 48px; }
+.rd-head h1 { margin: 0 auto 0 0; font-size: 16px; }
+.rd-status { color: var(--text-muted); font-size: 12.5px; }
+.rd-status.error { color: var(--bad-fg); }
+.rd-layout { display: grid; grid-template-columns: 380px 1fr; gap: 16px; align-items: start; }
+.rd-toolbar { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+.rd-toolbar input { flex: 1; min-width: 0; font: inherit; font-size: 12.5px; padding: 5px 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); }
+.rd-list { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel); max-height: calc(100vh - 290px); min-height: 120px; overflow: auto; }
+.rd-row { display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: center; padding: 5px 12px; font-size: 12.5px; border-bottom: 1px solid var(--border-subtle); cursor: pointer; }
+.rd-row:last-child { border-bottom: 0; }
+.rd-row:hover { background: var(--accent-soft); }
+.rd-row[data-kept="true"] { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.rd-row .rd-name { font-family: var(--font-mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rd-row .rd-name small { color: var(--text-faint); font-family: inherit; margin-left: 6px; }
+.rd-row .rd-kind { color: var(--text-faint); font-size: 11.5px; }
+.rd-empty { color: var(--text-faint); font-size: 12.5px; padding: 10px 12px; }
+.rd-options { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 12.5px; margin-top: 10px; }
+.rd-options label { display: inline-flex; gap: 5px; align-items: center; }
+.rd-options select { font: inherit; padding: 3px 6px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); }
+.rd-count { color: var(--text-muted); margin-left: auto; }
+.rd-options .primary-button { width: auto; padding-inline: 20px; }
+.rd-results { min-width: 0; }
+.rd-stats { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.rd-stat { border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 6px 12px; font-size: 12.5px; background: var(--surface); }
+.rd-stat span { display: block; color: var(--text-faint); font-size: 11.5px; }
+.rd-stat strong { font-family: var(--font-mono); font-size: 13px; }
+.rd-group { margin-top: 10px; }
+.rd-group summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.rd-items { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12.5px; }
+.rd-items li { display: grid; grid-template-columns: minmax(180px, 34%) 1fr; gap: 10px; padding: 3px 0; border-bottom: 1px solid var(--border-subtle); }
+.rd-items li:last-child { border-bottom: 0; }
+.rd-items code { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.rd-items .rd-why { color: var(--text-muted); }
