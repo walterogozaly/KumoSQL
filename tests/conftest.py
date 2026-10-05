@@ -212,6 +212,7 @@ EVAL_FILES = {
     "test_targeted_data_bench.py",
     "test_transformation_bench.py",
     "test_unsafe_fuzz.py",
+    "test_window_equivalence_eval.py",
     "test_verieql_benchmarks.py",
 }
 

@@ -1,0 +1,151 @@
+{
+ "events": {
+  "tables": {
+   "events": {
+    "columns": [
+     [
+      "id",
+      "INT64"
+     ],
+     [
+      "user_id",
+      "INT64"
+     ],
+     [
+      "ts",
+      "INT64"
+     ],
+     [
+      "value",
+      "INT64"
+     ]
+    ]
+   }
+  },
+  "constraints": {}
+ },
+ "events_key": {
+  "tables": {
+   "events": {
+    "columns": [
+     [
+      "id",
+      "INT64"
+     ],
+     [
+      "user_id",
+      "INT64"
+     ],
+     [
+      "ts",
+      "INT64"
+     ],
+     [
+      "value",
+      "INT64"
+     ]
+    ]
+   }
+  },
+  "constraints": {
+   "events": {
+    "not_null": [
+     "id",
+     "user_id",
+     "ts",
+     "value"
+    ],
+    "keys": [
+     [
+      "id"
+     ]
+    ]
+   }
+  }
+ },
+ "events_uts": {
+  "tables": {
+   "events": {
+    "columns": [
+     [
+      "id",
+      "INT64"
+     ],
+     [
+      "user_id",
+      "INT64"
+     ],
+     [
+      "ts",
+      "INT64"
+     ],
+     [
+      "value",
+      "INT64"
+     ]
+    ]
+   }
+  },
+  "constraints": {
+   "events": {
+    "not_null": [
+     "id",
+     "user_id",
+     "ts",
+     "value"
+    ],
+    "keys": [
+     [
+      "id"
+     ],
+     [
+      "user_id",
+      "ts"
+     ]
+    ]
+   }
+  }
+ },
+ "events_null": {
+  "tables": {
+   "events": {
+    "columns": [
+     [
+      "id",
+      "INT64"
+     ],
+     [
+      "user_id",
+      "INT64"
+     ],
+     [
+      "ts",
+      "INT64"
+     ],
+     [
+      "value",
+      "INT64"
+     ]
+    ]
+   }
+  },
+  "constraints": {
+   "events": {
+    "not_null": [
+     "id"
+    ],
+    "keys": [
+     [
+      "id"
+     ]
+    ]
+   }
+  }
+ },
+ "_about": {
+  "events": "events(id, user_id, ts, value), all INT64, nothing declared: rows may repeat and any column may be NULL",
+  "events_key": "same columns, every column NOT NULL, id unique (a total order is available by adding id)",
+  "events_uts": "same, with (user_id, ts) also unique, so ORDER BY ts within a user never ties",
+  "events_null": "id unique and NOT NULL, the other columns nullable"
+ }
+}

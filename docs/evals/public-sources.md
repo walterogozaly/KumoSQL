@@ -14,8 +14,8 @@ Status: **covered** (an existing eval already scores it), **new** (being added, 
 | --- | --- | --- | --- | --- | --- |
 | E01 | SQLSolver Calcite, Spark, TPC-C, TPC-H pairs | Apache-2.0 | yes | 232 + 124 + TPC-C + TPC-H pairs | covered: `sqlsolver-calcite`, `sqlsolver-spark`, `sqlsolver-tpcc`, `sqlsolver-tpch` and the bounded rows ([page](sqlsolver.md)) |
 | E02 | SQL-RewriteBench | Apache-2.0 with exclusions | yes | 180 cases | covered: `sql-rewritebench` ([page](rewrite-benchmarks.md)) |
-| E03 | DuckDB SQLLogicTests | MIT | yes | every `test/sql` file | covered: `engine-duckdb-slt-plain`, `engine-duckdb-slt-amplified` ([page](engine-suites.md)) |
-| E04 | Original SQLite SQLLogicTest | public domain | yes (GitHub mirror) | every 4th file | covered: `engine-sqlite-slt-plain`, `engine-sqlite-slt-amplified` ([page](engine-suites.md)) |
+| E03 | DuckDB SQLLogicTests | MIT | yes | every `test/sql` file | covered: `engine-duckdb-slt-plain`, `engine-duckdb-slt-amplified` ([page](engine-suites.md)); its window queries also feed `window-equivalence` ([page](window-equivalence.md)) |
+| E04 | Original SQLite SQLLogicTest | public domain | yes (GitHub mirror) | every 4th file | covered: `engine-sqlite-slt-plain`, `engine-sqlite-slt-amplified` ([page](engine-suites.md)); it holds no window query, so `window-equivalence` takes none from it |
 | E05 | SQLancer | MIT | yes | generator | covered: KumoSQL's own TLP/NoREC fuzzer, `sqlancer-tlp-norec` ([page](fuzzing.md)) |
 | E06 | Spider distilled test suites (`taoyds/test-suite-sql-eval`, `ruiqi-zhong/TestSuiteEval`) | Apache-2.0 (code); TestSuiteEval has no licence | code yes; test-suite databases are on Google Drive (blocked) | 557 hand-labelled ESM false negatives | **new** (batch 1, with E07): the hand-labelled equivalent pairs, downloaded at run time, refuted only on databases KumoSQL builds |
 | E07 | Spider 1.0 (`taoyds/spider`) | Apache-2.0 repo, CC BY-SA 4.0 data | queries, `tables.json` yes; SQLite databases blocked (Drive, Yale site) | 1,034 dev and 7,000 train gold queries | **new** (batch 1): gold queries as rewrite inputs, checked by proof or on generated databases that respect the keys |

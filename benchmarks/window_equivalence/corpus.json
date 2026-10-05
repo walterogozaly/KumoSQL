@@ -1,0 +1,742 @@
+{
+ "source": "VeriEQL (CC BY-NC-SA 4.0, commit 493cbb81, read from the local cache, not copied) and SQLSolver (Apache-2.0)",
+ "pairs": [
+  {
+   "id": "leetcode-216",
+   "suite": "leetcode",
+   "index": 216,
+   "sha": "9a8ac382b0a3",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-696",
+   "suite": "leetcode",
+   "index": 696,
+   "sha": "00843453fca2",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-720",
+   "suite": "leetcode",
+   "index": 720,
+   "sha": "173ad4ded798",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-744",
+   "suite": "leetcode",
+   "index": 744,
+   "sha": "4ad142318356",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-768",
+   "suite": "leetcode",
+   "index": 768,
+   "sha": "41cb016af32e",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-816",
+   "suite": "leetcode",
+   "index": 816,
+   "sha": "7b1421471268",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-840",
+   "suite": "leetcode",
+   "index": 840,
+   "sha": "87d2d346397d",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-864",
+   "suite": "leetcode",
+   "index": 864,
+   "sha": "da8dc33da092",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-960",
+   "suite": "leetcode",
+   "index": 960,
+   "sha": "a4b9bb3640ca",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1032",
+   "suite": "leetcode",
+   "index": 1032,
+   "sha": "4863295151f3",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1056",
+   "suite": "leetcode",
+   "index": 1056,
+   "sha": "0b8f04d7f152",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1080",
+   "suite": "leetcode",
+   "index": 1080,
+   "sha": "215b6bbc0974",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1104",
+   "suite": "leetcode",
+   "index": 1104,
+   "sha": "ada1840837cc",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1128",
+   "suite": "leetcode",
+   "index": 1128,
+   "sha": "4cc4ec84456d",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1152",
+   "suite": "leetcode",
+   "index": 1152,
+   "sha": "a4cd5532e5ed",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1200",
+   "suite": "leetcode",
+   "index": 1200,
+   "sha": "1b8c277876b4",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1224",
+   "suite": "leetcode",
+   "index": 1224,
+   "sha": "ab956fa139d8",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1272",
+   "suite": "leetcode",
+   "index": 1272,
+   "sha": "29e1abe0d8d1",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1344",
+   "suite": "leetcode",
+   "index": 1344,
+   "sha": "bd67803f6258",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1416",
+   "suite": "leetcode",
+   "index": 1416,
+   "sha": "fbde8279861e",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1464",
+   "suite": "leetcode",
+   "index": 1464,
+   "sha": "fc0c1c6482a3",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1608",
+   "suite": "leetcode",
+   "index": 1608,
+   "sha": "a28d5d5338a3",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1752",
+   "suite": "leetcode",
+   "index": 1752,
+   "sha": "1b830c24a4cf",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1776",
+   "suite": "leetcode",
+   "index": 1776,
+   "sha": "3fcb90496dbf",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1800",
+   "suite": "leetcode",
+   "index": 1800,
+   "sha": "df81959bbe87",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1872",
+   "suite": "leetcode",
+   "index": 1872,
+   "sha": "d7feb06c635a",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1944",
+   "suite": "leetcode",
+   "index": 1944,
+   "sha": "330b46e9fc21",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1968",
+   "suite": "leetcode",
+   "index": 1968,
+   "sha": "eef48b119e6d",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-1992",
+   "suite": "leetcode",
+   "index": 1992,
+   "sha": "23d7c32a91ee",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-2064",
+   "suite": "leetcode",
+   "index": 2064,
+   "sha": "aae2df3d3c0b",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-2688",
+   "suite": "leetcode",
+   "index": 2688,
+   "sha": "ab9cce439a72",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-3072",
+   "suite": "leetcode",
+   "index": 3072,
+   "sha": "f0d2a150b064",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-3168",
+   "suite": "leetcode",
+   "index": 3168,
+   "sha": "f45f242d5d54",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-3192",
+   "suite": "leetcode",
+   "index": 3192,
+   "sha": "ab5ee8a708ea",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-3216",
+   "suite": "leetcode",
+   "index": 3216,
+   "sha": "5c20706fc36c",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-3264",
+   "suite": "leetcode",
+   "index": 3264,
+   "sha": "d8a55d2dc82e",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-3288",
+   "suite": "leetcode",
+   "index": 3288,
+   "sha": "b51de405cba3",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-3312",
+   "suite": "leetcode",
+   "index": 3312,
+   "sha": "89728bf675d2",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-3384",
+   "suite": "leetcode",
+   "index": 3384,
+   "sha": "7eb14a88e20c",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-3408",
+   "suite": "leetcode",
+   "index": 3408,
+   "sha": "f8837ff8531e",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-3432",
+   "suite": "leetcode",
+   "index": 3432,
+   "sha": "bbc323df5e39",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-3480",
+   "suite": "leetcode",
+   "index": 3480,
+   "sha": "12dd2139f15c",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-3624",
+   "suite": "leetcode",
+   "index": 3624,
+   "sha": "f0a247e4646b",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-4584",
+   "suite": "leetcode",
+   "index": 4584,
+   "sha": "d197bbaf3e65",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-4608",
+   "suite": "leetcode",
+   "index": 4608,
+   "sha": "d4c909834422",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-4704",
+   "suite": "leetcode",
+   "index": 4704,
+   "sha": "35981ee22541",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-6264",
+   "suite": "leetcode",
+   "index": 6264,
+   "sha": "3108279eba4a",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-6528",
+   "suite": "leetcode",
+   "index": 6528,
+   "sha": "5a412a318404",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-8544",
+   "suite": "leetcode",
+   "index": 8544,
+   "sha": "56331e590fbf",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-8616",
+   "suite": "leetcode",
+   "index": 8616,
+   "sha": "4aae7e6e9f51",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-8760",
+   "suite": "leetcode",
+   "index": 8760,
+   "sha": "95bc9b1ea58e",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-8856",
+   "suite": "leetcode",
+   "index": 8856,
+   "sha": "2e087f3ec0f8",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-8904",
+   "suite": "leetcode",
+   "index": 8904,
+   "sha": "beadaad121cb",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-9048",
+   "suite": "leetcode",
+   "index": 9048,
+   "sha": "c7ed694d755e",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-9504",
+   "suite": "leetcode",
+   "index": 9504,
+   "sha": "c5a2775f7cd5",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-9720",
+   "suite": "leetcode",
+   "index": 9720,
+   "sha": "e139c75459cb",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-9888",
+   "suite": "leetcode",
+   "index": 9888,
+   "sha": "4cbd78df6ff5",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-11112",
+   "suite": "leetcode",
+   "index": 11112,
+   "sha": "a19a86591b45",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-17040",
+   "suite": "leetcode",
+   "index": 17040,
+   "sha": "448c78e643d3",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-17160",
+   "suite": "leetcode",
+   "index": 17160,
+   "sha": "408d19f22ad8",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-17184",
+   "suite": "leetcode",
+   "index": 17184,
+   "sha": "830eb1375e48",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-17352",
+   "suite": "leetcode",
+   "index": 17352,
+   "sha": "8b6b3c3604e4",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-17376",
+   "suite": "leetcode",
+   "index": 17376,
+   "sha": "73fa6bacf094",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-17448",
+   "suite": "leetcode",
+   "index": 17448,
+   "sha": "72ee9d7b31a7",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-17520",
+   "suite": "leetcode",
+   "index": 17520,
+   "sha": "c6ef537c9b9a",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-17616",
+   "suite": "leetcode",
+   "index": 17616,
+   "sha": "1385f92c545b",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-17640",
+   "suite": "leetcode",
+   "index": 17640,
+   "sha": "7e34de5d0890",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-17664",
+   "suite": "leetcode",
+   "index": 17664,
+   "sha": "1aaef6b79cde",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-19296",
+   "suite": "leetcode",
+   "index": 19296,
+   "sha": "accd8c7364fb",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-21456",
+   "suite": "leetcode",
+   "index": 21456,
+   "sha": "5bfce42cc88b",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-22824",
+   "suite": "leetcode",
+   "index": 22824,
+   "sha": "b0eb5c2a92c5",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-22896",
+   "suite": "leetcode",
+   "index": 22896,
+   "sha": "e56a675849c5",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-22920",
+   "suite": "leetcode",
+   "index": 22920,
+   "sha": "eac0a4edcde2",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-23040",
+   "suite": "leetcode",
+   "index": 23040,
+   "sha": "74ec46c3d761",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-23160",
+   "suite": "leetcode",
+   "index": 23160,
+   "sha": "fea1a44f736f",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "leetcode-23184",
+   "suite": "leetcode",
+   "index": 23184,
+   "sha": "a5eec82923d4",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "calcite-0",
+   "suite": "calcite",
+   "index": 0,
+   "sha": "f3d7e3827445",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "calcite-30",
+   "suite": "calcite",
+   "index": 30,
+   "sha": "9c6f3187bc68",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "calcite-38",
+   "suite": "calcite",
+   "index": 38,
+   "sha": "e8cf322d09ca",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "calcite-40",
+   "suite": "calcite",
+   "index": 40,
+   "sha": "fa673c18a0ea",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "calcite-41",
+   "suite": "calcite",
+   "index": 41,
+   "sha": "ade887795bbe",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "calcite-42",
+   "suite": "calcite",
+   "index": 42,
+   "sha": "28319e307acc",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "calcite-70",
+   "suite": "calcite",
+   "index": 70,
+   "sha": "e6b0091bd398",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "calcite-153",
+   "suite": "calcite",
+   "index": 153,
+   "sha": "d983410041a7",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "calcite-177",
+   "suite": "calcite",
+   "index": 177,
+   "sha": "0083c37dcb18",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "calcite-181",
+   "suite": "calcite",
+   "index": 181,
+   "sha": "3c7b8fa62a02",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "calcite-187",
+   "suite": "calcite",
+   "index": 187,
+   "sha": "b717e3370194",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "calcite-279",
+   "suite": "calcite",
+   "index": 279,
+   "sha": "69002b87630c",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "calcite-282",
+   "suite": "calcite",
+   "index": 282,
+   "sha": "6fe086b01120",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "calcite-296",
+   "suite": "calcite",
+   "index": 296,
+   "sha": "ebfd49c679dd",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "calcite-357",
+   "suite": "calcite",
+   "index": 357,
+   "sha": "407bdd8d2fb5",
+   "label": "unlabelled",
+   "basis": "VeriEQL's files carry no label and its own run cannot read a window"
+  },
+  {
+   "id": "sqlsolver-spark-50",
+   "suite": "sqlsolver-spark",
+   "index": 50,
+   "sha": "",
+   "label": "not_equivalent",
+   "tie_dependent": true,
+   "basis": "tests/fixtures/sqlsolver/not_provable.json: LIMIT 5 without ORDER BY over ROW_NUMBER() OVER (ORDER BY f) against the first five sorted rows"
+  }
+ ]
+}
