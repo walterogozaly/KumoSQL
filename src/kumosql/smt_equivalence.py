@@ -20,7 +20,8 @@ Outer joins are split into one case per matched/unmatched combination (at most
 are existence atoms. A derived table that cannot be inlined (one with a
 ``LIMIT``, or the ``kqw*`` table the normalizer puts window functions in) is an
 opaque relation named by its text, under ``LIMIT_SOURCE_ASSUMPTION`` or
-``WINDOW_SOURCE_ASSUMPTION``; a top-level ``ORDER BY .. LIMIT`` is proved when
+``WINDOW_SOURCE_ASSUMPTION`` (not needed when every window is tie-free, and two such bodies over provably equal
+inputs are one relation: see ``smt_windows``); a top-level ``ORDER BY .. LIMIT`` is proved when
 both sides cut alike (``TIE_ASSUMPTION`` unless the ordering covers every
 column). Recursive CTEs, a top-level ``LIMIT`` without ``ORDER BY``, ``PIVOT``,
 nondeterministic functions and the like yield ``not_proven``.
@@ -75,7 +76,7 @@ import sqlglot
 from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, merge_wrapper_tails, plain_distinct, star_modified
 from .parse_check import refuse_misread_proofs
-from . import proof_columns
+from . import proof_columns, smt_windows
 from .set_operations import positional_sql_pair
 from .smt_args import check_args
 from .solver_lock import bound, bounded_solver, serialized
@@ -1049,7 +1050,7 @@ class _Compiler:
         # Inside a comparison of two opaque bodies (``_unify_opaque``) the kqw* markers are renamed away;
         # a window there still raises Unsupported wherever it would be evaluated, or sits in an opaque body.
         self._check_nondeterminism(statement, allow_windows=_nesting[0] > 0)
-        self.window_opaque = any(statement.find_all(exp.Window))
+        self.window_opaque = smt_windows.depends_on_ties(statement)
         return self._query(statement, {})
 
     def _check_nondeterminism(self, node: exp.Expression, allow_windows: bool = False) -> None:
@@ -1600,7 +1601,7 @@ class _Compiler:
 
         body = self._expand_ctes(body.copy(), ctes)
         self._check_nondeterminism(body, allow_windows=True)
-        self.window_opaque = self.window_opaque or any(body.find_all(exp.Window))
+        self.window_opaque = self.window_opaque or smt_windows.depends_on_ties(body)
         if any(isinstance(node, (exp.Limit, exp.Offset)) for node in body.walk()):
             self.limit_opaque = True
         # Kept whole, the relation must not depend on the outer query.
@@ -4429,10 +4430,16 @@ def _unify_opaque(compiler: "_Compiler", unions, **settings) -> None:
             _nesting[0] += 1
             try:
                 # The LIMIT-aware entry point: a body may end in ORDER BY .. LIMIT on both sides.
-                result = prove_equivalent_smt(rep_sql, sql, compare_names=False, dialect="bigquery", **settings)
+                def same(a: str, b: str) -> bool:
+                    return prove_equivalent_smt(a, b, compare_names=False, dialect="bigquery", **settings).status is SmtStatus.PROVEN_EQUIVALENT
+
+                # A window body is one relation with another when its input bags and tie-free windows agree.
+                proven = smt_windows.same_relation(rep_sql, sql, lambda text: sqlglot.parse_one(text, read="bigquery"), same)
+                if proven is None:
+                    proven = same(rep_sql, sql)
             finally:
                 _nesting[0] -= 1
-            if result.status is SmtStatus.PROVEN_EQUIVALENT:
+            if proven:
                 mapping[key] = rep
                 break
         else:
