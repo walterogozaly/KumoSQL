@@ -433,10 +433,14 @@ class _Unsupported(Exception):
 class T:
     """An expression's static type: ``type`` (None when unknown) and, for literals, the literal kind that GoogleSQL's
     literal coercion depends on: ``null`` (an untyped NULL, INT64 when nothing coerces it), ``int``, ``float``,
-    ``string``, ``bytes`` or ``empty_array`` (``[]``, ARRAY<INT64> when nothing coerces it)."""
+    ``string``, ``bytes`` or ``empty_array`` (``[]``, ARRAY<INT64> when nothing coerces it). A STRUCT constructor
+    whose fields are all literals is a ``struct`` literal and keeps ``parts``, its fields' own types, because its
+    fields coerce like literals; ``struct?`` is a constructor the typer cannot tell is a literal (a field is a CAST or
+    mixes literals with other expressions), which ``supertype`` evaluates both ways and trusts only when they agree."""
 
     type: GType | None
     lit: str | None = None
+    parts: "tuple[T, ...] | None" = None
 
 
 UNKNOWN = T(None)
@@ -1229,7 +1233,7 @@ class _Typer:
             items = [self.expr(e, scope, ctes) for e in node.expressions]
             if len(items) < 2 or any(i.type is None for i in items):
                 return UNKNOWN
-            return T(GType.struct([StructField(None, _materialize_lit(i)) for i in items]))
+            return _struct_value([(None, i, e) for i, e in zip(items, node.expressions)])
         if isinstance(node, exp.Array):
             return self.array(node, scope, ctes)
         if isinstance(node, (exp.Cast, exp.TryCast)):
@@ -1304,8 +1308,8 @@ class _Typer:
             t = self.expr(value, scope, ctes)
             if t.type is None:
                 return UNKNOWN
-            fields.append(StructField(name, _materialize_lit(t)))
-        return T(GType.struct(fields))
+            fields.append((name, t, value))
+        return _struct_value(fields)
 
     def array(self, node: exp.Array, scope, ctes) -> T:
         items = node.expressions
@@ -1478,10 +1482,35 @@ def coercible(t: T, target: GType | None) -> bool:
     return target.kind in _COERCE_TO.get(t.type.kind, ()) and not target.fields and target.element is None
 
 
+_COERCING = {"int", "float", "string", "null", "empty_array", "struct", "struct?"}
+
+
+def _struct_value(fields: list[tuple[str | None, T, exp.Expression]]) -> T:
+    """The type of a STRUCT constructor or tuple of ``(name, type, expression)`` fields. All-literal constructors are
+    struct literals (their fields coerce like literals); one that has fields to coerce but may or may not be a literal
+    is ``struct?``; the rest are plain values."""
+
+    struct = GType.struct([StructField(name, _materialize_lit(t)) for name, t, _ in fields])
+    if not any(t.lit in _COERCING for _, t, _ in fields):
+        return T(struct)
+    definite = all(t.lit in ("int", "float", "string", "null", "bytes", "struct") or isinstance(node, exp.Boolean)
+                   for _, t, node in fields)
+    return T(struct, "struct" if definite else "struct?", tuple(t for _, t, _ in fields))
+
+
 def supertype(ts: list[T]) -> T | None:
     """The common supertype of expression types, with GoogleSQL's rules for literals; None when there is none or it is
     not certain. The result is a literal only when every input is an untyped NULL or ``[]``."""
 
+    if any(t.lit == "struct?" for t in ts):
+        # Whether the constructor is a literal changes how its fields coerce; trust the result only if neither way does.
+        as_literal = _supertype([t if t.lit != "struct?" else T(t.type, "struct", t.parts) for t in ts])
+        as_value = _supertype([t if t.lit != "struct?" else T(t.type) for t in ts])
+        return as_literal if as_literal is not None and as_literal == as_value else None
+    return _supertype(ts)
+
+
+def _supertype(ts: list[T]) -> T | None:
     if any(t.type is None for t in ts):
         return None
     if not ts:
@@ -1496,6 +1525,8 @@ def supertype(ts: list[T]) -> T | None:
     literals = [t for t in typed if t.lit is not None]
     if any(t.lit == "empty_array" for t in ts) and any(t.type.kind != "ARRAY" for t in typed):
         return None
+    if any(t.type.kind == "STRUCT" for t in typed):
+        return _struct_supertype(typed)
     if non_literals:
         candidates = _common_supertypes([t.type for t in non_literals])
         if candidates is None:
@@ -1519,8 +1550,42 @@ def _allowed_supertype(candidate: GType, inputs: list[T]) -> bool:
     return required is None or any(t.type.kind in required for t in inputs)
 
 
+def _struct_supertype(typed: list[T]) -> T | None:
+    """``GetCommonStructSuperType``: field by field, with the field names of the first argument that is not an untyped
+    NULL; a struct literal's fields coerce as literals, any other struct's fields are typed values."""
+
+    if any(t.type.kind != "STRUCT" for t in typed):
+        return None
+    if len({len(t.type.fields) for t in typed}) != 1:
+        return None
+    views = [t.parts if t.lit == "struct" and t.parts is not None else tuple(known(f.type) for f in t.type.fields)
+             for t in typed]
+    if any(len(v) != len(typed[0].type.fields) for v in views):
+        return None
+    fields = []
+    for position, dominant in enumerate(typed[0].type.fields):
+        inner = supertype([view[position] for view in views])
+        if inner is None or inner.type is None:
+            return None
+        inner_type = inner.type
+        if views[0][position].lit == "null":
+            inner_type = _anonymous(inner_type)
+        fields.append(StructField(dominant.name, inner_type))
+    return T(GType.struct(fields))
+
+
+def _anonymous(t: GType) -> GType:
+    """The type with every STRUCT field name removed (a NULL field has no names to give a nested struct)."""
+
+    if t.kind == "STRUCT":
+        return GType.struct([StructField(None, _anonymous(f.type) if f.type is not None else None) for f in t.fields])
+    if t.kind in ("ARRAY", "RANGE") and t.element is not None:
+        return GType(t.kind, _anonymous(t.element))
+    return t
+
+
 def _common_supertypes(types: list[GType]) -> list[GType] | None:
-    """The common supertypes of non-literal types, most specific first; None when uncertain or there are none."""
+    """The common supertypes of non-literal scalar types, most specific first; None when uncertain or there are none."""
 
     first = types[0]
     if all(t == first for t in types):
@@ -1541,23 +1606,6 @@ def _common_supertypes(types: list[GType]) -> list[GType] | None:
             ordered = [GType(k) for k in _NUMERIC_ORDER if k in exact]
             return ordered + [GType(k) for k in _NUMERIC_ORDER if k in common - exact] if ordered else None
         return [GType(k) for k in _NUMERIC_ORDER if k in common] or None
-    if kinds == {"STRUCT"}:
-        widths = {len(t.fields) for t in types}
-        if len(widths) != 1:
-            return None
-        names = {tuple((f.name or "").lower() for f in t.fields) for t in types}
-        if len(names) != 1:
-            return None
-        fields = []
-        for position in range(len(first.fields)):
-            column = [t.fields[position].type for t in types]
-            if any(c is None for c in column):
-                return None
-            inner = _common_supertypes(column)
-            if not inner:
-                return None
-            fields.append(StructField(first.fields[position].name, inner[0]))
-        return [GType.struct(fields)]
     return None
 
 
