@@ -3111,6 +3111,52 @@
     "query",
     "function"
    ]
+  },
+  {
+   "id": "query/match_recognize_pattern_operators",
+   "kind": "sql",
+   "file": "sql/query/match_recognize_pattern_operators.sql",
+   "tags": [
+    "query",
+    "match_recognize"
+   ]
+  },
+  {
+   "id": "query/match_recognize_options",
+   "kind": "sql",
+   "file": "sql/query/match_recognize_options.sql",
+   "tags": [
+    "query",
+    "match_recognize"
+   ]
+  },
+  {
+   "id": "query/match_recognize_cte_join",
+   "kind": "sql",
+   "file": "sql/query/match_recognize_cte_join.sql",
+   "tags": [
+    "query",
+    "match_recognize"
+   ]
+  },
+  {
+   "id": "query/match_recognize_lowercase",
+   "kind": "sql",
+   "file": "sql/query/match_recognize_lowercase.sql",
+   "tags": [
+    "query",
+    "match_recognize"
+   ]
+  },
+  {
+   "id": "query/match_recognize_pipe",
+   "kind": "sql",
+   "file": "sql/query/match_recognize_pipe.sql",
+   "tags": [
+    "query",
+    "match_recognize",
+    "pipe"
+   ]
   }
  ]
 }

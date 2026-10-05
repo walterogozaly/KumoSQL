@@ -323,6 +323,46 @@
   "owner": "sqlfluff",
   "reason": "parse_error"
  },
+ "query/match_recognize_cte_join::format": {
+  "owner": "sqlfluff",
+  "reason": "parse_error"
+ },
+ "query/match_recognize_cte_join::prover": {
+  "owner": "prover",
+  "reason": "unsupported: SELECT * inside a derived relation"
+ },
+ "query/match_recognize_lowercase::format": {
+  "owner": "sqlfluff",
+  "reason": "parse_error"
+ },
+ "query/match_recognize_lowercase::prover": {
+  "owner": "prover",
+  "reason": "unsupported: SELECT * inside a derived relation"
+ },
+ "query/match_recognize_options::format": {
+  "owner": "sqlfluff",
+  "reason": "parse_error"
+ },
+ "query/match_recognize_options::prover": {
+  "owner": "prover",
+  "reason": "unsupported: SELECT * inside a derived relation"
+ },
+ "query/match_recognize_pattern_operators::format": {
+  "owner": "sqlfluff",
+  "reason": "parse_error"
+ },
+ "query/match_recognize_pattern_operators::prover": {
+  "owner": "prover",
+  "reason": "unsupported: nondeterministic: ARRAY_AGG(CLASSIFIER())"
+ },
+ "query/match_recognize_pipe::format": {
+  "owner": "sqlfluff",
+  "reason": "parse_error"
+ },
+ "query/match_recognize_pipe::prover": {
+  "owner": "prover",
+  "reason": "unsupported: SELECT * inside a derived relation"
+ },
  "query/ml_feature_functions::prover": {
   "owner": "prover",
   "reason": "unsupported: WINDOW is not modeled"

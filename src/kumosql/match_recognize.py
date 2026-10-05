@@ -262,6 +262,7 @@ def rewrite_text(sql: str, tokens: list) -> str:
         return sql
     for index, closed in clauses:
         _check_body(tokens, index + 1, closed)
+    _check_not_nested(tokens, clauses)
     edits: list[tuple[int, int, str]] = []
     for index, closed in clauses:
         found = _clauses(tokens, index + 1, closed)
@@ -285,6 +286,22 @@ def rewrite_text(sql: str, tokens: list) -> str:
         alias = sql[tokens[closed].end + 1 : tokens[alias_end].end + 1]
         edits.append((tokens[start].start, tokens[alias_end].end + 1, f"(SELECT * FROM {operand} {body}){alias}"))
     return _apply_nested(sql, edits)
+
+
+def _check_not_nested(tokens: list, clauses: list[tuple[int, int]]) -> None:
+    """Refuse a clause inside the table or the body of another: BigQuery says "Nested MATCH_RECOGNIZE is not allowed".
+
+    One that reads the other through a ``WITH`` table is not nested and is accepted.
+    """
+
+    spans = []
+    for index, closed in clauses:
+        start = _query_start(tokens, index - 1) if tokens[index - 1].token_type == _PIPE else _operand(tokens, index)
+        spans.append((index if start is None else start, closed))
+    for inner, (index, closed) in enumerate(clauses):
+        for outer, (start, end) in enumerate(spans):
+            if inner != outer and start <= index and closed <= end:
+                raise ParseError("Nested MATCH_RECOGNIZE is not allowed: BigQuery rejects a clause inside the table or body of another")
 
 
 def _apply_nested(sql: str, edits: list[tuple[int, int, str]]) -> str:

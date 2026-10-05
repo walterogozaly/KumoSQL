@@ -899,6 +899,26 @@
   "status": "ok",
   "bytes": 0
  },
+ "query/match_recognize_cte_join": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/match_recognize_lowercase": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/match_recognize_options": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/match_recognize_pattern_operators": {
+  "status": "ok",
+  "bytes": 0
+ },
+ "query/match_recognize_pipe": {
+  "status": "ok",
+  "bytes": 0
+ },
  "query/math_functions": {
   "status": "ok",
   "bytes": 0
