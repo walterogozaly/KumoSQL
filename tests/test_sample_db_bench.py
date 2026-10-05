@@ -64,6 +64,8 @@ SUBSET = {
 @pytest.mark.parametrize("name", sorted(bench.ADAPTERS))
 def test_database_loads_as_upstream_declares_it(name):
     adapter = bench.ADAPTERS[name]
+    if adapter.remote:
+        pytest.skip(f"{name} loads run-time downloads: its own test file checks it")
     report = bench.check_database(adapter)
     assert report["problems"] == []
     counts = report["counts"]
@@ -188,7 +190,8 @@ def test_readers_handle_the_sample_dialects():
 
 
 def test_every_pair_is_decided_without_a_wrong_answer():
-    rows = bench.run_pairs(list(bench.ADAPTERS.values()))
+    # a database with run-time downloads is decided by its own test file (it skips without the network)
+    rows = bench.run_pairs([a for a in bench.ADAPTERS.values() if not a.remote])
     summary = bench.summarize_pairs(rows)["all"]
     assert summary["wrong"] == 0, [r for r in rows if r["wrong"]]
     assert summary["labels_unverified"] == 0, [
