@@ -29,8 +29,8 @@ import sample_databases_adventureworks as adapter_module  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "sample_databases" / "adventureworks"
 
-# floors only ever go up (recorded run in benchmarks/results/sample-databases-adventureworks-pairs.json)
-FLOORS = {"proven": 0, "refuted": 0}
+# floors only ever go up (recorded run: 24 of 28 proved, 32 of 39 refuted; the first run refuted 33)
+FLOORS = {"proven": 24, "refuted": 30}
 # workload queries the pipeline and lift_subqueries change: views, functions, procedures, authored
 SUBSET = [
     "aw-view-vEmployee",

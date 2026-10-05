@@ -43,7 +43,7 @@ Status: **covered** (an existing eval already scores it), **new** (being added, 
 | D06 | TPC-H | Apache-2.0 generator, TPC terms | yes (`tpchgen-cli`) | 22 queries | covered: `transformation-workloads`, `sqlsolver-tpch` ([page](transformation-bench.md)) |
 | D07 | TPC-DS | TPC terms | yes | 99 queries | covered: `transformation-workloads`, `analytical-sql-coverage`, `mv-benchmark` |
 | D08 | Microsoft DSB | MIT | yes | 52 templates | covered: `analytical-sql-coverage` ([page](analytical-sql-coverage.md)) |
-| D09 | AdventureWorks OLTP | MIT | yes (release asset) | about 70 tables, 20 views | **new** (batch 2): views as workload queries if the T-SQL adapts cleanly |
+| D09 | AdventureWorks OLTP | MIT | yes (release asset: the 17 MB zip is downloaded at run time, only the install script and the licence are committed) | 70 tables, 759,240 rows, 20 views (12 adapted, 8 XQuery views declined with the reason) | **new** (batch 2): `sample-databases-adventureworks-rewrites`, `sample-databases-adventureworks-pairs` ([page](sample-databases-adventureworks.md)); the 12 portable views and the function and recursive procedure bodies are workload queries |
 | D10 | WideWorldImporters | MIT | release holds only SQL Server `.bak` backups | — | not added: needs a SQL Server restore |
 | D11 | Employees (`datacharmer/test_db`) | CC BY-SA 3.0 | yes (167 MB) | 6 tables, 3.9 M rows | **new** (batch 2): downloaded at run time, slow lane |
 | D12 | Postgres Professional Airlines | MIT | no: `postgrespro.ru` is blocked | 9 tables, 133 MB dump | not added |

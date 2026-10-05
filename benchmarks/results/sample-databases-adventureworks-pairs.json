@@ -1,0 +1,28 @@
+{
+  "suite": "Sample databases (AdventureWorks): equivalent pairs and siblings",
+  "order": 365,
+  "size": 67,
+  "score": "24/28 equivalent proved, 32/39 different refuted (replayed), 0 wrong",
+  "metric": "Authored pairs on the AdventureWorks schema under its declared keys, labelled equivalent or different (each 'different' label has a witness database); 13 siblings drop one key, foreign key or NOT NULL the equivalence needs. Provers: structural, algebraic/SMT with the declared constraints and its counterexample search, then the bounded checker for a counterexample.",
+  "evidence": "proof",
+  "correctness": "0 wrong: every proof also gives the same result on the real data and no proof is of a pair labelled different; every refutation's counterexample, completed with legal values, satisfies the declared constraints and separates the pair when replayed in DuckDB",
+  "coverage": {
+    "proven": 24,
+    "refuted": 32,
+    "unknown": 11,
+    "unsupported": 0
+  },
+  "held_out": "5/5 proved, 4/6 refuted, 0 wrong (a fifth of the pairs by SHA-1 of their id)",
+  "docs": "docs/evals/sample-databases-adventureworks.md",
+  "command": "python tools/sample_db_bench.py --database adventureworks --write-results",
+  "date": "2026-10-05",
+  "caveats": "Authored pairs (67; dev 56, held out 11), not from upstream. Constraint siblings refuted: 11/13. The algebraic prover's executed counterexample search is time-limited, so on a loaded machine a refutation can fall back to unknown. No prover was changed for this eval. The first full run is the baseline (nothing tuned): 24/28 proved, 33/39 refuted, 0 wrong; the recorded run refuted one fewer (3 DISTINCT pairs flipped between refuted and unknown).",
+  "environment": {
+    "python": "3.11.15",
+    "sqlglot": "30.21.0",
+    "duckdb": "1.5.6",
+    "z3-solver": "5.1.0.0",
+    "sqlfluff": "4.4.0",
+    "commit": "97dc5ab9+changes"
+  }
+}

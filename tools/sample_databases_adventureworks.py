@@ -193,7 +193,7 @@ class LazyRows(Mapping):
 class AdventureWorks(Adapter):
     name = "adventureworks"
     title = TITLE
-    results_order = 360
+    results_order = 364
     docs_page = "docs/evals/sample-databases-adventureworks.md"
     downloaded = True
     ddl_file = "upstream/instawdb.sql"
@@ -230,7 +230,7 @@ class AdventureWorks(Adapter):
         "(parameters bound) are adapted from T-SQL to BigQuery, each adaptation recorded in the workload file. Computed columns are loaded as the "
         "data files give them, hierarchyid, geography and uniqueidentifier values as the hex or text the files write, and XML as text; nchar values keep their padding"
     )
-    baseline_note = "The first run is the baseline (nothing tuned)"
+    baseline_note = "The first full run is the baseline (nothing tuned): 24/28 proved, 33/39 refuted, 0 wrong; the recorded run refuted one fewer (3 DISTINCT pairs flipped between refuted and unknown)"
     #: what the pinned script says about its computed columns, checked on the loaded rows (the data files give those values;
     #: the script defines them): every query returns the number of rows that break the formula
     assertions = tuple(
