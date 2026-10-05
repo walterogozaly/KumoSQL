@@ -14,6 +14,10 @@ Before it reports anything, the tool rules out noise: the same difference must a
 
 Four wrong rewrites on the first runs: two in the rules that handle provably empty tables, one in the rule that drops unread columns of a `UNION ALL`, and one that dropped a grand-total grouping inside `EXISTS`. All three are fixed and kept as tests. The running list is on the workstream issue linked from the full reference.
 
+## Looking inside the big rules
+
+Some rules are really a bundle of smaller rewrites: one name in the report, several different shapes inside. Counting that name as "fired" can hide a shape that was never tried. Three generators (`distinct_variants`, `eager_variants`, `aggregate_variants`) write one query for each shape and one near miss for each safety check, for example a `LIMIT` that would see repeated rows or a `COUNT(*)` that would count them. A small test makes sure each shape still triggers its rewrite, so a later edit cannot quietly stop it. The full list is in the [full reference](../docs/rule-fuzzing.md#variants-inside-one-rule).
+
 ## Limits
 
 - A rule that passes is not proven right. It only survived the queries and databases the tool tried, and a rule that never fires has not been tested at all; the report counts how often each rule fired.
