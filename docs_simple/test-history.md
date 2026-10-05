@@ -20,13 +20,13 @@ python tools/run_tests.py --label "simple documentation" --target tests/test_doc
 
 ## What to run before merging
 
-For a code PR, first run the tests for the change and the benchmarks it affects, then `--quick` to check broadly. An improvement to one benchmark still needs checks for losses elsewhere when it touches shared prover or parser code. A documentation-only PR can just run the documentation checks.
+Walter approved running broad expensive coverage intermittently so changes get feedback faster. For each code candidate, run the tests and benchmarks affected by the change, then `python tools/run_tests.py --routine`. That checks the fast non-eval regressions. It does not mean every benchmark floor passed.
 
-Before merging several code PRs together, run the full default suite once on their combined candidate, including the benchmark floors. Check that the results name that exact commit; changing the candidate means checking it again. This avoids repeating the entire suite for every separate PR. Tests marked `slow` are normally excluded, so run an affected slow check explicitly. Investigate failures and worker crashes before calling a batch passing.
+Changes to shared prover or parser logic still need comparisons across the affected cases and checks that prevent wrong proofs. A gain elsewhere cannot hide a loss. Investigate failures before merging.
 
-The Dell currently tests commits after they reach `master`. It is not yet connected to the pre-merge candidate, and GitHub does not currently force this gate. The person operating the merge train must arrange and inspect the candidate's tests before merging code changes.
+Run the full default suite nightly and before releases. The GitHub workflow schedules that coverage if Actions is enabled; the Dell can run the same full command. Record the exact commit and investigate periodic failures promptly, blocking merges that touch the failing area. Run affected tests marked `slow` explicitly.
 
-The optional SQLSolver cache reuses identical sample-data executions, but always reruns the prover and its targeted search for a difference. Use `--eval-cache off` for fresh execution checks. See the [full procedure](../docs/test-history.md#merge-testing-procedure) for coverage, score changes and evidence requirements.
+One measured Dell candidate took about 10.6 minutes for routine pytest checks versus 65 minutes for full pytest coverage: 83.7% less time. This saves time by changing how often expensive coverage runs. Actual prover improvements need separate before/after measurements. The full run had one subprocess-exit timeout that passed isolated rechecking; it was not a green full result. See the [full procedure](../docs/test-history.md#merge-testing-procedure).
 
 ## Other useful runs
 
