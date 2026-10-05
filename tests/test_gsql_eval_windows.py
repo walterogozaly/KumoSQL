@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import sys
 from decimal import Decimal
 
 import pytest
@@ -94,10 +95,11 @@ def test_ntile_over_ties_is_nondeterministic():
 
 
 def test_ntile_argument_is_checked():
-    with pytest.raises(AnalysisError):
+    with pytest.raises(EvalError):  # BigQuery fails these while running, so not on an empty input
         run("SELECT NTILE(0) OVER (ORDER BY a) FROM t")
-    with pytest.raises(AnalysisError):
+    with pytest.raises(EvalError):
         run("SELECT NTILE(NULL) OVER (ORDER BY a) FROM t")
+    assert rows("SELECT NTILE(0) OVER (ORDER BY a) FROM t WHERE a > 100") == []
     with pytest.raises(AnalysisError):  # a column is not a constant
         run("SELECT NTILE(a) OVER (ORDER BY a) FROM t")
     assert rows("SELECT NTILE(@n) OVER (ORDER BY a) FROM t WHERE a = 1", params={"n": (I, 2)}) == [(1,)]
@@ -166,14 +168,19 @@ def test_lag_default_is_coerced_and_checked():
         run("SELECT LAG(v, 1, 'a') OVER (ORDER BY v) FROM t", NUMS)
     with pytest.raises(AnalysisError):
         run("SELECT LAG(v, 1, 1.5) OVER (ORDER BY v) FROM t", NUMS)
-    with pytest.raises(Unsupported):
+    with pytest.raises(AnalysisError):  # the default must be constant
         run("SELECT LAG(v, 1, v) OVER (ORDER BY v) FROM t", NUMS)
+    got = run("SELECT LAG(f, 1, CAST(7 AS FLOAT64) + 1) OVER (ORDER BY v) FROM t", NUMS)  # constant, but not a literal
+    assert [r[0] for r in got.rows] == [8.0, 1.0, 2.5, None]
+    arrays = Table([("a", T.array(I))], [((1,),), ((2,),)])
+    assert [r[0] for r in rows("SELECT LAG(a, 1, [-1]) OVER (ORDER BY a[OFFSET(0)]) FROM t", arrays)] == [(-1,), (1,)]
 
 
 def test_lag_argument_and_clause_errors():
+    for sql in ("SELECT LAG(x, -1) OVER (ORDER BY a) FROM t", "SELECT LEAD(x, NULL) OVER (ORDER BY a) FROM t"):
+        with pytest.raises(EvalError):
+            run(sql)
     for sql in (
-        "SELECT LAG(x, -1) OVER (ORDER BY a) FROM t",
-        "SELECT LAG(x, NULL) OVER (ORDER BY a) FROM t",
         "SELECT LAG(x) OVER (PARTITION BY g) FROM t",  # ORDER BY is required
         "SELECT LEAD(x) OVER () FROM t",
         "SELECT LAG(x) OVER (ORDER BY a ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",  # no frame
@@ -225,7 +232,7 @@ def test_nth_value():
     assert rows(q.format(f=f"NTH_VALUE(x, 4) RESPECT NULLS OVER (ORDER BY a {full})")) == [(a, 40) for a in (1, 2, 3, 4)]
     assert rows(q.format(f=f"NTH_VALUE(x, 5) OVER (ORDER BY a {full})")) == [(a, None) for a in (1, 2, 3, 4)]
     assert rows(q.format(f="NTH_VALUE(x, 2) OVER (ORDER BY a)")) == [(1, None), (2, None), (3, None), (4, None)]
-    with pytest.raises(AnalysisError):
+    with pytest.raises(EvalError):
         run("SELECT NTH_VALUE(x, 0) OVER (ORDER BY a) FROM t")
 
 
@@ -361,9 +368,7 @@ def test_range_offset_errors():
     for sql in (
         "SELECT SUM(v) OVER (ORDER BY a, v RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
         "SELECT SUM(v) OVER (RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
-        "SELECT SUM(v) OVER (ORDER BY a RANGE BETWEEN -1 PRECEDING AND CURRENT ROW) FROM t",
         "SELECT SUM(v) OVER (ORDER BY a RANGE BETWEEN 1.5 PRECEDING AND CURRENT ROW) FROM t",
-        "SELECT SUM(v) OVER (ORDER BY a ROWS BETWEEN -1 PRECEDING AND CURRENT ROW) FROM t",
         "SELECT SUM(v) OVER (ORDER BY a ROWS BETWEEN 1.5 PRECEDING AND CURRENT ROW) FROM t",
         "SELECT SUM(v) OVER (ORDER BY a ROWS BETWEEN UNBOUNDED FOLLOWING AND CURRENT ROW) FROM t",
         "SELECT SUM(v) OVER (ORDER BY a ROWS BETWEEN CURRENT ROW AND UNBOUNDED PRECEDING) FROM t",
@@ -379,6 +384,13 @@ def test_range_offset_errors():
     ):
         with pytest.raises(Unsupported):
             run(sql, W)
+    for sql in (
+        "SELECT SUM(v) OVER (ORDER BY a RANGE BETWEEN -1 PRECEDING AND CURRENT ROW) FROM t",
+        "SELECT SUM(v) OVER (ORDER BY a ROWS BETWEEN CAST(NULL AS INT64) PRECEDING AND CURRENT ROW) FROM t",
+        "SELECT SUM(v) OVER (ORDER BY a ROWS BETWEEN -1 PRECEDING AND CURRENT ROW) FROM t",
+    ):
+        with pytest.raises(EvalError):
+            run(sql, W)
     dates = Table([("d", T.DATE), ("v", I)], [])
     with pytest.raises(Unsupported):
         run("SELECT SUM(v) OVER (ORDER BY d RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t", dates)
@@ -386,10 +398,31 @@ def test_range_offset_errors():
         run("SELECT SUM(v) OVER (ORDER BY g RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t", T1)
 
 
-def test_range_offset_over_nan_key_is_unsupported():
-    t = Table([("f", F), ("v", I)], [(float("nan"), 1), (1.0, 2)])
-    with pytest.raises(Unsupported):
-        run("SELECT SUM(v) OVER (ORDER BY f RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t", t)
+def test_range_offsets_over_nan_infinite_and_null_keys():
+    inf, nan = float("inf"), float("nan")
+    t = Table([("f", F)], [(nan,), (nan,), (-inf,), (1.0,), (2.0,), (inf,), (None,)])
+    got = rows("SELECT f, COUNT(*) OVER (ORDER BY f RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM t", t)
+    counts = {("null" if f is None else "nan" if f != f else f): c for f, c in got}
+    # NULL and NaN keys only see their own peers; infinities only themselves; NaN is not a number for the others
+    assert counts == {"null": 1, "nan": 2, -inf: 1, 1.0: 2, 2.0: 2, inf: 1}
+    got = rows("SELECT f, COUNT(*) OVER (ORDER BY f RANGE BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) FROM t", t)
+    counts = {("null" if f is None else "nan" if f != f else f): c for f, c in got}
+    # an unbounded side still counts every earlier row: NULLs, then NaNs, then -inf ... (-inf - 1 is -inf: it counts itself)
+    assert counts == {"null": 1, "nan": 3, -inf: 4, 1.0: 4, 2.0: 5, inf: 7}
+
+
+def test_range_offset_overflow_stops_at_the_largest_double():
+    big, inf = sys.float_info.max, float("inf")
+    t = Table([("f", F)], [(1.0,), (big,), (inf,)])
+    got = rows(f"SELECT f, COUNT(*) OVER (ORDER BY f RANGE BETWEEN CURRENT ROW AND {big!r} FOLLOWING) FROM t", t)
+    assert dict(got) == {1.0: 2, big: 1, inf: 1}
+
+
+def test_range_offsets_over_numeric_keys_are_exact_beyond_28_digits():
+    top = Decimal("99999999999999999999999999999.999999999")
+    t = Table([("d", N)], [(top,), (Decimal("99999999999999999999999999998.999999999"),), (Decimal("99999999999999999999999999996.999999999"),)])
+    got = rows("SELECT d, COUNT(*) OVER (ORDER BY d RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t", t)
+    assert sorted(c for _, c in got) == [1, 2, 2]
 
 
 def test_frame_clause_rules():
@@ -444,8 +477,26 @@ def test_percentile_partitions_and_empty_input():
 def test_percentile_numeric_results_stay_exact():
     got = run("SELECT PERCENTILE_CONT(d, 0.5) OVER () FROM t WHERE v < 3", NUMS)  # 1, 2
     assert got.rows[0] == (Decimal("1.5"),) and got.columns[0][1] == N
-    with pytest.raises(Unsupported):  # 1/3 of the way needs rounding
-        run("SELECT PERCENTILE_CONT(d, 0.1) OVER () FROM t", NUMS)
+    # results round half away from zero at 9 digits: values 1, 2, 7 and position 0.1 * 2 = 0.2, and NUMERIC percentiles
+    assert rows("SELECT PERCENTILE_CONT(d, 0.1) OVER () FROM t", NUMS)[0] == (Decimal("1.2"),)
+    assert rows("SELECT PERCENTILE_CONT(d, NUMERIC '0.333333333') OVER () FROM t", NUMS)[0] == (Decimal("1.666666666"),)
+    assert rows("SELECT PERCENTILE_DISC(d, NUMERIC '0.666666667') OVER () FROM t", NUMS)[0] == (Decimal("7"),)
+
+
+def test_percentile_respect_nulls_nan_and_infinity():
+    # f is 1.0, 2.5, NULL, 7.0: RESPECT NULLS makes the NULL the smallest value
+    q = "SELECT PERCENTILE_CONT(f, {p} RESPECT NULLS) OVER (), PERCENTILE_DISC(f, {p} RESPECT NULLS) OVER () FROM t"
+    assert rows(q.format(p=0), NUMS)[0] == (None, None)
+    assert rows(q.format(p=0.25), NUMS)[0] == (1.0, None)  # CONT between a NULL and 1.0 is the value; DISC picks the NULL
+    assert rows(q.format(p=0.5), NUMS)[0] == (1.75, 1.0)
+    inf, nan = float("inf"), float("nan")
+    t = Table([("f", F)], [(nan,), (-inf,), (1.0,), (3.0,), (inf,)])  # NaN sorts first
+    got = rows("SELECT PERCENTILE_CONT(f, 0.125) OVER (), PERCENTILE_CONT(f, 0.25) OVER (), PERCENTILE_CONT(f, 0.3) OVER (), "
+               "PERCENTILE_CONT(f, 0.5) OVER (), PERCENTILE_CONT(f, 0.9) OVER (), PERCENTILE_CONT(f, 1) OVER () FROM t", t)[0]
+    assert got[0] != got[0] and got[1] == -inf and got[2] == -inf and got[3] == 1.0 and got[4] == inf and got[5] == inf
+    big = sys.float_info.max
+    t = Table([("f", F)], [(big,), (-big,)])
+    assert rows("SELECT PERCENTILE_CONT(f, 0.5) OVER () FROM t", t)[0] == (0.0,)  # no overflow in the interpolation
 
 
 def test_percentile_errors():
@@ -457,10 +508,8 @@ def test_percentile_errors():
         run("SELECT PERCENTILE_CONT(v, NULL) OVER () FROM t", NUMS)
     with pytest.raises(AnalysisError):
         run("SELECT PERCENTILE_CONT(g, 0.5) OVER () FROM t")
-    with pytest.raises(Unsupported):
-        run("SELECT PERCENTILE_CONT(v, 0.5 RESPECT NULLS) OVER () FROM t", NUMS)
-    with pytest.raises(Unsupported):
-        run("SELECT PERCENTILE_CONT(f, 0.5) OVER () FROM t", Table([("f", F)], [(float("nan"),), (1.0,)]))
+    with pytest.raises(AnalysisError):
+        run("SELECT PERCENTILE_CONT(v, v) OVER () FROM t", NUMS)  # the percentile must be constant
 
 
 # --- named windows -------------------------------------------------------------------------------------------
@@ -521,8 +570,8 @@ def test_window_on_empty_input():
 
 
 def test_unsupported_and_invalid_window_forms():
-    with pytest.raises(Unsupported):
-        run("SELECT ROW_NUMBER() OVER (ORDER BY 1) FROM t")
+    # a constant ORDER BY key is a constant (not a column position): everything is a peer
+    assert rows("SELECT RANK() OVER (ORDER BY 1) FROM t") == [(1,)] * 6
     with pytest.raises(AnalysisError):
         run("SELECT ROW_NUMBER() OVER (ORDER BY ARRAY[a]) FROM t")
     with pytest.raises(AnalysisError):
@@ -572,3 +621,22 @@ def test_real_aggregate_window_rejects_unsupported_wrappers():
         run("SELECT SUM(a) FILTER (WHERE a > 1) OVER () FROM t")
     with pytest.raises(AnalysisError):
         run("SELECT SUM(SUM(a) OVER ()) OVER () FROM t")
+
+
+def test_is_first_is_last_are_googlesql_only():
+    sql = "SELECT a, IS_FIRST(1) OVER (PARTITION BY g ORDER BY a), IS_LAST(2) OVER (PARTITION BY g ORDER BY a) FROM t ORDER BY a"
+    with pytest.raises(Unsupported):
+        run(sql)
+    got = rows(sql, mode="googlesql")
+    assert got == [(1, True, False), (2, False, False), (3, False, True), (4, False, True), (5, True, True), (7, False, True)]
+    with pytest.raises(EvalError):
+        run("SELECT IS_FIRST(-1) OVER (ORDER BY a) FROM t", mode="googlesql")
+    assert rows("SELECT SAFE.IS_LAST(CAST(NULL AS INT64)) OVER (ORDER BY a) FROM t WHERE a < 3", mode="googlesql") == [(None,)] * 2
+
+
+def test_safe_numbering_functions():
+    assert rows("SELECT SAFE.ROW_NUMBER() OVER (ORDER BY a) FROM t WHERE a < 3 ORDER BY 1") == [(1,), (2,)]
+    with pytest.raises(EvalError):  # SAFE. does not catch a bad NTILE argument
+        run("SELECT SAFE.NTILE(-1) OVER (ORDER BY a) FROM t")
+    with pytest.raises(Unsupported):
+        run("SELECT SAFE.LAG(x) OVER (ORDER BY a) FROM t")

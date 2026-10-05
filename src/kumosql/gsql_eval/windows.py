@@ -73,8 +73,6 @@ def compile_window(compiler, node: exp.Window, cx, named_windows: dict) -> "Wind
             ordered = item if isinstance(item, exp.Ordered) else exp.Ordered(this=item)
             _only(ordered, "this", "desc", "nulls_first")
             target = ordered.this
-            if isinstance(target, exp.Literal) and not target.is_string:
-                raise Unsupported("window ORDER BY a numeric literal")
             key = compiler.expr(target, cx)
             if not T.comparable(key.type):
                 raise AnalysisError(f"ORDER BY does not support expressions of type {key.type}")
@@ -83,6 +81,30 @@ def compile_window(compiler, node: exp.Window, cx, named_windows: dict) -> "Wind
             order_keys.append((key, desc, (not desc) if nulls_first is None else bool(nulls_first)))
     layout = _Shape(partition, order_keys)
 
+    safe = False
+    if isinstance(inner, exp.Dot) and isinstance(inner.this, exp.Identifier) and inner.this.name.upper() == "SAFE" and isinstance(
+        inner.expression, exp.Anonymous
+    ):
+        safe, inner = True, inner.expression
+    if isinstance(inner, exp.Anonymous) and str(inner.this).upper() in ("IS_FIRST", "IS_LAST"):
+        return _make_is_first(compiler, inner, nulls, definition, layout, safe)
+    if safe:
+        # SAFE. only turns a function's own runtime errors into NULL. The numbering functions have none (a bad NTILE
+        # argument still fails), and for the others it is not known which of their errors it would catch.
+        numbering = {"ROW_NUMBER": exp.RowNumber, "RANK": exp.Rank, "DENSE_RANK": exp.DenseRank, "PERCENT_RANK": exp.PercentRank,
+                     "CUME_DIST": exp.CumeDist, "NTILE": exp.Ntile}
+        name = str(inner.this).upper() if isinstance(inner, exp.Anonymous) else ""
+        if name not in numbering:
+            raise Unsupported("SAFE. on a window function")
+        args = list(inner.expressions)
+        if name == "NTILE":
+            if len(args) != 1:
+                raise AnalysisError("NTILE takes exactly one argument")
+            inner = exp.Ntile(this=args[0])
+        elif args:
+            raise AnalysisError(f"{name} takes no arguments")
+        else:
+            inner = numbering[name]()
     maker = _MAKERS.get(type(inner))
     if maker is not None:
         func = maker(compiler, inner, nulls, cx, definition, layout)
@@ -100,6 +122,50 @@ def apply_windows(specs: list, rows: list, env: Env) -> list:
     columns = [spec.compute(rows, env) for spec in specs]
     return [tuple(row) + tuple(col[i] for col in columns) for i, row in enumerate(rows)]
 
+
+def _constant(compiler, node: exp.Expression, what: str):
+    """``(E, payload)`` of a constant expression (literals, parameters, casts and calls of them), evaluated once."""
+
+    from .compiler import Cx, EmptyScope, is_query
+    from .runtime import Ctx
+
+    if any(is_query(n) for n in node.walk()):
+        raise Unsupported(f"{what} that is a subquery")
+    if node.find(exp.Column) is not None:
+        raise AnalysisError(f"{what} must be constant")
+    for n in node.walk():
+        name = str(n.this).upper() if isinstance(n, exp.Anonymous) else ""
+        if isinstance(n, (exp.Rand, exp.Uuid, exp.CurrentTimestamp, exp.CurrentDate, exp.CurrentDatetime, exp.CurrentTime)) or name in (
+            "RAND", "GENERATE_UUID", "CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_DATETIME", "CURRENT_TIME",
+        ):
+            raise Unsupported(f"{what} that is not deterministic")
+    value = compiler.expr(node, Cx(EmptyScope()))
+    if value.lit is not None:
+        return value, value.fn(None)
+    ctx = Ctx(compiler.tz, compiler.params, compiler.mode, literals_decoded=compiler.literals_decoded)
+    try:
+        payload = value.fn(Env((), None, ctx, {}))
+    except EvalError as error:
+        raise Unsupported(f"{what} whose evaluation fails ({error})") from None
+    if ctx.nondeterministic or ctx.inexact:
+        raise Unsupported(f"{what} that is not exactly determined")
+    return E(value.type, lambda env: payload), payload
+
+
+def _const_int(compiler, node: exp.Expression, what: str, shape: "_Shape", minimum: int = 0) -> int:
+    """A constant INT64 argument. BigQuery rejects a NULL or too small value only while running (and only with rows),
+    so that is recorded on the shape and raised by ``compute``."""
+
+    value, payload = _constant(compiler, node, what)
+    if value.type != T.INT64 and value.lit != "null":
+        raise AnalysisError(f"{what} expects an integer")
+    if payload is None:
+        shape.deferred = EvalError(f"{what} must not be NULL")
+        return minimum
+    if payload < minimum:
+        shape.deferred = EvalError(f"{what} must be {'positive' if minimum else 'non-negative'}")
+        return minimum
+    return payload
 
 # ---------------------------------------------------------------------------------------------
 # window definitions
@@ -182,6 +248,7 @@ class _Shape:
         self.partition = partition
         self.order = order
         self.sort_spec = [(e.type, desc, nf) for e, desc, nf in order]
+        self.deferred: EvalError | None = None  # an argument error BigQuery raises when the window runs on rows
 
 
 class _Layout:
@@ -336,7 +403,7 @@ class _Frame:
         return bisect.bisect_right(s, target, a, b)
 
 
-def _boundary(compiler, side: str, offset, which: str, kind: str, key_type, one_key: bool) -> tuple:
+def _boundary(compiler, shape, side: str, offset, which: str, kind: str, key_type, one_key: bool) -> tuple:
     """A frame boundary node of a ``WindowSpec`` as ``(kind[, offset])``."""
 
     if offset is None:
@@ -363,31 +430,26 @@ def _boundary(compiler, side: str, offset, which: str, kind: str, key_type, one_
     if isinstance(offset, exp.Interval):
         raise Unsupported("window frame offset of type INTERVAL")
     if kind == "ROWS":
-        count = compiler._constant_int(offset, "Window frame offset")
+        count = _const_int(compiler, offset, "Window frame offset", shape)
         return (code, count)
-    return (code, _range_offset(compiler, offset, key_type, one_key))
+    return (code, _range_offset(compiler, offset, key_type, one_key, shape))
 
 
-def _range_offset(compiler, node: exp.Expression, key_type, one_key: bool):
-    from .compiler import Cx, EmptyScope
-
+def _range_offset(compiler, node: exp.Expression, key_type, one_key: bool, shape):
     if not one_key:
         raise AnalysisError("A RANGE window frame with an offset needs exactly one ORDER BY key")
     if key_type is None or not key_type.is_numeric:
         if key_type is not None and key_type.kind in ("DATE", "DATETIME", "TIMESTAMP", "TIME"):
             raise Unsupported(f"RANGE offset over an ORDER BY key of type {key_type}")
         raise AnalysisError("A RANGE window frame with an offset needs a numeric ORDER BY key")
-    value = compiler.expr(node, Cx(EmptyScope()))
-    if value.lit is None:
-        raise Unsupported("RANGE window frame offset that is not a literal or parameter")
+    value, _ = _constant(compiler, node, "Window frame offset")
     value = compiler.coerce(value, key_type, "Window frame offset")
     payload = value.fn(None)
-    if payload is None:
-        raise AnalysisError("Window frame offset must not be NULL")
     if isinstance(payload, float) and payload != payload:
         raise Unsupported("NaN window frame offset")
-    if payload < 0:
-        raise AnalysisError("Window frame offset must not be negative")
+    if payload is None or payload < 0:
+        shape.deferred = EvalError("Window frame offset must not be NULL or negative")
+        payload = 0
     if key_type.kind in ("NUMERIC", "BIGNUMERIC"):
         return Fraction(payload)
     return payload
@@ -410,7 +472,7 @@ def _build_frame(compiler, definition: _Def, layout: _Shape, name: str, allowed:
         raise Unsupported(f"window frame unit {kind or 'missing'}")
     key_type = layout.order[0][0].type if has_order else None
     one_key = len(layout.order) == 1
-    start = _boundary(compiler, frame.args.get("start_side"), frame.args.get("start"), "start", kind, key_type, one_key)
+    start = _boundary(compiler, layout, frame.args.get("start_side"), frame.args.get("start"), "start", kind, key_type, one_key)
     end_node = frame.args.get("end")
     if end_node is None:
         if start[0] == FOLL:
@@ -419,7 +481,7 @@ def _build_frame(compiler, definition: _Def, layout: _Shape, name: str, allowed:
             raise AnalysisError("Starting window frame boundary cannot be UNBOUNDED FOLLOWING")
         end = (CUR,)
     else:
-        end = _boundary(compiler, frame.args.get("end_side"), end_node, "end", kind, key_type, one_key)
+        end = _boundary(compiler, layout, frame.args.get("end_side"), end_node, "end", kind, key_type, one_key)
     if start[0] > end[0]:
         raise Unsupported("window frame whose start comes after its end")
     return _Frame(kind, start, end, True)
@@ -451,6 +513,8 @@ class WindowFn:
         results: list = [None] * len(rows)
         if not rows:
             return results
+        if self.shape.deferred is not None:
+            raise self.shape.deferred
         state = self.prepare(rows, env)
         for idx, layout in _partitions(self.shape, rows, env):
             arr = _Arr(layout, idx, [rows[i] for i in idx])
@@ -548,9 +612,7 @@ def _make_numbering(name: str, kind: str, order_required: bool):
         if kind == "ntile":
             if node.args.get("this") is None:
                 raise AnalysisError("NTILE needs the number of buckets")
-            buckets = compiler._constant_int(node.this, "NTILE")
-            if buckets <= 0:
-                raise AnalysisError("NTILE buckets must be positive")
+            buckets = _const_int(compiler, node.this, "NTILE", layout, 1)
         elif node.args.get("this") is not None:
             raise AnalysisError(f"{name} takes no arguments")
         return _Numbering(layout, name, kind, buckets)
@@ -608,12 +670,10 @@ def _make_lag(name: str, sign: int):
         value = compiler.expr(node.this, cx)
         offset = 1
         if node.args.get("offset") is not None:
-            offset = compiler._constant_int(node.args["offset"], f"{name} offset")
+            offset = _const_int(compiler, node.args["offset"], f"{name} offset", layout)
         default = None
         if node.args.get("default") is not None:
-            default = compiler.expr(node.args["default"], cx)
-            if default.lit is None:
-                raise Unsupported(f"{name} default that is not a literal or parameter")
+            default, _ = _constant(compiler, node.args["default"], f"The default expression of {name}")
             if value.lit == "null":
                 target, (value, default) = compiler.unify([value, default], name)
             else:
@@ -673,24 +733,83 @@ def _make_nth(name: str, which: str):
         value = compiler.expr(node.this, cx)
         n = 1
         if which == "nth":
-            n = compiler._constant_int(node.args["offset"], "NTH_VALUE offset")
-            if n <= 0:
-                raise AnalysisError("NTH_VALUE offset must be positive")
+            n = _const_int(compiler, node.args["offset"], "NTH_VALUE offset", layout, 1)
         frame = _build_frame(compiler, definition, layout, name, True)
         return _Nth(layout, name, value, frame, which, n, nulls == "ignore")
 
     return make
 
 
+# --- IS_FIRST / IS_LAST (GoogleSQL) -------------------------------------------------------------------
+
+
+class _IsFirst(WindowFn):
+    def __init__(self, shape, name, k, last: bool, safe: bool):
+        super().__init__(T.BOOL, shape, name)
+        self.k, self.last, self.safe = k, last, safe
+
+    def run(self, arr, state):
+        n = arr.layout.n
+        if self.k is None or self.k < 0:
+            if self.safe:
+                return [None] * n
+            raise EvalError(f"The argument to the function {self.name}() cannot be null or negative")
+        if self.last:
+            return [n - 1 - i < self.k for i in range(n)]
+        return [i < self.k for i in range(n)]
+
+
+def _make_is_first(compiler, node, nulls, definition, layout, safe: bool) -> WindowFn:
+    name = str(node.this).upper()
+    if compiler.mode == "bigquery":
+        raise Unsupported(f"{name} (a GoogleSQL function BigQuery does not have)")
+    from .compiler import _only
+
+    _only(node, "this", "expressions")
+    _no_nulls(nulls, name)
+    _no_frame(definition, name)
+    if not layout.order:
+        raise Unsupported(f"{name} without ORDER BY")
+    args = node.expressions
+    if len(args) != 1:
+        raise AnalysisError(f"{name} takes exactly one argument")
+    if args[0].find(exp.Column) is not None:
+        raise Unsupported(f"{name} with an argument that is not constant")
+    value, payload = _constant(compiler, args[0], f"The argument of {name}")
+    if value.type != T.INT64:
+        raise AnalysisError(f"{name} takes an INT64 argument")
+    return _IsFirst(layout, name, payload, name == "IS_LAST", safe)
+
+
 # --- percentiles --------------------------------------------------------------------------------------
+
+
+def percentile_value(values: list, p, disc: bool, vtype: T.Type, respect_nulls: bool, env: Env):
+    """PERCENTILE_CONT / PERCENTILE_DISC of ``values`` (payloads of ``vtype``, NULLs allowed) for the percentile ``p``.
+
+    ``p`` is the payload of the percentile argument (a float, int or Decimal, or ``None`` for NULL). NULLs are dropped
+    unless ``respect_nulls``, in which case they count as the smallest values. Raises ``EvalError`` for a percentile
+    that is NULL or outside [0, 1].
+    """
+
+    if p is None:
+        raise EvalError("The percentile argument must not be NULL")
+    if not 0 <= Fraction(p) <= 1:
+        raise EvalError("The percentile argument must be in [0, 1]")
+    taken = sorted((v for v in values if v is not None), key=lambda v: V.sort_key(vtype, v))
+    if respect_nulls:
+        taken = [None] * (len(values) - len(taken)) + taken
+    if not taken:
+        return None
+    return _disc(taken, p, vtype, env) if disc else _cont(taken, p, vtype, env)
 
 
 class _Percentile(WindowFn):
     peer_invariant = True
 
-    def __init__(self, shape, name, value: E, percentile: E, disc: bool, result_type):
+    def __init__(self, shape, name, value: E, percentile, disc: bool, result_type, respect_nulls: bool):
         super().__init__(result_type, shape, name)
-        self.value, self.percentile, self.disc = value, percentile, disc
+        self.value, self.percentile, self.disc, self.respect_nulls = value, percentile, disc, respect_nulls
 
     def prepare(self, rows, env):
         values = [self.value.fn(Env(r, env, env.ctx, env.ctes)) for r in rows]
@@ -698,75 +817,61 @@ class _Percentile(WindowFn):
 
     def run(self, arr, state):
         values, env = state
-        taken = [values[i] for i in arr.idx if values[i] is not None]
-        p = self.percentile.fn(env)
-        if p is None:
-            raise EvalError("The percentile argument must not be NULL")
-        fraction = Fraction(p)
-        if not 0 <= fraction <= 1:
-            raise EvalError("The percentile argument must be in [0, 1]")
-        vtype = self.value.type
-        taken.sort(key=lambda v: V.sort_key(vtype, v))
-        n = len(taken)
-        if n == 0:
-            result = None
-        elif self.disc:
-            result = self._disc(taken, p, fraction, vtype, env)
-        else:
-            result = self._cont(taken, p, fraction, vtype, env)
+        result = percentile_value([values[i] for i in arr.idx], self.percentile, self.disc, self.value.type, self.respect_nulls, env)
         return [result] * arr.layout.n
 
-    def _disc(self, taken, p, fraction, vtype, env):
-        n = len(taken)
-        exact = math.ceil(fraction * n)
-        if isinstance(p, float) and math.ceil(p * n) != exact:
-            raise Unsupported("PERCENTILE_DISC at a rank that float arithmetic places differently")
-        position = max(exact - 1, 0)
-        chosen = taken[position]
-        key = V.sort_key(vtype, chosen)
-        if any(V.sort_key(vtype, v) == key and repr(v) != repr(chosen) for v in taken):
-            env.ctx.nondet("PERCENTILE_DISC chose between equal values that print differently")
-        return chosen
 
-    def _cont(self, taken, p, fraction, vtype, env):
-        n = len(taken)
-        exact = fraction * (n - 1)
+def _disc(taken, p, vtype, env):
+    n = len(taken)
+    exact = math.ceil(Fraction(p) * n)
+    if isinstance(p, float) and math.ceil(p * n) != exact:
+        raise Unsupported("PERCENTILE_DISC at a rank that float arithmetic places differently")
+    chosen = taken[max(exact - 1, 0)]
+    if chosen is not None:
+        key = V.sort_key(vtype, chosen)
+        if any(v is not None and V.sort_key(vtype, v) == key and repr(v) != repr(chosen) for v in taken):
+            env.ctx.nondet("PERCENTILE_DISC chose between equal values that print differently")
+    return chosen
+
+def _cont(taken, p, vtype, env):
+    n = len(taken)
+    if vtype.kind in ("INT64", "FLOAT64") and not isinstance(p, Fraction):
+        position = float(p) * (n - 1)
+        low = math.floor(position)
+        frac = position - low
+    else:
+        exact = Fraction(p) * (n - 1)
         low = math.floor(exact)
         frac = exact - low
-        if vtype.kind in ("INT64", "FLOAT64"):
-            def as_float(v):
-                if isinstance(v, int) and abs(v) > 2**53:
-                    raise Unsupported("PERCENTILE_CONT over integers beyond 2**53")
-                return float(v)
+    lower = taken[low]
+    if frac == 0:
+        return None if lower is None else (float(lower) if vtype.kind == "INT64" else lower)
+    upper = taken[low + 1]
+    if lower is None:  # NULLs are the smallest values; between a NULL and a value the value is the answer
+        return None if upper is None else (float(upper) if vtype.kind == "INT64" else upper)
+    if vtype.kind in ("INT64", "FLOAT64"):
+        def as_float(v):
+            if isinstance(v, int) and abs(v) > 2**53:
+                raise Unsupported("PERCENTILE_CONT over integers beyond 2**53")
+            return float(v)
 
-            if vtype.kind == "FLOAT64" and any(v != v for v in taken):
-                raise Unsupported("PERCENTILE_CONT over NaN")
-            lower = as_float(taken[low])
-            if frac == 0:
-                return lower
-            upper = as_float(taken[low + 1])
-            if not (math.isfinite(lower) and math.isfinite(upper)):
-                raise Unsupported("PERCENTILE_CONT interpolating an infinite value")
+        lo, hi = as_float(lower), as_float(upper)
+        frac = float(frac)
+        if math.isfinite(lo) and math.isfinite(hi) and lo != hi:
             env.ctx.inexact = True
-            return lower + float(frac) * (upper - lower)
-        lower, upper = taken[low], taken[min(low + 1, n - 1)]
-        if frac == 0:
-            return lower
-        value = Fraction(lower) + frac * (Fraction(upper) - Fraction(lower))
-        scale = 9 if vtype.kind == "NUMERIC" else 38
-        scaled = value * 10**scale
-        if scaled.denominator != 1:
-            raise Unsupported("PERCENTILE_CONT result that needs rounding in a decimal type")
-        return Decimal(scaled.numerator).scaleb(-scale)
+        return (1.0 - frac) * lo + frac * hi
+    value = Fraction(lower) + frac * (Fraction(upper) - Fraction(lower))
+    scale = 9 if vtype.kind == "NUMERIC" else 38
+    scaled = value * 10**scale
+    magnitude = math.floor(abs(scaled) + Fraction(1, 2))  # half away from zero
+    return Decimal(f"{-magnitude if scaled < 0 else magnitude}e-{scale}")
 
 
 def _make_percentile(name: str, disc: bool):
     def make(compiler, node, nulls, cx, definition, layout):
-        from .compiler import Cx, EmptyScope, _only
+        from .compiler import _only
 
         _only(node, "this", "expression")
-        if nulls == "respect":
-            raise Unsupported(f"RESPECT NULLS on {name}")
         if layout.order:
             raise AnalysisError(f"Window ORDER BY is not allowed for analytic function {name}")
         _no_frame(definition, name)
@@ -786,12 +891,12 @@ def _make_percentile(name: str, disc: bool):
                 result = T.FLOAT64
             else:
                 raise AnalysisError(f"{name} needs a numeric argument, not {value.type}")
-        percentile = compiler.expr(node.args["expression"], Cx(EmptyScope()))
-        if percentile.lit is None:
-            raise Unsupported(f"{name} percentile that is not a literal or parameter")
+        percentile, payload = _constant(compiler, node.args["expression"], f"The percentile of {name}")
         if not percentile.type.is_numeric and percentile.lit != "null":
             raise AnalysisError(f"{name} percentile must be numeric")
-        return _Percentile(layout, name, value, percentile, disc, result)
+        if isinstance(payload, float) and payload != payload:
+            raise Unsupported(f"{name} with a NaN percentile")
+        return _Percentile(layout, name, value, payload, disc, result, nulls == "respect")
 
     return make
 
