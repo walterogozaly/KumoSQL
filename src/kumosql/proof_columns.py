@@ -35,6 +35,15 @@ Three ways the provers use it, all of which can only remove a proof:
 * **a qualified tree** (:meth:`StatementReader.judge_qualified`): sqlglot's qualifier ran on a tagged tree and
   every tagged column that gained a qualifier is compared with the independent owner.
 
+* **a column-rebuilding rewrite** (:func:`begin` and :meth:`Rewrite.verify`): a rewrite that reads a derived table as
+  its base table, flattens a join, a CTE or a derived table, renames an alias or pushes a qualifier through a
+  subquery rebuilds columns without choosing among sources by name. The statement it rewrote is numbered (every
+  column and FROM item), printed and read before the rewrite and again after it, and every column that survived
+  (and every column the rewrite says it rebuilt from another) must read the same *leaves* afterwards: the base
+  tables' columns it chases through plain derived tables and CTEs, naming the table by the number of the FROM item
+  it came from. A name that now binds to another source, a projection read from the wrong output, a table
+  instance swapped for another, all change the leaves.
+
 A column the text cannot decide (a source whose columns nobody listed, a name that is also a source's name) is
 ``unchecked``: the proof stands, because turning a proof the prover reached into a refusal on missing knowledge
 would lose correct proofs (the check is evidence, not a second prover). An error inside the check is not a column
@@ -44,6 +53,8 @@ it could not decide: it is a refusal, so a broken checker never certifies anythi
 
 from __future__ import annotations
 
+import itertools
+import secrets
 from collections import Counter
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -609,6 +620,317 @@ def guarded_qualification(tree: exp.Expression, apply, known: dict | None, diale
     return result
 
 
+# --- a rewrite that rebuilds columns -----------------------------------------------------------------------------
+
+STAMP_COLUMN = "kq_stamp_column"
+STAMP_SOURCE = "kq_stamp_source"
+REBUILT_FROM = "kq_rebuilt_from"
+
+_SUPPLIED: ContextVar[tuple[dict | None, str | None]] = ContextVar("kumosql_proof_columns_supplied", default=(None, None))
+
+
+class _Ambiguous(ValueError):
+    """The independent reading finds a bare name in more than one source it can read."""
+
+
+@contextmanager
+def supplying(known: dict | None, dialect: str | None):
+    """Name the columns the prover was given and its dialect, for the rewrites that call :func:`begin` inside the block."""
+
+    token = _SUPPLIED.set((known, dialect))
+    try:
+        yield
+    finally:
+        _SUPPLIED.reset(token)
+
+
+def _stamp(root: exp.Expression, token: int) -> None:
+    for index, column in enumerate(_columns(root)):
+        column.meta[STAMP_COLUMN] = (token, index)
+    for index, item in enumerate(_from_items(root)):
+        item.meta[STAMP_SOURCE] = (token, index)
+
+
+def _meta_of(node: exp.Expression, key: str):
+    meta = getattr(node, "_meta", None)
+    return meta.get(key) if meta else None
+
+
+def rebuilt(new: exp.Expression, old: exp.Expression) -> exp.Expression:
+    """Say that ``new`` stands where ``old`` (a column, or an expression over columns) stood, so the check compares
+    the base columns they read. Returns ``new``. Nothing is claimed when a column of ``old`` was not numbered."""
+
+    stamps = []
+    for column in old.find_all(exp.Column):
+        stamp = _meta_of(column, STAMP_COLUMN)
+        if stamp is None:
+            return new
+        stamps.append(stamp)
+    new.meta[REBUILT_FROM] = tuple(stamps)
+    return new
+
+
+def carry_source(new: exp.Expression, old: exp.Expression) -> exp.Expression:
+    """Say that the FROM item ``new`` is the FROM item ``old`` (a table rebuilt with another alias, a derived table read as its base)."""
+
+    stamp = _meta_of(old, STAMP_SOURCE)
+    if stamp is not None:
+        new.meta[STAMP_SOURCE] = stamp
+    return new
+
+
+def _read_back(root: exp.Expression) -> tuple[exp.Expression, list[exp.Column], list[exp.Expression]]:
+    """Print ``root``, read the text again, and line the printed statement's columns and FROM items up with ``root``'s."""
+
+    text = root.sql(dialect="bigquery")
+    nodes = [n for n in sqlglot.parse(text, read="bigquery", error_level=sqlglot.ErrorLevel.RAISE) if n is not None]
+    if len(nodes) != 1:
+        raise _Undecided("the printed statement is not one statement")
+    parsed = nodes[0]
+    columns, items = _columns(root), _from_items(root)
+    again, again_items = _columns(parsed), _from_items(parsed)
+    if (
+        len(columns) != len(again)
+        or len(items) != len(again_items)
+        or any(a.name.lower() != b.name.lower() for a, b in zip(columns, again))
+        or any(type(a) is not type(b) for a, b in zip(items, again_items))
+    ):
+        raise _Undecided("the printed statement does not line up with the tree")
+    return parsed, columns, items
+
+
+class _Origins:
+    """The base columns a column reads, chased through plain derived tables and CTEs, from one statement's text.
+
+    A leaf is ``(kind, number, name)``: ``table`` (a FROM item that is a physical table), ``unnest`` or ``derived``
+    (the output of a set operation, which is not chased), the FROM item's number and the column's name.
+    """
+
+    def __init__(self, reader: StatementReader, number):
+        self.reader = reader
+        self.number = number  # a FROM item of the reader's text -> its number, or None when the rewrite made it
+
+    def column(self, column: exp.Column, depth: int = 0) -> list[tuple]:
+        if depth > 24:
+            raise _Undecided("too many derived tables to chase")
+        resolution = self.reader.resolve(column)
+        status = resolution.status
+        if status == AMBIGUOUS:
+            raise _Ambiguous(resolution.detail)
+        if status == OWNER:
+            if resolution.source is None:
+                raise _Undecided("the owner is not a FROM item")
+            return self._item(self.reader.items[resolution.source], column.name.lower(), depth)
+        if status == OUTPUT:
+            if resolution.target is None:
+                raise _Undecided("a select alias with no single value")
+            return self.expression(resolution.target, depth + 1)
+        raise _Undecided(resolution.detail or status)
+
+    def expression(self, node: exp.Expression, depth: int = 0) -> list[tuple]:
+        leaves: list[tuple] = []
+        for column in node.find_all(exp.Column):
+            if isinstance(column.this, exp.Star):
+                raise _Undecided("a star")
+            leaves.extend(self.column(column, depth + 1))
+        return leaves
+
+    def _item(self, item: exp.Expression, name: str, depth: int) -> list[tuple]:
+        if isinstance(item, exp.Table):
+            try:
+                cte = _cte_named(item)
+            except _Rejected as exc:
+                raise _Undecided(str(exc)) from None
+            if cte is None:
+                return [("table", self._number(item), name)]
+            alias = cte.args.get("alias")
+            if alias is not None and alias.args.get("columns"):
+                raise _Undecided("a CTE with a column list")
+            return self._body(cte.this, name, item, depth)
+        if isinstance(item, exp.Subquery):
+            alias = item.args.get("alias")
+            if alias is not None and alias.args.get("columns"):
+                raise _Undecided("a derived table with a column list")
+            return self._body(item.this, name, item, depth)
+        if isinstance(item, exp.Unnest):
+            return [("unnest", self._number(item), name)]
+        raise _Undecided("a FROM item that is not a table or a query")
+
+    def _number(self, item: exp.Expression) -> int:
+        number = self.number(item)
+        if number is None:
+            raise _Undecided("a FROM item the rewrite made")
+        return number
+
+    def _body(self, query: exp.Expression, name: str, item: exp.Expression, depth: int) -> list[tuple]:
+        while isinstance(query, exp.Subquery):
+            query = query.this
+        if isinstance(query, exp.Select):
+            if any(isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star)) for e in query.expressions):
+                raise _Undecided("a star in the projection")
+            matches = [e for e in query.expressions if e.alias_or_name.lower() == name]
+            if len(matches) != 1:
+                raise _Undecided(f"{name} is not exactly one output")
+            value = matches[0].this if isinstance(matches[0], exp.Alias) else matches[0]
+            return self.expression(value, depth + 1)
+        if isinstance(query, exp.SetOperation):
+            return [("derived", self._number(item), name)]
+        raise _Undecided("a derived table that is not a SELECT")
+
+
+def _show(leaves: list[tuple]) -> str:
+    return ", ".join(f"{kind} #{number} column {name}" for kind, number, name in leaves) or "no column"
+
+
+class Rewrite:
+    """One rewrite of a statement, checked: its columns are numbered and read before it, and again after it.
+
+    Every column that survives (and every node the rewrite says it rebuilt from a column, :func:`rebuilt`) must
+    read the same base columns after the rewrite as the column it came from read before it. FROM items the rewrite
+    makes itself have no number (:func:`carry_source` hands one over), so a column that reads one is left unchecked.
+
+    ``begin`` numbers the columns and FROM items of the node the rewrite works on (cheap, and done before the
+    rewrite copies it); :meth:`snapshot` numbers the rest of the statement and reads it, and must run while the
+    statement is still as it was before the rewrite (:meth:`verify` takes the snapshot itself when the rewrite
+    worked on a copy and left the statement alone).
+    """
+
+    active = True
+
+    def __init__(self, node: exp.Expression, site: str, known: dict | None):
+        self.site = site
+        self.known = known
+        self.token = secrets.randbits(60)
+        self.root = node.root()
+        self._count = itertools.count()
+        self.problem: str | None = None
+        self.before: _Origins | None = None
+        self.before_columns: list[exp.Column] = []
+        self.before_index: dict[int, int] = {}
+        self._snapped = False
+        for item in (*_columns(node), *_from_items(node)):
+            self._number(item)
+
+    def _number(self, node: exp.Expression) -> None:
+        key = STAMP_COLUMN if isinstance(node, exp.Column) else STAMP_SOURCE
+        node.meta[key] = (self.token, next(self._count))
+
+    def snapshot(self) -> None:
+        if self._snapped:
+            return
+        self._snapped = True
+        try:
+            for column in _columns(self.root):
+                if self._stamped(column, STAMP_COLUMN) is None:
+                    self._number(column)
+            for item in _from_items(self.root):
+                if self._stamped(item, STAMP_SOURCE) is None:
+                    self._number(item)
+            parsed, columns, items = _read_back(self.root)
+            reader = StatementReader(parsed, self.known)
+            numbers = {id(item): self._stamped(items[index], STAMP_SOURCE) for index, item in enumerate(reader.items)}
+            self.before = _Origins(reader, lambda item: numbers.get(id(item)))
+            self.before_columns = reader.columns
+            self.before_index = {self._stamped(column, STAMP_COLUMN): index for index, column in enumerate(columns)}
+        except Exception as exc:  # noqa: BLE001 - a statement the reader cannot read is left unchecked
+            self.problem = f"the statement before the rewrite is not one the reader reads ({type(exc).__name__})"
+
+    def _stamped(self, node: exp.Expression, key: str) -> int | None:
+        stamp = _meta_of(node, key)
+        return stamp[1] if stamp is not None and stamp[0] == self.token else None
+
+    def verify(self, after: exp.Expression) -> Verdict:
+        self.snapshot()
+        if self.problem is not None or self.before is None:
+            return _noted(self.site, Verdict(UNCHECKED, self.problem or "no reading of the statement before"))
+        try:
+            parsed, columns, items = _read_back(after)
+        except _Undecided as exc:
+            return _noted(self.site, Verdict(UNCHECKED, str(exc)))
+        except Exception as exc:  # noqa: BLE001 - the prover's own output that cannot be read back is not confirmed
+            return _noted(self.site, Verdict(DISAGREE, f"the rewritten statement cannot be read back ({type(exc).__name__}), so its columns are not confirmed"))
+        try:
+            reader = StatementReader(parsed, self.known)
+            numbers = {id(item): self._stamped(items[index], STAMP_SOURCE) for index, item in enumerate(reader.items)}
+            origins = _Origins(reader, lambda item: numbers.get(id(item)))
+            position = {id(column): index for index, column in enumerate(columns)}
+            claims: list[tuple[list[int], list[int], str]] = []
+            for index, column in enumerate(columns):
+                before = self._stamped(column, STAMP_COLUMN)
+                if before is not None and before in self.before_index:
+                    claims.append(([self.before_index[before]], [index], column.name))
+            for node in after.walk():
+                made = _meta_of(node, REBUILT_FROM)
+                if made and all(token == self.token and number in self.before_index for token, number in made):
+                    indexes = [position[id(c)] for c in node.find_all(exp.Column) if id(c) in position]
+                    claims.append(([self.before_index[number] for _, number in made], indexes, node.sql(dialect="bigquery")[:60]))
+            agreed = unchecked = 0
+            first = None
+            for before, indexes, label in claims:
+                verdict = self._compare(origins, reader, before, indexes, label)
+                _note(self.site, verdict)
+                if verdict.kind == DISAGREE and first is None:
+                    first = verdict
+                agreed += verdict.kind == AGREE
+                unchecked += verdict.kind == UNCHECKED
+        except Exception as exc:  # noqa: BLE001 - a checker that fails refuses; it never guesses that the prover was right
+            return _noted(self.site, Verdict(DISAGREE, f"the independent check failed ({type(exc).__name__}: {exc}), so the rewritten columns are not confirmed"))
+        if first is not None:
+            return Verdict(DISAGREE, first.reason, agreed, unchecked)
+        return Verdict(AGREE if agreed else UNCHECKED, "", agreed, unchecked)
+
+    def _compare(self, origins: _Origins, reader: StatementReader, before: list[int], indexes: list[int], label: str) -> Verdict:
+        try:
+            expected = [leaf for index in before for leaf in self.before.column(self.before_columns[index])]
+        except (_Undecided, _Ambiguous, IndexError) as exc:
+            return Verdict(UNCHECKED, f"before the rewrite: {exc}")
+        try:
+            actual = [leaf for index in indexes for leaf in origins.column(reader.columns[index])]
+        except _Undecided as exc:
+            return Verdict(UNCHECKED, str(exc))
+        except _Ambiguous as exc:
+            return Verdict(DISAGREE, f"{label!r} is ambiguous after the rewrite ({exc}) and was not before")
+        if actual == expected:
+            return Verdict(AGREE, "the same base columns", agreed=1)
+        return Verdict(DISAGREE, f"{label!r} reads {_show(actual)} after the rewrite but read {_show(expected)} before")
+
+    def check(self, after: exp.Expression) -> None:
+        """:meth:`verify`, raising :class:`ColumnResolutionRefused` on a disagreement."""
+
+        verdict = self.verify(after)
+        if verdict.refused:
+            raise ColumnResolutionRefused(f"{self.site}: {verdict.reason}")
+
+
+class _NoRewrite:
+    """What :func:`begin` hands back when there is nothing to check (another dialect, or the check is off)."""
+
+    active = False
+
+    def snapshot(self) -> None:
+        return None
+
+    def check(self, after: exp.Expression) -> None:
+        return None
+
+    def verify(self, after: exp.Expression) -> None:
+        return None
+
+
+def begin(node: exp.Expression, site: str) -> "Rewrite | _NoRewrite":
+    """Start checking a rewrite of ``node`` (a part of a statement), before it copies or edits anything.
+
+    Numbers the columns and FROM items of ``node``. A rewrite that edits in place calls ``.snapshot()`` before its
+    first edit; either way ``.check(after)`` reads the statement the rewrite made. Does nothing outside
+    :func:`supplying` (the algebraic normalizer's own call), for other dialects and with the check off.
+    """
+
+    known, dialect = _SUPPLIED.get()
+    if dialect != "bigquery" or not enabled():
+        return _NoRewrite()
+    return Rewrite(node, site, known)
+
+
 # --- the registry's view: a transition accepted only when every added qualifier is re-derived ------------------
 
 def check_column_resolution_transition(step: RewriteStep, before: exp.Expression, after: exp.Expression) -> StepCheck:
@@ -635,5 +957,5 @@ __all__ = [
     "AGREE", "COLUMN_RESOLUTION_ASSUMPTIONS", "COLUMN_RESOLUTION_FAMILY", "Claim", "ColumnResolutionRefused", "DISAGREE",
     "Resolution", "StatementReader", "UNCHECKED", "Verdict", "check_added_qualifiers",
     "check_column_resolution_transition", "disabled", "enabled", "guarded_qualification", "parse_tagged", "reader_for",
-    "recording", "source_tag", "summarize", "tag",
+    "Rewrite", "begin", "carry_source", "rebuilt", "recording", "source_tag", "summarize", "supplying", "tag",
 ]

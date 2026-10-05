@@ -821,6 +821,20 @@ def _null_propagating(node: exp.Expression) -> bool:
     return False
 
 
+def _output_values(select: exp.Select) -> dict[str, exp.Expression] | None:
+    """Each output name of ``select`` (lower case) mapped to the expression that computes it, or ``None``.
+
+    This is the lookup behind every rewrite that replaces ``d.x`` by what the derived table ``d`` computes for ``x``
+    (``proof_columns`` re-derives the result from the text: a column must read the same base columns afterwards).
+    A name that is missing or repeated gives ``None``.
+    """
+
+    names = [e.alias_or_name.lower() for e in select.expressions]
+    if "" in names or len(set(names)) != len(names):
+        return None
+    return {n: (e.this if isinstance(e, exp.Alias) else e) for n, e in zip(names, select.expressions)}
+
+
 def _inline_expression_projection(select: exp.Select, schema: dict[str, list[str]] | None = None) -> exp.Expression | None:
     """``(SELECT f(a) AS x FROM t) AS d`` joined in: read ``t AS d`` and replace ``d.x`` by ``f(d.a)``.
 
@@ -855,7 +869,7 @@ def _inline_expression_projection(select: exp.Select, schema: dict[str, list[str
         alias = source.alias
         qualifier = table.alias_or_name
         # Columns of the new relation are the table's columns, so every use of ``d.x`` is replaced.
-        by_name = {n: (e.this if isinstance(e, exp.Alias) else e) for n, e in zip(names, inner.expressions)}
+        by_name = _output_values(inner)
         if _null_extended(select, source) and not all(_null_propagating(e) for e in by_name.values()):
             continue
         # the bodies of derived tables name their own sources' columns, not this derived table's
@@ -873,8 +887,10 @@ def _inline_expression_projection(select: exp.Select, schema: dict[str, list[str
         # the table's other columns become visible where only the derived outputs were
         if _may_capture(select, source, table, set(), schema):
             continue
+        guard = _rewriting(select, "algebraic_inline_expression_projection")
+        guard.freeze()
         for column in uses:
-            replacement = by_name[column.name.lower()].copy()
+            replacement = proof_columns.rebuilt(by_name[column.name.lower()].copy(), column)
             for inner_column in replacement.find_all(exp.Column):
                 if not inner_column.table or inner_column.table.lower() == qualifier.lower():
                     inner_column.set("table", exp.to_identifier(alias))
@@ -884,8 +900,11 @@ def _inline_expression_projection(select: exp.Select, schema: dict[str, list[str
             # differently named column (``d.x`` becoming ``d.a`` would rename the output to ``a``)
             renamed = not isinstance(replacement, exp.Column) or replacement.name.lower() != column.name.lower()
             column.replace(exp.alias_(value, column.name) if column.parent is select and column.arg_key == "expressions" and renamed else value)
-        replaced = exp.Table(this=table.this.copy(), db=table.args.get("db"), catalog=table.args.get("catalog"), alias=exp.TableAlias(this=exp.to_identifier(alias)))
+        replaced = proof_columns.carry_source(
+            exp.Table(this=table.this.copy(), db=table.args.get("db"), catalog=table.args.get("catalog"), alias=exp.TableAlias(this=exp.to_identifier(alias))), table
+        )
         source.replace(replaced)
+        guard.edited()
         changed = True
     return select if changed else None
 
@@ -909,6 +928,7 @@ def _merge_spj_source(select: exp.Select) -> exp.Expression | None:
         return None
     if any(isinstance(star, exp.Star) and not isinstance(star.parent, exp.Count) for star in select.find_all(exp.Star)):
         return None
+    guard = _rewriting(select, "algebraic_merge_source")
     select = select.copy()
     items = _sources_of(select)
     for join in select.args.get("joins") or []:
@@ -995,7 +1015,7 @@ def _merge_spj_source(select: exp.Select) -> exp.Expression | None:
             for c in e.find_all(exp.Column)
         ):
             continue
-        by_name = {n: (e.this if isinstance(e, exp.Alias) else e) for n, e in zip(names, inner.expressions)}
+        by_name = _output_values(inner)
         # A bare column in the select list keeps its output name once it is replaced.
         for index, item in enumerate(select.expressions):
             if item in uses or item in bare:
@@ -1005,7 +1025,7 @@ def _merge_spj_source(select: exp.Select) -> exp.Expression | None:
         uses = [c for c in own if c.table.lower() == alias]
         bare = [c for c in own if not c.table]
         for column in uses + bare:
-            replacement = rename(by_name[column.name.lower()])
+            replacement = proof_columns.rebuilt(rename(by_name[column.name.lower()]), column)
             column.replace(exp.Paren(this=replacement) if isinstance(replacement, exp.Binary) else replacement)
         conditions = []
         if inner.args.get("where") is not None:
@@ -1030,6 +1050,7 @@ def _merge_spj_source(select: exp.Select) -> exp.Expression | None:
         select.set("joins", [exp.Join(this=i) for i in all_items[1:]] or None)
         where = _and_all([part for condition in conditions for part in _conjuncts(condition)])
         select.set("where", exp.Where(this=where) if where is not None else None)
+        guard.replaced_by(select)
         return select
     return None
 
@@ -1079,24 +1100,29 @@ def _decorrelate_aggregate(select: exp.Select, schema: dict[str, list[str]] | No
             subquery = condition.args[side]
             if not isinstance(subquery, exp.Subquery) or not isinstance(subquery.this, exp.Select):
                 continue
-            built = _decorrelated(subquery.this, table_columns, outer_resolves)
-            if built is None:
+            if _decorrelated(subquery.this, table_columns, outer_resolves) is None:
                 continue
-            derived, keys, value = built
+            guard = _rewriting(select, "algebraic_decorrelate_aggregate")
+            derived, keys, value = _decorrelated(subquery.this, table_columns, outer_resolves)  # again, now numbered
             alias = f"kqd{next(_decorrelate_counter)}"
             other = condition.args["expression" if side == "this" else "this"]
             if any(isinstance(n, (exp.Subquery, exp.Select)) for n in other.walk()):
                 continue
-            joined = [exp.EQ(this=outer.copy(), expression=exp.column(f"kqk{i}", table=alias)) for i, (_, outer) in enumerate(keys)]
+            joined = [
+                exp.EQ(this=outer.copy(), expression=proof_columns.rebuilt(exp.column(f"kqk{i}", table=alias), inner_key))
+                for i, (inner_key, outer) in enumerate(keys)
+            ]
+            produced = proof_columns.rebuilt(value_column(alias), value)
             comparison = type(condition)(
-                this=value_column(alias) if side == "this" else other.copy(),
-                expression=other.copy() if side == "this" else value_column(alias),
+                this=produced if side == "this" else other.copy(),
+                expression=other.copy() if side == "this" else produced,
             )
             result = select.copy()
             new_conditions = [c.copy() for j, c in enumerate(conditions) if j != position] + joined + [comparison]
             result.set("where", exp.Where(this=_and_all(new_conditions)))
             derived_source = exp.Subquery(this=derived, alias=exp.TableAlias(this=exp.to_identifier(alias)))
             result.set("joins", list(result.args.get("joins") or []) + [exp.Join(this=derived_source)])
+            guard.replaced_by(result)
             return result
     return None
 
@@ -1143,20 +1169,24 @@ def _decorrelate_select_list(select: exp.Select, schema: dict[str, list[str]] | 
                 continue
             if any(isinstance(a, (exp.Subquery,)) for a in _ancestors_of(subquery, item) if a is not subquery):
                 continue
-            built = _decorrelated(subquery.this, table_columns, outer_resolves)
-            if built is None:
+            if _decorrelated(subquery.this, table_columns, outer_resolves) is None:
                 continue
-            derived, keys, _ = built
+            guard = _rewriting(select, "algebraic_decorrelate_select_list")
+            derived, keys, value = _decorrelated(subquery.this, table_columns, outer_resolves)  # again, now numbered
             alias = f"kqd{next(_decorrelate_counter)}"
             result = select.copy()
             target = result.expressions[position]
             for node in target.find_all(exp.Subquery):
                 if node.sql() == subquery.sql():
-                    node.replace(value_column(alias))
+                    node.replace(proof_columns.rebuilt(value_column(alias), value))
                     break
-            on = _and_all([exp.EQ(this=outer.copy(), expression=exp.column(f"kqk{i}", table=alias)) for i, (_, outer) in enumerate(keys)])
+            on = _and_all([
+                exp.EQ(this=outer.copy(), expression=proof_columns.rebuilt(exp.column(f"kqk{i}", table=alias), inner_key))
+                for i, (inner_key, outer) in enumerate(keys)
+            ])
             source = exp.Subquery(this=derived, alias=exp.TableAlias(this=exp.to_identifier(alias)))
             result.set("joins", list(result.args.get("joins") or []) + [exp.Join(this=source, side="LEFT", on=on)])
+            guard.replaced_by(result)
             return result
     return None
 
@@ -1292,11 +1322,13 @@ def _fold_filter_into_grouping(select: exp.Select) -> exp.Expression | None:
     if any(c.find_ancestor(exp.Window) for c in columns):
         return None
 
+    guard = _rewriting(select, "algebraic_fold_filter_into_grouping")
+
     def substitute(node: exp.Expression) -> exp.Expression:
         node = node.copy()
         holder = exp.Select(expressions=[node])
         for column in list(holder.find_all(exp.Column)):
-            replacement = names[column.name.lower()].copy()
+            replacement = proof_columns.rebuilt(names[column.name.lower()].copy(), column)
             if column is node:
                 node = replacement
                 holder.set("expressions", [node])
@@ -1323,6 +1355,7 @@ def _fold_filter_into_grouping(select: exp.Select) -> exp.Expression | None:
         result.set("having", exp.Having(this=_and_all([c for cond in conditions for c in _conjuncts(cond)])))
     if _global_aggregate(inner) and not _global_aggregate(result):
         return None  # the outer select drops every aggregate: the merged select would lose the one-row result
+    guard.replaced_by(result)
     return result
 
 
@@ -1381,6 +1414,7 @@ def _merge_outer_right_filter(select: exp.Select) -> exp.Expression | None:
         if any(c.table and c.table.lower() != t_name for c in inner.find_all(exp.Column)):
             continue
         alias = source.alias
+        guard = _rewriting(select, "algebraic_merge_outer_filter")
         condition = inner.args["where"].this.copy()
         for column in condition.find_all(exp.Column):
             column.set("table", exp.to_identifier(alias))
@@ -1390,6 +1424,7 @@ def _merge_outer_right_filter(select: exp.Select) -> exp.Expression | None:
         target = copy.args["joins"][index]
         target.set("this", merged)
         target.set("on", exp.And(this=exp.Paren(this=target.args["on"]) if isinstance(target.args["on"], exp.Or) else target.args["on"], expression=exp.Paren(this=condition) if isinstance(condition, exp.Or) else condition))
+        guard.replaced_by(copy)
         return copy
     return None
 
@@ -1433,7 +1468,8 @@ def _flatten_join_source(select: exp.Select) -> exp.Expression | None:
         return None
     if any(isinstance(n, (exp.Subquery, exp.Exists)) and n is not source for n in select.walk() if n.find_ancestor(exp.Select) is select):
         return None
-    by_name = {n: e for n, e in zip(names, inner.expressions)}
+    by_name = _output_values(inner)
+    guard = _rewriting(select, "algebraic_flatten_join_source")
     copy = select.copy()
     for column in list(copy.find_all(exp.Column)):
         if column.find_ancestor(exp.Select) is not copy:
@@ -1443,10 +1479,11 @@ def _flatten_join_source(select: exp.Select) -> exp.Expression | None:
         origin = by_name.get(column.name.lower())
         if origin is None:
             return None
-        column.replace(origin.copy() if not isinstance(origin, exp.Alias) else origin.this.copy())
+        column.replace(proof_columns.rebuilt(origin.copy(), column))
     new_inner = inner.copy()
     copy.set(FROM_KEY, new_inner.args.get("from_") or new_inner.args.get("from"))
     copy.set("joins", new_inner.args.get("joins"))
+    guard.replaced_by(copy)
     return copy
 
 
@@ -1505,6 +1542,66 @@ def _checked_qualification(tree: exp.Expression, apply, schema: dict[str, list[s
         return proof_columns.guarded_qualification(tree, apply, schema, dialect, site)
     except proof_columns.ColumnResolutionRefused as refusal:
         raise UnmodeledConstruct(f"independent check of column resolution: {refusal}") from None
+
+
+class _ColumnGuard:
+    """A rewrite that rebuilds columns, checked by ``proof_columns`` from the statement's text before and after it.
+
+    ``guard = _rewriting(node, site)`` numbers ``node`` (call it before the rewrite copies or edits anything);
+    ``guard.replaced_by(result)`` reads the whole statement ``node`` sits in with ``node`` replaced by ``result``,
+    and ``guard.freeze()`` before an in-place edit plus ``guard.edited()`` after it do the same for that edit. A column that no
+    longer reads the base columns it read declines the query as unmodeled (``proof_columns.Rewrite``). The whole
+    statement is read, not the select alone: a column a subquery reads from an enclosing query is the very one a
+    rewrite can capture.
+    """
+
+    def __init__(self, node: exp.Expression, site: str):
+        self.node = node
+        self.root = node.root()
+        self._rewrite = proof_columns.begin(node, site)
+        self.active = self._rewrite.active
+
+    def freeze(self) -> None:
+        """Read the statement as it is, before a rewrite that edits it in place."""
+
+        self._rewrite.snapshot()
+
+    def _check(self, after: exp.Expression) -> None:
+        try:
+            self._rewrite.check(after)
+        except proof_columns.ColumnResolutionRefused as refusal:
+            raise UnmodeledConstruct(f"independent check of column resolution: {refusal}") from None
+
+    def replaced_by(self, result: exp.Expression | None) -> None:
+        if not self.active or result is None:
+            return
+        self.freeze()
+        trial = self.root.copy()
+        twin = _twin(self.node, self.root, trial)
+        if twin is None:
+            return
+        if twin is trial:
+            trial = result.copy()
+        else:
+            twin.replace(result.copy())
+        self._check(trial)
+
+    def edited(self) -> None:
+        if self.active:
+            self._check(self.root)
+
+
+def _rewriting(node: exp.Expression, site: str) -> _ColumnGuard:
+    return _ColumnGuard(node, site)
+
+
+def _twin(node: exp.Expression, root: exp.Expression, copy: exp.Expression) -> exp.Expression | None:
+    """The node of ``copy`` (a copy of ``root``) that corresponds to ``node`` of ``root``."""
+
+    for original, duplicate in zip(root.walk(), copy.walk()):
+        if original is node:
+            return duplicate
+    return None
 
 
 def _column_owners(select: exp.Select, schema: dict[str, list[str]]) -> dict[str, list[str]] | None:
@@ -1932,6 +2029,7 @@ def _pull_up_exists(select: exp.Select, schema: dict[str, list[str]] | None) -> 
                 for r in references
             ):
                 continue
+            guard = _rewriting(select, "algebraic_pull_up_exists")
             moved = part.copy()
             for column in list(moved.find_all(exp.Column)):
                 if any(column.name == r.name and column.table == r.table and column.sql() == r.sql() for r in references):
@@ -1943,6 +2041,7 @@ def _pull_up_exists(select: exp.Select, schema: dict[str, list[str]] | None) -> 
             target.this.set("where", exp.Where(this=_and_all(rest)) if rest else None)
             where = copy.args.get("where")
             copy.set("where", exp.Where(this=_and_all(([where.this.copy()] if where is not None else []) + [moved])))
+            guard.replaced_by(copy)
             return copy
     return None
 
@@ -2238,7 +2337,12 @@ def _inline_projection(node: exp.Subquery, schema: dict[str, list[str]] | None =
         return None
     if _may_capture(outer, node, table, {e.name.lower() for e in inner.expressions}, schema):
         return None
-    return exp.Table(this=table.this.copy(), db=table.args.get("db"), catalog=table.args.get("catalog"), alias=node.args.get("alias"))
+    guard = _rewriting(node, "algebraic_inline_projection")
+    replacement = proof_columns.carry_source(
+        exp.Table(this=table.this.copy(), db=table.args.get("db"), catalog=table.args.get("catalog"), alias=node.args.get("alias")), table
+    )
+    guard.replaced_by(replacement)
+    return replacement
 
 
 def _canonical_branch(branch: exp.Select) -> exp.Select | None:
@@ -2768,6 +2872,7 @@ def _grouped_in_to_derived(tree: exp.Expression) -> exp.Expression:
         outputs = [(i.this if isinstance(i, exp.Alias) else i) for i in inner.expressions]
         if not outputs or any(o.sql() not in keys or any(o.find_all(exp.AggFunc)) for o in outputs):
             continue
+        guard = _rewriting(node, "algebraic_grouped_in_to_derived")
         having = inner.args["having"].this.copy()
         aggregates: dict[str, str] = {}
         ok = True
@@ -2784,9 +2889,9 @@ def _grouped_in_to_derived(tree: exp.Expression) -> exp.Expression:
         def lift(piece: exp.Expression) -> exp.Expression:
             if isinstance(piece, exp.AggFunc):
                 name = aggregates.setdefault(piece.sql(), f"kqa{counter}_{len(aggregates)}")
-                return exp.column(name, table=alias)
+                return proof_columns.rebuilt(exp.column(name, table=alias), piece)
             if piece.sql() in key_names:
-                return exp.column(key_names[piece.sql()], table=alias)
+                return proof_columns.rebuilt(exp.column(key_names[piece.sql()], table=alias), piece)
             return piece
 
         calls = {call.sql(): call.copy() for call in having.find_all(exp.AggFunc)}
@@ -2803,10 +2908,12 @@ def _grouped_in_to_derived(tree: exp.Expression) -> exp.Expression:
         if inner.args.get("where") is not None:
             derived.set("where", inner.args["where"].copy())
         derived.set("group", group.copy())
-        outer = exp.Select(expressions=[exp.column(key_names[o.sql()], table=alias) for o in outputs])
+        outer = exp.Select(expressions=[proof_columns.rebuilt(exp.column(key_names[o.sql()], table=alias), o) for o in outputs])
         outer = outer.from_(exp.Subquery(this=derived, alias=exp.TableAlias(this=exp.to_identifier(alias))))
         outer.set("where", exp.Where(this=lifted))
+        guard.freeze()
         node.set("query", exp.Subquery(this=outer))
+        guard.edited()
     return tree
 
 
@@ -2834,8 +2941,10 @@ def _wrap_window_select(select: exp.Select) -> exp.Select | None:
     if any(not n for n in names) or len({n.lower() for n in names}) != len(names):
         return None
     alias = f"kqw{next(_WINDOW_COUNTER)}"
-    outer = exp.Select(expressions=[exp.alias_(exp.column(n, table=alias), n) for n in names])
+    guard = _rewriting(select, "algebraic_wrap_window_select")
+    outer = exp.Select(expressions=[proof_columns.rebuilt(exp.alias_(exp.column(n, table=alias), n), item) for n, item in zip(names, select.expressions)])
     outer.set(FROM_KEY, exp.From(this=exp.Subquery(this=select.copy(), alias=exp.TableAlias(this=exp.to_identifier(alias)))))
+    guard.replaced_by(outer)
     return outer
 
 
@@ -2895,11 +3004,12 @@ def _isolate_windows(tree: exp.Expression) -> exp.Expression:
 
         def swap(piece: exp.Expression) -> exp.Expression:
             if isinstance(piece, exp.Window) and piece.sql() in window_names:
-                return exp.column(window_names[piece.sql()], table=alias)
+                return proof_columns.rebuilt(exp.column(window_names[piece.sql()], table=alias), piece)
             if isinstance(piece, exp.Column) and piece.sql() in column_names and piece.find_ancestor(exp.Window) is None:
-                return exp.column(column_names[piece.sql()], table=alias)
+                return proof_columns.rebuilt(exp.column(column_names[piece.sql()], table=alias), piece)
             return piece
 
+        guard = _rewriting(select, "algebraic_isolate_windows")
         inner = exp.Select(
             expressions=[exp.alias_(columns[sql].copy(), name) for sql, name in sorted(column_names.items())]
             + [exp.alias_(calls[sql].copy(), name) for sql, name in sorted(window_names.items())]
@@ -2934,6 +3044,7 @@ def _isolate_windows(tree: exp.Expression) -> exp.Expression:
         for key in ("limit", "offset"):
             if select.args.get(key):
                 outer.set(key, select.args[key].copy())
+        guard.replaced_by(outer)
         if select is tree:
             tree = outer
         else:
@@ -3209,6 +3320,7 @@ def _lift_limit_derived(select: exp.Select) -> exp.Expression | None:
         if not name or name in by_name:
             return None
         by_name[name] = item
+    guard = _rewriting(select, "algebraic_lift_limit_derived")
     items = []
     for item in select.expressions:
         column = item.this if isinstance(item, exp.Alias) else item
@@ -3219,7 +3331,7 @@ def _lift_limit_derived(select: exp.Select) -> exp.Expression | None:
             return None
         value = origin.this if isinstance(origin, exp.Alias) else origin
         name = item.alias_or_name
-        items.append(exp.alias_(value.copy(), name) if name else value.copy())
+        items.append(proof_columns.rebuilt(exp.alias_(value.copy(), name) if name else value.copy(), column))
     kept = {item.alias_or_name.lower() for item in items}
     aliased = {n for n, item in by_name.items() if isinstance(item, exp.Alias)}
     if any(c.name.lower() in aliased and not c.table and c.name.lower() not in kept for c in inner.args["order"].find_all(exp.Column)):
@@ -3230,6 +3342,7 @@ def _lift_limit_derived(select: exp.Select) -> exp.Expression | None:
     result.set("expressions", items)
     if drops_global_aggregate(inner, result):
         return None
+    guard.replaced_by(result)
     return result
 
 
@@ -3541,6 +3654,7 @@ def _push_filter_into_derived(select: exp.Select) -> exp.Expression | None:
         (moved if movable else kept).append(part)
     if not moved:
         return None
+    guard = _rewriting(select, "algebraic_push_filter")
     copy = select.copy()
     new_inner = copy.args.get("from_", copy.args.get("from")).this.this
     pushed = []
@@ -3548,12 +3662,13 @@ def _push_filter_into_derived(select: exp.Select) -> exp.Expression | None:
         part = part.copy()
         holder = exp.Select(expressions=[part])
         for column in list(holder.find_all(exp.Column)):
-            column.replace(outputs[column.name.lower()].copy())
+            column.replace(proof_columns.rebuilt(outputs[column.name.lower()].copy(), column))
         pushed.append(holder.expressions[0])
     existing = new_inner.args.get("where")
     conditions = ([existing.this] if existing is not None else []) + pushed
     new_inner.set("where", exp.Where(this=_and_all(conditions)))
     copy.set("where", exp.Where(this=_and_all(kept)) if kept else None)
+    guard.replaced_by(copy)
     return copy
 
 
@@ -3585,15 +3700,15 @@ def _unwrap_distinct_projection(select: exp.Select) -> exp.Expression | None:
         picked.append(column.name.lower())
     if sorted(picked) != sorted(names):
         return None
-    by_name = dict(zip(names, inner.expressions))
+    by_name = _output_values(inner)
+    guard = _rewriting(select, "algebraic_unwrap_distinct_projection")
     new = inner.copy()
     items = []
     for item in select.expressions:
         column = item.this if isinstance(item, exp.Alias) else item
-        origin = by_name[column.name.lower()]
-        value = origin.this if isinstance(origin, exp.Alias) else origin
-        items.append(exp.alias_(value.copy(), item.alias_or_name))
+        items.append(proof_columns.rebuilt(exp.alias_(by_name[column.name.lower()].copy(), item.alias_or_name), column))
     new.set("expressions", items)
+    guard.replaced_by(new)
     return new
 
 
@@ -3987,7 +4102,7 @@ def _qualified_outer_columns(columns: list[exp.Column], outer: exp.Select, probe
             if len(owners) != 1:
                 return None
             qualifier = owners[0].alias_or_name
-        refs.append(exp.column(column.name, table=qualifier))
+        refs.append(proof_columns.rebuilt(exp.column(column.name, table=qualifier), column))
     for qualifier in {r.table.lower() for r in refs}:
         clashing = [s for s in _sources_of(probe) if s.alias_or_name.lower() == qualifier]
         for source in clashing:
@@ -4048,6 +4163,7 @@ def _select_list_in_to_exists(tree: exp.Expression, not_null: dict[str, frozense
         values = [(item.this if isinstance(item, exp.Alias) else item) for item in inner.expressions]
         if not all(left.sql() in outer_known for left in lefts) or not all(isinstance(v, exp.Column) and v.sql() in inner_known for v in values):
             continue
+        guard = _rewriting(node, "algebraic_in_to_exists")
         probe = inner.copy()
         outer_refs = _qualified_outer_columns(lefts, walker, probe, declared)
         if outer_refs is None:
@@ -4057,7 +4173,9 @@ def _select_list_in_to_exists(tree: exp.Expression, not_null: dict[str, frozense
         probe.set("expressions", [exp.Literal.number(1)])
         where = probe.args.get("where")
         probe.set("where", exp.Where(this=_and_all(([where.this] if where is not None else []) + matches)))
-        node.replace(exp.Exists(this=probe))
+        replacement = exp.Exists(this=probe)
+        guard.replaced_by(replacement)
+        node.replace(replacement)
     return tree.transform(case_of_exists)
 
 
@@ -4578,6 +4696,7 @@ def _unwrap_projection(select: exp.Select) -> exp.Expression | None:
             return None
         by_name[name] = item
     alias = source.alias.lower()
+    guard = _rewriting(select, "algebraic_unwrap_projection")
     items = []
     for item in select.expressions:
         column = item.this if isinstance(item, exp.Alias) else item
@@ -4588,7 +4707,7 @@ def _unwrap_projection(select: exp.Select) -> exp.Expression | None:
             return None
         value = origin.this if isinstance(origin, exp.Alias) else origin
         name = item.alias_or_name
-        items.append(exp.alias_(value.copy(), name) if name else value.copy())
+        items.append(proof_columns.rebuilt(exp.alias_(value.copy(), name) if name else value.copy(), column))
     # An ORDER BY of the inner select would read output aliases that may be gone; groups have none here.
     if inner.args.get("order") or rebinds_grouping_names(inner, items):
         return None
@@ -4596,6 +4715,7 @@ def _unwrap_projection(select: exp.Select) -> exp.Expression | None:
     result.set("expressions", items)
     if _global_aggregate(inner) and not _global_aggregate(result):
         return None  # the outer select drops every aggregate: unwrapping would lose the one-row result
+    guard.replaced_by(result)
     return result
 
 
@@ -4825,6 +4945,28 @@ def normalize(
     under a duplicate-blind select (``dedup_join_rules.strip_distinct_sources``); these are later attempts, since applying them on one side
     can hide a match the first attempt finds.
     """
+
+    with proof_columns.supplying(schema, dialect):
+        return _normalize(
+            sql, schema=schema, dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=group_by_constants,
+            keyed_distinct=keyed_distinct, foreign_keys=foreign_keys, _assumptions=_assumptions,
+        )
+
+
+def _normalize(
+    sql: str,
+    *,
+    schema: dict[str, list[str]] | None = None,
+    dialect: str = "bigquery",
+    not_null: dict[str, frozenset[str]] | None = None,
+    keys: dict[str, list[tuple[str, ...]]] | None = None,
+    types: dict[str, dict[str, str]] | None = None,
+    group_by_constants: bool = False,
+    keyed_distinct: int = 0,
+    foreign_keys: dict[str, list[tuple]] | None = None,
+    _assumptions: set[str] | None = None,
+) -> str:
+    """The body of :func:`normalize`, run with the columns the prover was given known to ``proof_columns``."""
 
     tree = expand_alias_columns(check_modeled(canonical_negation(strip_positions(sqlglot.parse_one(sql, read=dialect)))), schema)
     if group_by_constants:
