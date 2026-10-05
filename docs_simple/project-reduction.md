@@ -23,6 +23,14 @@ python -m kumosql reduce-project path/to/project --keep orders --keep customers 
 
 Replace the path and names. The JSON output lists what was removed, changed, added and kept as written, with a verdict per kept output. `--drop-only` only deletes what the kept outputs do not need and rewrites nothing.
 
+To keep just one output column, name that output with `--keep` and repeat `--keep-column MODEL.COLUMN` for the columns to retain:
+
+```sh
+python -m kumosql reduce-project path/to/project --keep orders --keep-column orders.customer_id --patch reduce.diff
+```
+
+The selected output keeps the same rows and selected column values as the original, including duplicate rows. Upstream models can then drop columns that are no longer read. Column keeps require rewriting, so do not combine them with `--drop-only`. For the Python API, pass `keep_columns={"orders": ["customer_id"]}` to `reduce_project`.
+
 ## What stays as written
 
 Incremental tables, operations scripts, models with pre or post operations and models whose `${...}` code depends on the file are never rewritten, and the tables they read are kept unchanged. A model that uses a project variable as a value, for example `WHERE status = '${dataform.projectConfig.vars.status}'`, is also kept as written, because the prover cannot read the variable's value. Assertions on removed or rewritten tables are dropped and listed with the reason, unless you ask to keep them.

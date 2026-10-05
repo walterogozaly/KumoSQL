@@ -134,6 +134,7 @@ class ProjectReduction:
     stopped: str = ""
     seconds: float = 0.0
     notes: list[str] = field(default_factory=list)
+    selected_columns: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def improved(self) -> bool:
@@ -178,6 +179,7 @@ class ProjectReduction:
             assumptions.extend(a for a in check["assumptions"] if a not in assumptions)
         return {
             "keep": self.keep,
+            "keep_columns": self.selected_columns,
             "verified": self.verified,
             "verdict": self.verdict(),
             "checks": checks,
@@ -200,7 +202,7 @@ class ProjectReduction:
             "stopped": self.stopped,
             "seconds": round(self.seconds, 2),
             "notes": self.notes,
-            "evidence": "proof: every kept output of the patched project is re-proved equal to the original",
+            "evidence": "proof: every kept output of the patched project is re-proved against its requested output contract",
         }
 
 
@@ -384,6 +386,71 @@ def _resolve_keep(pipeline: Pipeline, names: Iterable[str]) -> list[str]:
     if not keys:
         raise ReductionError("name at least one output to keep")
     return keys
+
+
+def _selected_output_query(sql: str, columns: Sequence[str]) -> str:
+    """Project selected columns over the original output, preserving its row multiplicities."""
+
+    try:
+        tree = sqlglot.parse_one(sql, read="bigquery")
+    except sqlglot.errors.SqlglotError as error:
+        raise ReductionError(f"cannot select output columns from an unreadable query: {error}") from error
+    if not isinstance(tree, exp.Query):
+        raise ReductionError("column-level keep requires a single query output")
+    alias = "__kumo_original_output"
+    source = exp.Subquery(this=tree, alias=exp.TableAlias(this=exp.to_identifier(alias)))
+    expressions = [
+        exp.Column(this=exp.to_identifier(name, quoted=True), table=exp.to_identifier(alias))
+        for name in columns
+    ]
+    return exp.Select(expressions=expressions, from_=exp.From(this=source)).sql(dialect="bigquery")
+
+
+def _resolve_keep_columns(pipeline: Pipeline, keep: Iterable[str], requested: Mapping[str, Iterable[str]] | None,
+                          project: _Project) -> dict[str, list[str]]:
+    """Resolve requested output-column subsets, preserving the caller's order."""
+
+    if not requested:
+        return {}
+    kept = set(keep)
+    resolved: dict[str, list[str]] = {}
+    for name, raw_columns in requested.items():
+        key = _resolve_keep(pipeline, [name])[0]
+        if key not in kept:
+            raise ReductionError(f"column-level keep for {name!r} requires that output in keep")
+        if key in resolved:
+            raise ReductionError(f"column-level keep names {key!r} more than once")
+        reason = _fixed_reason(project, key)
+        if reason:
+            raise ReductionError(f"cannot select output columns from {name!r}: {reason}")
+        available = _columns_of(project, key)
+        if not available:
+            raise ReductionError(f"output columns for {name!r} are unknown")
+        if isinstance(raw_columns, str):
+            raw_columns = [raw_columns]
+        columns = [str(column).strip().strip("`") for column in raw_columns]
+        if not columns:
+            raise ReductionError(f"list at least one output column for {name!r}")
+        if any(not column for column in columns):
+            raise ReductionError(f"output columns for {name!r} cannot be empty")
+        if len({column.casefold() for column in columns}) != len(columns):
+            raise ReductionError(f"output columns for {name!r} contain a duplicate")
+        available_by_fold = {value.casefold(): value for value in available}
+        unknown = [column for column in columns if column.casefold() not in available_by_fold]
+        if unknown:
+            raise ReductionError(f"{name!r} has no output column {unknown[0]!r}")
+        columns = [available_by_fold[column.casefold()] for column in columns]
+        config = _config_block(project.texts.get(key, ""))
+        if config:
+            words = {word.lower() for word in _WORD.findall(config)}
+            config_columns = [column for column in available if column.lower() in words]
+            omitted = [column for column in config_columns if column.casefold() not in {c.casefold() for c in columns}]
+            if omitted:
+                raise ReductionError(
+                    f"cannot omit {omitted[0]!r} from {name!r}: the model config refers to that output column"
+                )
+        resolved[key] = columns
+    return resolved
 
 
 def _parses(sql: str) -> bool:
@@ -797,6 +864,7 @@ def reduce_project(
     factor: bool = True,
     new_table_type: str = "view",
     source_columns: Mapping[str, object] | None = None,
+    keep_columns: Mapping[str, Iterable[str]] | None = None,
     timeout_ms: int = 5000,
     max_seconds: float = 300.0,
     progress: Callable[[str], None] | None = None,
@@ -809,6 +877,9 @@ def reduce_project(
     deleted; no query is changed. ``source_columns`` adds columns (and keys) of declared sources, in the
     format :func:`kumosql.table_minimizer.minimize_tables` takes. Raises :class:`ReductionError` on a kept
     output that is unknown, ambiguous or a declaration.
+    ``keep_columns`` maps kept output names to the output columns to retain. Outputs not in this
+    mapping retain their full schemas. A selected output is proved against its original rows projected
+    to the requested columns; its upstream dependencies may then drop columns no longer read.
     """
 
     started = time.time()
@@ -816,6 +887,9 @@ def reduce_project(
     project = _load(root, pipeline)
     models = project.pipeline.models
     kept = _resolve_keep(project.pipeline, keep)
+    selected_columns = _resolve_keep_columns(project.pipeline, kept, keep_columns, project)
+    if selected_columns and not rewrite:
+        raise ReductionError("column-level keep requires query rewrites; remove --drop-only")
     say = progress or (lambda _line: None)
 
     needed, operation_why = _needed(project, kept)
@@ -872,9 +946,11 @@ def reduce_project(
     tables: dict[str, str] = {}
     fixed: dict[str, list[str] | None] = {}
     checked: list[str] = []
-    keep_columns: dict[str, list[str]] = {}
+    config_keep_columns: dict[str, list[str]] = {}
     for key in sorted(needed):
         tables[key] = project.sql[key]
+        if key in selected_columns:
+            tables[key] = _selected_output_query(tables[key], selected_columns[key])
         if key in fixed_why:
             fixed[key] = _columns_of(project, key)
             continue
@@ -884,7 +960,7 @@ def reduce_project(
             words = {w.lower() for w in _WORD.findall(config)}
             named = [c for c in columns if c.lower() in words]
             if named:
-                keep_columns[key] = named
+                config_keep_columns[key] = named
             if re.search(r"\bassertions\s*:", config):
                 checked.append(key)
         if strict and key not in protected:
@@ -897,7 +973,7 @@ def reduce_project(
     if rewrite:
         try:
             minimized = minimize_tables(
-                tables, protected, sources=sources, fixed=fixed, checked=checked, keep_columns=keep_columns,
+                tables, protected, sources=sources, fixed=fixed, checked=checked, keep_columns=config_keep_columns,
                 factor=factor, timeout_ms=timeout_ms, max_seconds=max(1.0, max_seconds - (time.time() - started)),
                 progress=progress, lower_score_only=True,
             )
@@ -905,12 +981,12 @@ def reduce_project(
             notes.append(f"queries were not rewritten: {error}")
 
     result = _build(project, kept, needed, protected, fixed_why, operation_why, dropped_assertions, minimized,
-                    new_table_type, notes)
+                    new_table_type, notes, tables, selected_columns)
     _verify(project, result, tables, protected, fixed, checked, sources, timeout_ms)
     if not result.verified and minimized is not None and minimized.moves:
         notes.append("the rewritten queries did not re-prove after writing them back; only unneeded actions were removed")
         result = _build(project, kept, needed, protected, fixed_why, operation_why, dropped_assertions, None,
-                        new_table_type, notes)
+                        new_table_type, notes, tables, selected_columns)
         _verify(project, result, tables, protected, fixed, checked, sources, timeout_ms)
     result.seconds = time.time() - started
     return result
@@ -935,9 +1011,10 @@ def _removal_reasons(moves: Sequence[str]) -> dict[str, str]:
 
 
 def _build(project: _Project, kept, needed, protected, fixed_why, operation_why, dropped_assertions,
-           minimized, table_type: str, notes: list[str]) -> ProjectReduction:
+           minimized, table_type: str, notes: list[str], base_tables: Mapping[str, str],
+           selected_columns: Mapping[str, list[str]]) -> ProjectReduction:
     models = project.pipeline.models
-    final: dict[str, str] = {k: project.sql[k] for k in needed}
+    final: dict[str, str] = {k: base_tables[k] for k in needed if k in base_tables}
     added: dict[str, str] = {}
     moves: list[str] = []
     rejected: list[dict] = []
@@ -1026,13 +1103,19 @@ def _build(project: _Project, kept, needed, protected, fixed_why, operation_why,
         for name, proof in minimized.proofs.items():
             proofs[name] = proof.to_json()
     for key in kept:
-        proofs.setdefault(key, {"table": key, "status": "unchanged", "reason": "its SQL and every table it reads are as given",
-                                "assumptions": []})
+        if key in selected_columns:
+            proofs.setdefault(key, {"table": key, "status": "proved",
+                                    "reason": "proved equal to the original output projected to the requested columns",
+                                    "assumptions": []})
+        else:
+            proofs.setdefault(key, {"table": key, "status": "unchanged",
+                                    "reason": "its SQL and every table it reads are as given", "assumptions": []})
     return ProjectReduction(
         root=str(project.root), keep=list(kept), files=files, proofs={k: proofs[k] for k in kept if k in proofs},
         removed=sorted(removed, key=lambda r: r["model"]), changed=sorted(changed), added=added_out, fixed=fixed,
         dropped_assertions=dropped_assertions, moves=moves, rejected_moves=rejected, tried=tried, rejected=rejected_count,
         score_before=project_score(project.pipeline), actions_before=len(models), stopped=stopped, notes=list(notes),
+        selected_columns=dict(selected_columns),
     )
 
 
@@ -1095,7 +1178,11 @@ def _verify(project: _Project, result: ProjectReduction, tables, protected, fixe
             ok = False
             result.notes.append(f"{name} did not re-prove: {verdict.reason}"[:300])
         else:
-            result.proofs[name] = verdict.to_json()
+            proof = verdict.to_json()
+            if name in result.selected_columns:
+                proof["status"] = "proved"
+                proof["reason"] = "proved equal to the original output projected to the requested columns"
+            result.proofs[name] = proof
     for name in checked:
         if name in after and name in tables and name not in protected:
             verdict = verdicts.get(name)
@@ -1126,6 +1213,8 @@ def main(argv: list[str] | None = None) -> int:
         "Only --write edits the project folder, and only when the reduction verified.")
     parser.add_argument("project", help="Dataform project folder (or a folder of .sql files)")
     parser.add_argument("--keep", action="append", default=[], help="an output to keep: name, dataset.name or file path")
+    parser.add_argument("--keep-column", action="append", default=[], metavar="MODEL.COLUMN",
+                        help="keep only this output column for a kept model; repeat for multiple columns")
     parser.add_argument("--keep-assertions", action="store_true", help="keep every assertion over needed tables, proved unchanged")
     parser.add_argument("--strict", action="store_true", help="every surviving table must stay proved equal")
     parser.add_argument("--drop-only", action="store_true", help="only delete what the kept outputs do not need")
@@ -1136,11 +1225,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--patch", help="write the unified diff here (- for stdout)")
     parser.add_argument("--write", action="store_true", help="the only option that edits the project folder: apply the patch (without it, nothing is written)")
     args = parser.parse_args(argv)
+    selected_columns: dict[str, list[str]] = {}
+    for value in args.keep_column:
+        if "." not in value:
+            parser.error(f"--keep-column expects MODEL.COLUMN, got {value!r}")
+        model, column = value.rsplit(".", 1)
+        if not model or not column:
+            parser.error(f"--keep-column expects MODEL.COLUMN, got {value!r}")
+        selected_columns.setdefault(model, []).append(column)
     try:
         result = reduce_project(
             args.project, args.keep, keep_assertions=args.keep_assertions, strict=args.strict, rewrite=not args.drop_only,
             factor=not args.no_factor,
-            new_table_type=args.table_type, max_seconds=args.max_seconds, timeout_ms=args.timeout_ms,
+            keep_columns=selected_columns, new_table_type=args.table_type, max_seconds=args.max_seconds,
+            timeout_ms=args.timeout_ms,
             progress=lambda line: print(line, file=sys.stderr),
         )
     except (OSError, ValueError) as error:
