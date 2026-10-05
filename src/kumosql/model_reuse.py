@@ -35,6 +35,10 @@ from sqlglot.optimizer.qualify import qualify
 
 from .ast_utils import captured_names, grouping_elements, inside as _inside
 from .smt_equivalence import SmtStatus, TableConstraints
+from .floor_unit_rules import floor_from_finer
+from .identity_cast_reads import cast_source
+from .single_group_reads import fixed_single_group, read_single_group
+from .using_star_order import using_star_order
 
 
 @dataclass(frozen=True)
@@ -147,6 +151,7 @@ def _prepare(sql: str, schema: Mapping[str, Sequence[str]], dialect: str) -> exp
             table.set("db", None)
             table.set("catalog", None)
     columns = {t.lower(): {c.lower(): "unknown" for c in cols} for t, cols in schema.items()}
+    tree = using_star_order(tree, schema)
     try:
         tree = qualify(tree, schema=columns, dialect=dialect, validate_qualify_columns=False, quote_identifiers=False, identify=False)
         tree = merge_subqueries(tree)
@@ -361,6 +366,10 @@ class _Rewriter:
         for item, name in zip(model.outputs, names):
             expression = _inner(item).copy()
             self.available.setdefault(_key(self._rename(expression, tables_map)), name)
+        for item, name in zip(model.outputs, names):
+            source = cast_source(item)  # a cast column also holds the column itself
+            if source is not None:
+                self.available.setdefault(_key(self._rename(source.copy(), tables_map)), name)
         self.constants: dict[str, exp.Expression] = {}
         self.tables_map = tables_map
 
@@ -393,6 +402,15 @@ class _Rewriter:
                             self.available[_key(left)] = self.available[_key(right)]
                             changed = True
 
+    def rolled_floor(self, node: exp.Expression) -> exp.Expression | None:
+        """``FLOOR(x TO unit)`` read from the model's column for the same ``x`` at a finer unit."""
+
+        def lookup(candidate: exp.Expression) -> exp.Expression | None:
+            name = self.available.get(_key(candidate))
+            return _column(self.alias, name) if name else None
+
+        return floor_from_finer(node, lookup)
+
     def rewrite(self, node: exp.Expression) -> exp.Expression | None:
         """``node`` over the model, or None when a needed column is not available."""
 
@@ -401,6 +419,9 @@ class _Rewriter:
             return _column(self.alias, self.available[key])
         if key in self.constants:
             return self.constants[key].copy()
+        rolled = self.rolled_floor(node)
+        if rolled is not None:
+            return rolled
         if isinstance(node, exp.Column):
             return node.copy() if node.table in self.extras else None
         if isinstance(node, exp.Literal) or isinstance(node, exp.Null) or isinstance(node, exp.Boolean):
@@ -608,9 +629,10 @@ def _candidates_for(query: _Block, model: _Block, names: list[str], model_name: 
                 continue
             query_having = [h for h in query_having if _key(h) not in set(model_having)]
         regroup: list = []
+        single_group = not same_grain and not extras and fixed_single_group(model_group_keys, fixed, query.group, query_having)
 
-        def agg_rewrite(node, same_grain=same_grain, regroup=regroup):
-            return _agg_rewrite(node, rewriter, model_aggs, same_grain, alias, no_group=_has_empty_grouping(query.group), regroup=regroup)
+        def agg_rewrite(node, same_grain=same_grain, regroup=regroup, single_group=single_group):
+            return _agg_rewrite(node, rewriter, model_aggs, same_grain, alias, no_group=_has_empty_grouping(query.group), regroup=regroup, single_group=single_group)
 
         select = exp.Select()
         built_outputs: list[exp.Expression] = []
@@ -688,7 +710,7 @@ def _has_empty_grouping(group: list[exp.Expression]) -> bool:
     return all(can_be_empty(g) for g in group)
 
 
-def _agg_rewrite(node: exp.Expression, rewriter: _Rewriter, model_aggs: dict[str, tuple[str, exp.Expression]], same_grain: bool, alias: str, no_group: bool, regroup: list | None = None):
+def _agg_rewrite(node: exp.Expression, rewriter: _Rewriter, model_aggs: dict[str, tuple[str, exp.Expression]], same_grain: bool, alias: str, no_group: bool, regroup: list | None = None, single_group: bool = False):
     """Rewrite an expression of a grouped query, re-aggregating the model's partial aggregates.
 
     At the model's own grain an aggregate the model lacks can still be computed over the model's rows
@@ -709,6 +731,9 @@ def _agg_rewrite(node: exp.Expression, rewriter: _Rewriter, model_aggs: dict[str
         key = _key(n)
         if key in rewriter.available:
             return _column(alias, rewriter.available[key])
+        rolled = rewriter.rolled_floor(n)
+        if rolled is not None:
+            return rolled
         if isinstance(n, exp.Column):
             return None
         if isinstance(n, (exp.Literal, exp.Null, exp.Boolean)):
@@ -731,6 +756,8 @@ def _agg_rewrite(node: exp.Expression, rewriter: _Rewriter, model_aggs: dict[str
         return copy
 
     def aggregate(agg: exp.AggFunc):
+        if single_group:  # the model holds this one group's aggregate: read it through an aggregate over that one row
+            return read_single_group(agg, lookup(agg))
         distinct = isinstance(agg.this, exp.Distinct)
         if distinct:
             if same_grain:

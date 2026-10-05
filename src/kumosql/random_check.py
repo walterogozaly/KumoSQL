@@ -26,6 +26,7 @@ import sqlglot
 from .ast_utils import spell_for_duckdb
 from .duckdb_load import run_unoptimized, small_database
 from .string_literals import canonical_literals
+from .using_star_order import using_star_order
 
 _DUCK_TYPES = {"int": "BIGINT", "float": "DOUBLE", "text": "VARCHAR", "date": "DATE", "bool": "BOOLEAN"}
 
@@ -274,11 +275,15 @@ def _quote_reserved(node):
     return node
 
 
-def _duck(sql: str, dialect: str) -> str:
+def _duck(sql: str, dialect: str, schema: Schema | None = None) -> str:
     if dialect == "bigquery":
         sql = canonical_literals(sql)
     try:
-        tree = sqlglot.parse_one(sql, read=dialect).transform(_floor_to_unit).transform(_quote_reserved)
+        tree = sqlglot.parse_one(sql, read=dialect)
+        if schema is not None and dialect != "duckdb":
+            # DuckDB's SELECT * over a USING join keeps table order; the other dialects list the merged columns first
+            tree = using_star_order(tree, schema.columns)
+        tree = tree.transform(_floor_to_unit).transform(_quote_reserved)
         if dialect == "bigquery":
             from .bigquery_on_duckdb import faithful
 
@@ -338,7 +343,7 @@ def run_all(schema: Schema, queries: Sequence[str], seeds: Iterable[int], *, dia
 
     import duckdb
 
-    a_sql, b_sql = (_duck(q, dialect) for q in queries)
+    a_sql, b_sql = (_duck(q, dialect, schema) for q in queries)
     domains = _domains(list(queries), schema.date_literals)
     db = _connect(schema, dialect)
     read = _reader(dialect)
@@ -393,7 +398,7 @@ def replay(schema: Schema, witness: Witness, left: str, right: str, *, mode: str
 
     db = _connect(schema, dialect)
     _load(db, schema, witness.tables)
-    left_sql, right_sql = _duck(left, dialect), _duck(right, dialect)
+    left_sql, right_sql = _duck(left, dialect, schema), _duck(right, dialect, schema)
     read = _reader(dialect)
     try:
         a = Counter(tuple(_norm(v) for v in row) for row in read(db.execute(left_sql).fetchall()))

@@ -136,6 +136,12 @@ def constraints_of(schema: Schema) -> dict[str, TableConstraints]:
     }
 
 
+def types_of(schema: Schema) -> dict[str, dict[str, str]]:
+    """The declared column types, as a catalog would hand them to the prover (it folds a cast that cannot change a value)."""
+
+    return {t.name: {c.name: c.type for c in t.columns} for t in schema.tables}
+
+
 def is_held_out(case_id: str) -> bool:
     return zlib.crc32(case_id.encode()) % 4 == 0
 
@@ -183,6 +189,24 @@ def baseline(case: dict, schema: Schema, timeout_ms: int) -> ModelReuse:
     return ModelReuse("no_rewrite", "not the same query")
 
 
+def reuse_over(case: dict, schema: Schema, timeout_ms: int) -> ModelReuse:
+    """``rewrite_over_model`` on the schema's keys; a case with a CAST that finds nothing is retried with the declared
+    column types, which let the prover fold a cast that cannot change a value (the types also change which other
+    facts the prover propagates, so they are only added where a cast may need them)."""
+
+    def attempt(types):
+        return rewrite_over_model(
+            case["query"], case["materialization"], schema=schema.columns, constraints=constraints_of(schema), types=types, timeout_ms=timeout_ms
+        )
+
+    reuse = attempt(None)
+    if not reuse.rewritten and "cast(" in (case["query"] + case["materialization"]).lower():
+        typed = attempt(types_of(schema))
+        if typed.rewritten:
+            return typed
+    return reuse
+
+
 def run_case(case: dict, use_baseline: bool, timeout_ms: int, trials: int) -> dict:
     schema = SCHEMAS[case["schema"]]
     start = time.time()
@@ -190,13 +214,7 @@ def run_case(case: dict, use_baseline: bool, timeout_ms: int, trials: int) -> di
         if use_baseline:
             reuse = baseline(case, schema, timeout_ms)
         else:
-            reuse = rewrite_over_model(
-                case["query"],
-                case["materialization"],
-                schema=schema.columns,
-                constraints=constraints_of(schema),
-                timeout_ms=timeout_ms,
-            )
+            reuse = reuse_over(case, schema, timeout_ms)
     except Exception as error:  # noqa: BLE001 - reported as an error, never as a result
         return {"id": case["id"], "status": "error", "reason": f"{type(error).__name__}: {error}", "seconds": time.time() - start}
     record = {
