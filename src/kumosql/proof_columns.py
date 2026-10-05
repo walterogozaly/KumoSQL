@@ -906,7 +906,11 @@ class Rewrite:
         stamp = _meta_of(node, key)
         return stamp[1] if stamp is not None and stamp[0] == self.token else None
 
-    def verify(self, after: exp.Expression) -> Verdict:
+    def verify(self, after: exp.Expression, region: exp.Expression | None = None) -> Verdict:
+        """Compare the base columns before and after. With ``region`` (a node of ``after``), only the surviving columns
+        inside it are compared: a rewrite that changes what an expression of a derived table computes changes the base
+        columns of the columns that read it from outside, and says so by being local."""
+
         self.snapshot()
         if self.problem is not None or self.before is None:
             return _noted(self.site, Verdict(UNCHECKED, self.problem or "no reading of the statement before"))
@@ -922,8 +926,11 @@ class Rewrite:
             origins = _Origins(reader, lambda item: numbers.get(id(item)))
             position = {id(column): index for index, column in enumerate(columns)}
             claims: list[tuple[list[int], list[int], str]] = []
+            inside = None if region is None else {id(n) for n in region.walk()}
             for index, column in enumerate(columns):
                 before = self._stamped(column, STAMP_COLUMN)
+                if inside is not None and id(column) not in inside:
+                    continue
                 if before is not None and before in self.before_index:
                     claims.append(([self.before_index[before]], [index], column.name))
             for node in after.walk():
@@ -961,10 +968,10 @@ class Rewrite:
             return Verdict(AGREE, "the same base columns", agreed=1)
         return Verdict(DISAGREE, f"{label!r} reads {_show(actual)} after the rewrite but read {_show(expected)} before")
 
-    def check(self, after: exp.Expression) -> None:
+    def check(self, after: exp.Expression, region: exp.Expression | None = None) -> None:
         """:meth:`verify`, raising :class:`ColumnResolutionRefused` on a disagreement."""
 
-        verdict = self.verify(after)
+        verdict = self.verify(after, region)
         if verdict.refused:
             raise ColumnResolutionRefused(f"{self.site}: {verdict.reason}")
 
@@ -977,10 +984,10 @@ class _NoRewrite:
     def snapshot(self) -> None:
         return None
 
-    def check(self, after: exp.Expression) -> None:
+    def check(self, after: exp.Expression, region: exp.Expression | None = None) -> None:
         return None
 
-    def verify(self, after: exp.Expression) -> None:
+    def verify(self, after: exp.Expression, region: exp.Expression | None = None) -> None:
         return None
 
 
