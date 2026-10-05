@@ -1053,6 +1053,14 @@ class _Typer:
             return [_Range(name, columns, node=item)]
         if isinstance(item, exp.Unnest):
             return self.unnest_range(item, scope, ctes)
+        if isinstance(item, exp.Lateral) and not item.args.get("view") and isinstance(item.this, exp.Subquery) \
+                and isinstance(item.this.this, exp.Query):
+            # LATERAL (SELECT ..): a subquery that may read the FROM items to its left
+            rel = self._rename(self.query(item.this.this, scope, ctes), alias)
+            name = alias_name.lower() if alias_name else None
+            if rel is None or rel.value is not None or rel.columns is None:
+                return [_Range(name, None, node=item)]
+            return [_Range(name, [_Col(c.name, _plain(c.t), c.required) for c in rel.columns], node=item)]
         return [_Range(alias_name.lower() if alias_name else None, None, node=item)]
 
     def table_range(self, item: exp.Table, scope: _Scope, ctes, alias_name: str | None) -> _Range:
