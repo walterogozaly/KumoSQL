@@ -12,6 +12,7 @@ import ast
 from dataclasses import replace
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ import sqlglot
 from sqlglot import exp
 
 from kumosql import algebraic_equivalence as alg
+from kumosql import using_rules
 from kumosql import apply_rule, apply_rules
 from kumosql.engine import RewriteRule, RuleOutput
 from kumosql.rewrite import VerificationStatus
@@ -46,7 +48,7 @@ from kumosql.proof_columns import (
 )
 from kumosql.proof_steps import RewriteStep
 from kumosql.prover_context import use_columns
-from kumosql.smt_equivalence import SmtStatus, prove_equivalent_smt
+from kumosql.smt_equivalence import SmtStatus, TableConstraints, prove_equivalent_smt
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -680,3 +682,331 @@ def test_every_qualifier_the_rule_writes_on_the_corpus_is_the_independent_owner_
             mutations += 1
             column.set("table", original)
     assert changed >= 40 and mutations >= 80, (changed, mutations)
+
+
+# --- the algebraic normalizer's rewrites that rebuild columns --------------------------------------------------------
+#
+# A rewrite that reads a derived table as its base table, flattens a join or pushes a qualifier through a subquery
+# rebuilds columns without choosing among sources by name. ``proof_columns.begin`` numbers the statement before the
+# rewrite and reads it again afterwards: every column that survives, and every column the rewrite says it rebuilt
+# from another, must read the same base columns. The fault injection below corrupts the rewrite's output just before
+# the check reads it, which is what a rule that rebuilt a column from the wrong source would hand over: with the
+# check on the proof is refused, with it off the false proof stands.
+
+REBUILD_SCHEMA = {"t": ["a", "b", "k"], "u": ["a", "c", "k"], "v": ["k", "w"]}
+NOT_NULL = {"t": TableConstraints(not_null=frozenset({"a", "k"})), "u": TableConstraints(not_null=frozenset({"c", "k"}))}
+
+
+def _rename(old: str, new: str, table: str | None = None):
+    """Every column called ``old`` (of the table ``table``, when given) reads ``new``."""
+
+    def mutate(tree):
+        for column in list(tree.find_all(exp.Column)):
+            if column.name.lower() == old and (table is None or column.table.lower() == table):
+                column.set("this", exp.to_identifier(new))
+
+    return mutate
+
+
+def _rename_pattern(pattern: str, replacement: str):
+    def mutate(tree):
+        for column in list(tree.find_all(exp.Column)):
+            if re.fullmatch(pattern, column.name):
+                column.set("this", exp.to_identifier(re.sub(pattern, replacement, column.name)))
+
+    return mutate
+
+
+def _requalify(old: str, new: str):
+    def mutate(tree):
+        for column in list(tree.find_all(exp.Column)):
+            if column.table.lower() == old:
+                column.set("table", exp.to_identifier(new))
+
+    return mutate
+
+
+def _inner_a_reads_b(tree):
+    for column in list(tree.find_all(exp.Column)):
+        if column.name.lower() == "a" and re.fullmatch(r"kqs\d+", column.table.lower()):
+            column.set("this", exp.to_identifier("b"))
+
+
+def _corrupt_rewrite(monkeypatch, site: str, mutate, on_root: bool = False) -> None:
+    """Make the rewrite named ``site`` hand its output to ``mutate`` just before ``proof_columns`` reads it."""
+
+    replaced_by, edited = alg._ColumnGuard.replaced_by, alg._ColumnGuard.edited
+
+    def corrupted_replaced_by(self, result):
+        if self.site == site and result is not None:
+            self.freeze()  # the statement as it was, then the damage
+            mutate(self.root if on_root else result)
+        return replaced_by(self, result)
+
+    def corrupted_edited(self):
+        if self.site == site:
+            mutate(self.root)
+        return edited(self)
+
+    monkeypatch.setattr(alg._ColumnGuard, "replaced_by", corrupted_replaced_by)
+    monkeypatch.setattr(alg._ColumnGuard, "edited", corrupted_edited)
+
+
+def _prove_rebuilt(left: str, right: str, **kwargs):
+    return prove_equivalent_algebraic(left, right, schema=REBUILD_SCHEMA, **kwargs)
+
+
+UNION_SOURCE = "(SELECT a AS p, b AS q FROM t UNION ALL SELECT a, c FROM u) AS x"
+
+# (site, left, right, corruption, the corruption is on the whole statement, extra arguments of the prover)
+REBUILDING_REWRITES = [
+    ("algebraic_inline_expression_projection",
+     "SELECT d.x FROM (SELECT a AS x, b AS y FROM t) AS d JOIN u ON d.x = u.k",
+     "SELECT d.y AS x FROM (SELECT a AS x, b AS y FROM t) AS d JOIN u ON d.y = u.k",
+     _rename("a", "b"), False, {}),
+    ("algebraic_merge_source",
+     "SELECT SUM(x) AS s FROM (SELECT t.a AS x, t.b AS y, t.k AS k FROM t JOIN u ON t.k = u.k WHERE u.c > 1) AS d GROUP BY k",
+     "SELECT SUM(y) AS s FROM (SELECT t.a AS x, t.b AS y, t.k AS k FROM t JOIN u ON t.k = u.k WHERE u.c > 1) AS d GROUP BY k",
+     _rename("a", "b"), False, {}),
+    ("algebraic_decorrelate_aggregate",
+     "SELECT t.a FROM t WHERE t.b < (SELECT MAX(u.c) FROM u WHERE u.k = t.k)",
+     "SELECT t.a FROM t WHERE t.b < (SELECT MAX(u.k) FROM u WHERE u.k = t.k)",
+     _rename("kqv", "kqk0"), False, {}),
+    ("algebraic_decorrelate_select_list",
+     "SELECT t.a, (SELECT SUM(u.c) FROM u WHERE u.k = t.k) AS s FROM t",
+     "SELECT t.a, (SELECT SUM(u.k) FROM u WHERE u.k = t.k) AS s FROM t",
+     _rename("kqv", "kqk0"), False, {}),
+    ("algebraic_fold_filter_into_grouping",
+     "SELECT s FROM (SELECT k, SUM(a) AS s, SUM(b) AS m FROM t GROUP BY k) AS g WHERE s > 1",
+     "SELECT s FROM (SELECT k, SUM(b) AS s, SUM(b) AS m FROM t GROUP BY k) AS g WHERE s > 1",
+     _rename("a", "b"), False, {}),
+    ("algebraic_merge_outer_filter",
+     "SELECT t.a, d.c FROM t LEFT JOIN (SELECT k, c FROM u WHERE a > 1) AS d ON t.k = d.k",
+     "SELECT t.a, d.c FROM t LEFT JOIN (SELECT k, c FROM u WHERE c > 1) AS d ON t.k = d.k",
+     _rename("a", "c", "d"), False, {}),
+    ("algebraic_flatten_join_source",
+     "SELECT d.k, COUNT(d.c) FROM (SELECT t.k, u.c, u.a FROM t LEFT JOIN u ON t.k = u.k) AS d GROUP BY d.k",
+     "SELECT d.k, COUNT(d.a) FROM (SELECT t.k, u.c, u.a FROM t LEFT JOIN u ON t.k = u.k) AS d GROUP BY d.k",
+     _rename("c", "a"), False, {}),
+    ("algebraic_pull_up_exists",
+     "SELECT d.a, v.w FROM (SELECT a, k FROM t WHERE EXISTS (SELECT 1 FROM u WHERE u.k = t.k)) AS d JOIN v ON d.k = v.k",
+     "SELECT d.a, v.w FROM (SELECT a, k FROM t WHERE EXISTS (SELECT 1 FROM u WHERE u.k = t.a)) AS d JOIN v ON d.k = v.k",
+     _rename("a", "k", "d"), False, {}),
+    ("algebraic_grouped_in_to_derived",
+     "SELECT t.a FROM t WHERE t.k IN (SELECT u.k FROM u GROUP BY u.k HAVING COUNT(*) > 1 AND SUM(u.c) > 1)",
+     "SELECT t.a FROM t WHERE t.k IN (SELECT u.k FROM u GROUP BY u.k HAVING COUNT(*) > 1 AND COUNT(*) > 1)",
+     _rename_pattern(r"(kqa\d+)_1", r"\1_0"), False, {}),
+    ("algebraic_isolate_windows",
+     "SELECT a, ROW_NUMBER() OVER (ORDER BY k) AS n FROM t",
+     "SELECT a, ROW_NUMBER() OVER (ORDER BY b) AS n FROM t",
+     _rename("k", "b"), False, {}),
+    ("algebraic_push_filter",
+     "SELECT * FROM (SELECT DISTINCT k, a FROM t) AS d WHERE d.k > 1",
+     "SELECT * FROM (SELECT DISTINCT k, a FROM t) AS d WHERE d.a > 1",
+     _rename("k", "a"), False, {}),
+    ("algebraic_unwrap_distinct_projection",
+     "SELECT d.a, d.b FROM (SELECT DISTINCT a, b FROM t) AS d",
+     "SELECT DISTINCT b AS a, b AS b FROM t",
+     _rename("a", "b"), False, {}),
+    ("algebraic_inline_projection",
+     "SELECT u2.a AS x FROM (SELECT a, b FROM t) AS u2 JOIN v ON u2.a = v.k",
+     "SELECT u2.b AS x FROM (SELECT a, b FROM t) AS u2 JOIN v ON u2.b = v.k",
+     _rename("a", "b"), True, {}),
+    ("algebraic_wrap_outer_join_aggregate",
+     "SELECT t.k, COUNT(*) FROM t LEFT JOIN u ON t.k = u.k GROUP BY t.k",
+     "SELECT u.k, COUNT(*) FROM t LEFT JOIN u ON t.k = u.k GROUP BY u.k",
+     _requalify("t", "u"), False, {}),
+    ("algebraic_push_distinct_into_sources",
+     "SELECT t.a FROM t JOIN u ON t.k = u.k GROUP BY t.a",
+     "SELECT t.b AS a FROM t JOIN u ON t.k = u.k GROUP BY t.b",
+     _inner_a_reads_b, False, {}),
+    ("algebraic_canonicalize_union_source",
+     f"SELECT x.p AS v, x.q AS w, COUNT(*) AS n FROM {UNION_SOURCE} GROUP BY x.p, x.q",
+     f"SELECT x.q AS v, x.p AS w, COUNT(*) AS n FROM {UNION_SOURCE} GROUP BY x.q, x.p",
+     _rename("c1", "c2"), True, {}),
+    ("algebraic_indicator_join",
+     "SELECT t.a, d.one IS NULL AS f FROM t LEFT JOIN (SELECT k, 1 AS one FROM u GROUP BY k) AS d ON t.k = d.k",
+     "SELECT t.a, d.one IS NULL AS f FROM t LEFT JOIN (SELECT k, 1 AS one FROM u GROUP BY k) AS d ON t.a = d.k",
+     _rename("k", "a", "t"), False, {}),
+    ("algebraic_using_to_on",
+     "SELECT k AS kk, t.a FROM t FULL JOIN u USING (k)",
+     "SELECT a AS kk, t.a FROM t FULL JOIN u USING (a)",
+     _rename("k", "a"), False, {}),
+    ("algebraic_in_to_exists",
+     "SELECT t.k IN (SELECT u.k FROM u WHERE u.c > 1) AS f FROM t",
+     "SELECT t.a IN (SELECT u.k FROM u WHERE u.c > 1) AS f FROM t",
+     _rename("k", "a", "t"), False, {"constraints": NOT_NULL}),
+]
+
+
+@pytest.mark.parametrize("site,left,right,corruption,on_root,extra", REBUILDING_REWRITES, ids=[case[0] for case in REBUILDING_REWRITES])
+def test_a_rewrite_that_rebuilds_a_column_from_the_wrong_source_is_refused_and_certified_without_the_check(
+    monkeypatch, site, left, right, corruption, on_root, extra
+):
+    assert not _prove_rebuilt(left, right, **extra).proven  # the queries differ
+    with recording():
+        honest = _prove_rebuilt(left, right, **extra)
+    assert not honest.proven
+    _corrupt_rewrite(monkeypatch, site, corruption, on_root)
+    with recording() as log:
+        refused = _prove_rebuilt(left, right, **extra)
+    assert not refused.proven
+    assert "independent check of column resolution" in refused.reason
+    assert summarize(log)[site][DISAGREE] >= 1
+    with proof_columns.disabled():
+        assert _prove_rebuilt(left, right, **extra).proven  # the same damage is a false proof
+
+
+def test_every_rewrite_that_rebuilds_columns_has_a_fault_injection_case():
+    import inspect
+
+    source = inspect.getsource(alg)
+    sites = set(re.findall(r'_rewriting\([^"\n]*"(algebraic_\w+)"', source))
+    covered = {case[0] for case in REBUILDING_REWRITES} | set(DIRECT_REWRITES) | {"algebraic_using_to_on_unqualified"}
+    assert sites <= covered, sorted(sites - covered)
+
+
+def _direct(rule, sql: str, *args):
+    tree = sqlglot.parse_one(sql, read="bigquery")
+    select = tree if isinstance(tree, exp.Select) else tree.find(exp.Select)
+    with proof_columns.supplying(REBUILD_SCHEMA, "bigquery"), recording() as log:
+        result = rule(select, *args)
+    return result, log
+
+
+# rules that the normalizer reaches only when no earlier rule has already done the same work, called on the select itself
+DIRECT_REWRITES = {
+    "algebraic_lift_limit_derived": (alg._lift_limit_derived, "SELECT d.a FROM (SELECT a, b FROM t ORDER BY b LIMIT 5) AS d", _rename("a", "b")),
+    "algebraic_unwrap_projection": (alg._unwrap_projection, "SELECT d.s FROM (SELECT k, SUM(a) AS s, SUM(b) AS m FROM t GROUP BY k) AS d", _rename("a", "b")),
+    "algebraic_wrap_window_select": (
+        alg._wrap_window_select, "SELECT k, SUM(a) AS s, SUM(SUM(a)) OVER (PARTITION BY k) AS r FROM t GROUP BY k", _rename("s", "k"),
+    ),
+    "algebraic_indicator_join_above": (
+        lambda select: alg._indicator_join_above(select, None),
+        "SELECT d.a, d.f FROM (SELECT t.a, e.one IS NULL AS f FROM t LEFT JOIN (SELECT k, 1 AS one FROM u GROUP BY k) AS e ON t.k = e.k) AS d",
+        _rename("k", "a", "t"),
+    ),
+}
+
+
+@pytest.mark.parametrize("site", list(DIRECT_REWRITES))
+def test_a_rewrite_the_normalizer_reaches_late_is_checked_when_called_directly(monkeypatch, site):
+    rule, sql, corruption = DIRECT_REWRITES[site]
+    honest, log = _direct(rule, sql)
+    assert honest is not None and summarize(log)[site].get(AGREE, 0) >= 1 and DISAGREE not in summarize(log)[site]
+    _corrupt_rewrite(monkeypatch, site, corruption)
+    with pytest.raises(alg.UnmodeledConstruct, match="independent check of column resolution"):
+        _direct(rule, sql)
+    with proof_columns.disabled():
+        wrong, _ = _direct(rule, sql)
+    assert wrong is not None and wrong.sql() != honest.sql()  # without the check the wrong read is returned
+
+
+def _using_check_corrupted(monkeypatch, mutate):
+    original = using_rules._check
+
+    def check(guard, select):
+        mutate(select.root())
+        return original(guard, select)
+
+    monkeypatch.setattr(using_rules, "_check", check)
+
+
+def test_the_using_rewrite_over_derived_tables_is_checked_and_a_wrong_owner_is_refused(monkeypatch):
+    """Without a schema ``using_rules`` rewrites USING; the derived tables name their own columns, so the reader decides."""
+
+    left = "SELECT k AS kk, a.y0 FROM (SELECT t.k, t.a AS y0 FROM t) AS a LEFT JOIN (SELECT u.k FROM u) AS b USING (k)"
+    right = "SELECT a.y0 AS kk, a.y0 FROM (SELECT t.k, t.a AS y0 FROM t) AS a LEFT JOIN (SELECT u.k FROM u) AS b ON a.y0 = b.k"
+    assert not prove_equivalent_algebraic(left, right).proven
+    with recording() as log:
+        assert not prove_equivalent_algebraic(left, right).proven
+    assert summarize(log)["algebraic_using_to_on_unqualified"].get(AGREE, 0) >= 1
+    _using_check_corrupted(monkeypatch, _rename("k", "y0", "a"))
+    with recording() as log:
+        refused = prove_equivalent_algebraic(left, right)
+    assert not refused.proven and "independent check of column resolution" in refused.reason
+    assert summarize(log)["algebraic_using_to_on_unqualified"][DISAGREE] >= 1
+    with proof_columns.disabled():
+        assert prove_equivalent_algebraic(left, right).proven
+
+
+def test_the_lookup_of_a_derived_tables_outputs_is_the_one_every_inlining_rewrite_reads(monkeypatch):
+    """``_output_values`` (what the derived table computes for a name) maps every name to the last output here."""
+
+    def last_output(select):
+        values = [e.this if isinstance(e, exp.Alias) else e for e in select.expressions]
+        names = [e.alias_or_name.lower() for e in select.expressions]
+        return {name: values[-1] for name in names} if len(set(names)) == len(names) else None
+
+    left = "SELECT d.x FROM (SELECT a AS x, b AS y FROM t) AS d JOIN u ON d.x = u.k"
+    right = "SELECT d.y AS x FROM (SELECT a AS x, b AS y FROM t) AS d JOIN u ON d.y = u.k"
+    assert not _prove_rebuilt(left, right).proven
+    monkeypatch.setattr(alg, "_output_values", last_output)
+    with recording() as log:
+        refused = _prove_rebuilt(left, right)
+    assert not refused.proven and "independent check of column resolution" in refused.reason
+    assert any(summary.get(DISAGREE) for summary in summarize(log).values())
+    with proof_columns.disabled():
+        assert _prove_rebuilt(left, right).proven
+
+
+# --- what the re-reading follows: derived tables, set operations and USING ------------------------------------------
+
+def _rewrite_verdict(before: str, rewrite, known=None, region: bool = False):
+    tree = sqlglot.parse_one(before, read="bigquery")
+    with proof_columns.supplying(known if known is not None else REBUILD_SCHEMA, "bigquery"):
+        guard = proof_columns.begin(tree, "test_site")
+        guard.snapshot()
+        rewrite(tree)
+        return guard.verify(tree)
+
+
+def _replace_bare(name: str, qualifier: str):
+    def rewrite(tree):
+        for column in list(tree.find_all(exp.Column)):
+            if column.name.lower() == name and not column.table:
+                column.replace(proof_columns.rebuilt(exp.column(name, table=qualifier), column))
+
+    return rewrite
+
+
+@pytest.mark.parametrize("qualifier,kind", [("t", AGREE), ("u", DISAGREE)])
+def test_a_using_column_reads_the_left_source_of_an_inner_join(qualifier, kind):
+    verdict = _rewrite_verdict("SELECT k FROM t JOIN u USING (k)", _replace_bare("k", qualifier))
+    assert verdict.kind == kind
+
+
+@pytest.mark.parametrize("qualifier,kind", [("t", DISAGREE), ("u", AGREE)])
+def test_a_using_column_reads_the_right_source_of_a_right_join(qualifier, kind):
+    assert _rewrite_verdict("SELECT k FROM t RIGHT JOIN u USING (k)", _replace_bare("k", qualifier)).kind == kind
+
+
+def test_a_using_column_of_a_full_join_reads_both_sources():
+    def coalesce(tree):
+        for column in list(tree.find_all(exp.Column)):
+            both = exp.Coalesce(this=exp.column("k", table="t"), expressions=[exp.column("k", table="u")])
+            column.replace(proof_columns.rebuilt(both, column))
+
+    assert _rewrite_verdict("SELECT k FROM t FULL JOIN u USING (k)", coalesce).kind == AGREE
+    assert _rewrite_verdict("SELECT k FROM t FULL JOIN u USING (k)", _replace_bare("k", "t")).kind == DISAGREE
+
+
+def test_a_using_column_that_two_joins_list_or_a_source_with_unknown_columns_is_not_decided():
+    assert _rewrite_verdict("SELECT k FROM t JOIN u USING (k) JOIN v USING (k)", _replace_bare("k", "t")).kind == UNCHECKED
+    assert _rewrite_verdict("SELECT k FROM t JOIN z USING (k)", _replace_bare("k", "t")).kind == UNCHECKED
+
+
+@pytest.mark.parametrize("new,kind", [("q", AGREE), ("p", DISAGREE)])
+def test_a_column_of_a_union_reads_the_same_position_of_every_branch(new, kind):
+    def rewrite(tree):
+        for column in list(tree.find_all(exp.Column)):
+            if column.table == "x":
+                column.set("this", exp.to_identifier(new))
+
+    assert _rewrite_verdict(f"SELECT x.q FROM {UNION_SOURCE}", rewrite).kind == kind
+
+
+def test_a_table_alias_that_renames_the_columns_is_not_chased():
+    # ``t AS d(x, y, z)`` calls the table's columns by other names: the leaf cannot be named by what the text says
+    verdict = _rewrite_verdict("SELECT d.x FROM t AS d(x, y, z)", _rename("x", "y"))
+    assert verdict.kind in (UNCHECKED,)

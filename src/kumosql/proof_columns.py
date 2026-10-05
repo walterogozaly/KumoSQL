@@ -40,8 +40,8 @@ Three ways the provers use it, all of which can only remove a proof:
   subquery rebuilds columns without choosing among sources by name. The statement it rewrote is numbered (every
   column and FROM item), printed and read before the rewrite and again after it, and every column that survived
   (and every column the rewrite says it rebuilt from another) must read the same *leaves* afterwards: the base
-  tables' columns it chases through plain derived tables and CTEs, naming the table by the number of the FROM item
-  it came from. A name that now binds to another source, a projection read from the wrong output, a table
+  tables' columns it chases through plain derived tables, CTEs and set operations (by position) and a merged USING
+  column, naming the table by the number of the FROM item it came from. A name that now binds to another source, a projection read from the wrong output, a table
   instance swapped for another, all change the leaves.
 
 A column the text cannot decide (a source whose columns nobody listed, a name that is also a source's name) is
@@ -682,6 +682,8 @@ def carry_source(new: exp.Expression, old: exp.Expression) -> exp.Expression:
 def _read_back(root: exp.Expression) -> tuple[exp.Expression, list[exp.Column], list[exp.Expression]]:
     """Print ``root``, read the text again, and line the printed statement's columns and FROM items up with ``root``'s."""
 
+    if any(alias.args.get("columns") and not isinstance(alias.parent, exp.Unnest) for alias in root.find_all(exp.TableAlias)):
+        raise _Undecided("a column list on an alias (the printer drops it, so the text would not be the tree)")
     text = root.sql(dialect="bigquery")
     nodes = [n for n in sqlglot.parse(text, read="bigquery", error_level=sqlglot.ErrorLevel.RAISE) if n is not None]
     if len(nodes) != 1:
@@ -702,8 +704,10 @@ def _read_back(root: exp.Expression) -> tuple[exp.Expression, list[exp.Column], 
 class _Origins:
     """The base columns a column reads, chased through plain derived tables and CTEs, from one statement's text.
 
-    A leaf is ``(kind, number, name)``: ``table`` (a FROM item that is a physical table), ``unnest`` or ``derived``
-    (the output of a set operation, which is not chased), the FROM item's number and the column's name.
+    A leaf is ``(kind, number, name)``: ``table`` (a FROM item that is a physical table) or ``unnest``, the FROM
+    item's number and the column's name. A set operation is read by position: a column of it reads the same position
+    of every branch (the first branch names the outputs), so reordering branches or renaming outputs changes nothing.
+    A name that ``JOIN ... USING`` merges reads the left source (the right one for RIGHT, both for FULL).
     """
 
     def __init__(self, reader: StatementReader, number):
