@@ -345,6 +345,12 @@ _DENIED_EXTRACT_UNITS = {"DAYOFWEEK", "DOW", "WEEK", "ISOWEEK", "ISOYEAR", "DAYO
 _OPERATORS = (exp.Binary, exp.Not, exp.Between, exp.In, exp.Like, exp.Neg, exp.Is)
 
 
+def _plain_lateral(node: exp.Expression) -> bool:
+    """``LATERAL (SELECT ..) AS alias``: a correlated derived table, which DuckDB reads as standard SQL does."""
+
+    return isinstance(node.this, exp.Subquery) and bool(node.alias) and not any(v for k, v in node.args.items() if k not in ("this", "alias"))
+
+
 def to_duckdb(tree: exp.Expression, dialect: str = "bigquery") -> str:
     """DuckDB SQL with ``tree``'s meaning, or :class:`Unsupported`."""
 
@@ -353,7 +359,7 @@ def to_duckdb(tree: exp.Expression, dialect: str = "bigquery") -> str:
         raise Unsupported("not a query")
     for node in list(tree.walk()):
         name = type(node).__name__
-        if name in _DENIED:
+        if name in _DENIED and not (name == "Lateral" and _plain_lateral(node)):
             raise Unsupported(name)
         if isinstance(node, exp.Anonymous):
             fname = node.name.upper()
