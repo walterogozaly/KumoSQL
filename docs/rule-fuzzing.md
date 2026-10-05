@@ -98,3 +98,11 @@ regression tests:
   query equal to its fields as plain columns. `output_names` did the same for `X EXCEPT DISTINCT <empty>`, which became a `SELECT DISTINCT` of two columns. Both now decline an
   operand with `AS STRUCT` or `AS VALUE` (`tests/test_set_operation_struct_kind.py`). DuckDB cannot run this rewrite, so the harness reports it as unchecked; found by
   asking whether each shape-changing rule keeps `SELECT AS STRUCT` (`kind`) in mind.
+
+One more is **open**: `algebraic_equivalence._union_all_branches` steps through every `Subquery`, so
+`((SELECT x FROM t) ORDER BY x LIMIT 1) UNION ALL ...` is read as all of `t` by everything built on it (`_aligned_branches`,
+`_distribute`, `_prune_union_all`, the aggregate splits). The prover proves `SELECT d.x FROM (((SELECT x FROM t) LIMIT 1) UNION ALL
+SELECT w FROM u) AS d` equal to the same query without the `LIMIT`, also under `GROUP BY`, a global `SUM` and a join. The fix is
+one line in the algebraic core, which this sweep left alone: return `None` for a `Subquery` with an `order`, `limit` or `offset`.
+`tests/test_union_all_branches_tail.py` holds the witnesses as strict `xfail` tests (monkeypatching that function makes them
+pass); the thread that edits the core removes the markers.
