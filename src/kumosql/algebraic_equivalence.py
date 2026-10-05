@@ -4832,6 +4832,9 @@ def normalize(
     tree = _resolve_ordinals(tree, group_by=not group_by_constants)
     tree = _lowercase_columns(tree)
     tree = _inline_ctes(tree)
+    from .nested_struct_fields import fold_struct_fields
+
+    tree = fold_struct_fields(tree)
     tree = inline_named_windows(tree)
     from .nonnull_any import rewrite_nonnull_any
 
