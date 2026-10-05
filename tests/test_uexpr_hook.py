@@ -147,3 +147,12 @@ def test_the_front_end_checks_still_apply(monkeypatch):
     monkeypatch.setattr(uexpr, "prove_bag_equivalent", forbidden)
     left = "SELECT CAST(a AS FLOAT) FROM t"
     assert hook.prove_last_resort(left, left, schema={"t": ["a", "b"]}) is None
+
+
+@pytest.mark.parametrize("target", ["UNSIGNED", "TINYINT", "SMALLINT"])
+def test_a_cast_to_a_narrow_or_unsigned_integer_is_not_proven_equal_to_a_signed_one(target):
+    # CAST(-2 AS UNSIGNED) is 18446744073709551614 in MySQL, so 5 % it is 5, not 1.
+    left = f"SELECT 5 % CAST(-2 AS {target})"
+    right = "SELECT 5 % CAST(-2 AS SIGNED)"
+    assert hook.prove_last_resort(left, right, dialect="mysql", compare_names=False) is None
+    assert hook.prove_last_resort(right, right, dialect="mysql", compare_names=False) is not None

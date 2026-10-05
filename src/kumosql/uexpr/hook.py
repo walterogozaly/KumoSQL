@@ -28,6 +28,31 @@ def _decline(reason: str):
     return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"bag procedure: {reason}")
 
 
+# The backend reads a cast of an integer to an integer type as the identity (translate._cast). That holds for 64-bit
+# signed integers only: a narrower or unsigned target wraps or clamps (CAST(-2 AS UNSIGNED) is 18446744073709551614).
+# Until the translation models it, the hook refuses a pair with such a cast.
+_NARROW_INTEGERS = (
+    "TINYINT", "SMALLINT", "MEDIUMINT", "UTINYINT", "USMALLINT", "UMEDIUMINT", "UINT", "UBIGINT", "INT128", "UINT128", "INT256", "UINT256", "BIT",
+)
+
+
+def _narrow_integer_cast(sql: str, dialect: str) -> str | None:
+    import sqlglot
+    from sqlglot import exp
+
+    try:
+        tree = sqlglot.parse_one(sql, read=dialect)
+    except Exception:  # noqa: BLE001 - the backend reports the parse error itself
+        return None
+    wide_int = ("INT",) if dialect == "bigquery" else ()
+    for cast in tree.find_all(exp.Cast, exp.TryCast):
+        target = cast.args.get("to")
+        name = getattr(getattr(target, "this", None), "name", "")
+        if name in _NARROW_INTEGERS or (name == "INT" and name not in wide_int):
+            return f"a cast to {target.sql(dialect=dialect)}, which the backend would read as a 64-bit signed integer"
+    return None
+
+
 def _front_end(left_sql: str, right_sql: str, kwargs: dict):
     """``(left, right, reason)``: the texts to prove, or why the pair is refused before any proof is tried."""
 
@@ -57,6 +82,9 @@ def _front_end(left_sql: str, right_sql: str, kwargs: dict):
     )
     if compared:
         return None, None, str(compared)
+    narrow = _narrow_integer_cast(left_sql, dialect) or _narrow_integer_cast(right_sql, dialect)
+    if narrow:
+        return None, None, narrow
     return left_sql, right_sql, None
 
 
