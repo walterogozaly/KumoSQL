@@ -357,6 +357,12 @@ def type_call(typer, node: exp.Expression, scope, ctes) -> T:
         return _named(typer, node.expression, ".".join(path + [name]), scope, ctes)
     if isinstance(node, exp.Extract):
         return extract(typer, node, scope, ctes)
+    if isinstance(node, exp.Flatten) and isinstance(node.this, exp.Expression) and not node.args.get("expression"):
+        flat = typer.array_path(node.this, scope, ctes)  # FLATTEN(arr.field): the array path, flattened
+        if flat.type is not None and flat.type.kind == "ARRAY" and flat.type.element is not None and \
+                flat.type.element.kind != "ARRAY":
+            return T(flat.type)
+        return UNKNOWN
     if isinstance(node, exp.Identifier):
         return _lambda_parameter(typer, node, scope)
     if isinstance(node, (exp.Var, exp.Star, exp.Placeholder, exp.Parameter, exp.JSONPath, exp.Lambda)):

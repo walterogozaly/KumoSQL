@@ -1046,9 +1046,11 @@ class _Typer:
         name = (alias_name or parts[-1]).lower()
         # A path whose first part is a range variable to its left is an array to unnest (FROM t, t.arr).
         if len(parts) > 1:
-            kind, target = scope.lookup(parts[0])
+            kind = self._visible(scope, parts[0])
             if kind in ("range", "column"):
-                return _Range(name, None, node=item)
+                array = self.path_value(parts, scope, item, ctes)
+                element = known(array.type.element) if array.type is not None and array.type.kind == "ARRAY" else UNKNOWN
+                return _Range(name, None, value=element, node=item, display=alias_name or parts[-1])
         if len(parts) == 1 and parts[0].lower() in ctes:
             rel = ctes[parts[0].lower()]
             if rel is None or rel.columns is None:
@@ -1071,7 +1073,7 @@ class _Typer:
         exprs = item.expressions
         if len(exprs) != 1 or len(names) > 1:
             return [_Range(names[0].lower() if names else None, None, node=item)]
-        t = self.expr(exprs[0], scope, ctes)
+        t = self.array_path(exprs[0], scope, ctes) if _is_path(exprs[0]) else self.expr(exprs[0], scope, ctes)
         element: T
         if t.lit == "empty_array":
             element = UNKNOWN
@@ -1088,6 +1090,106 @@ class _Typer:
             off_name = offset.name if isinstance(offset, exp.Expression) else "offset"
             ranges.append(_Range(off_name.lower(), None, value=T(INT64), display=off_name))
         return ranges
+
+    # ---- array paths
+
+    @staticmethod
+    def _visible(scope: _Scope | None, name: str) -> str:
+        """What a name is where it is first found, looking outward through the enclosing scopes: ``range``,
+        ``column``, ``ambiguous``, ``unknown`` or ``none``."""
+
+        while scope is not None:
+            kind, _ = scope.lookup(name)
+            if kind != "none":
+                return kind
+            scope = scope.parent
+        return "none"
+
+    def path_value(self, parts: list[str], scope, node, ctes) -> T:
+        """The value a dotted name denotes before any array flattening: the column (or range) named by its first
+        parts, with the remaining parts stepped through :meth:`flatten_steps`."""
+
+        head = self.path(parts[:1], scope, node, ctes)
+        rest = parts[1:]
+        if isinstance(head, _Range):
+            if head.value is not None:
+                head = head.value
+            elif rest:
+                head = self.path(parts[:2], scope, node, ctes)
+                rest = parts[2:]
+            else:
+                head = known(head.struct_type())
+        return self.flatten_steps(_plain(head), [("field", name) for name in rest])
+
+    def array_path(self, node: exp.Expression, scope, ctes) -> T:
+        """An array path expression in a position that flattens it (``UNNEST(arr.field)``, ``FLATTEN(arr.field)``):
+        a field access on an ARRAY of STRUCTs reads the field of every element, and the result is an ARRAY of it.
+        Anything else is typed as an ordinary expression."""
+
+        steps: list[tuple] = []
+        current = node
+        while True:
+            if isinstance(current, exp.Paren):
+                current = current.this
+            elif isinstance(current, exp.Dot) and isinstance(current.expression, exp.Identifier):
+                steps.insert(0, ("field", current.expression.name))
+                current = current.this
+            elif isinstance(current, exp.Bracket) and len(current.expressions) == 1:
+                steps.insert(0, ("index", current))
+                current = current.this
+            else:
+                break
+        if not steps:
+            return self.expr(node, scope, ctes)
+        for kind, step in steps:
+            if kind == "index":
+                self.expr(step.expressions[0], scope, ctes)
+        if isinstance(current, exp.Column) and not isinstance(current.this, exp.Star):
+            parts = [p.name for p in (current.args.get("catalog"), current.args.get("db"), current.args.get("table"),
+                                      current.this) if p is not None]
+            base = self.path_value(parts, scope, current, ctes)
+            self.note(current, base)
+        else:
+            base = self.expr(current, scope, ctes)
+        return self.note(node, self.flatten_steps(base, steps))
+
+    def flatten_steps(self, base: T, steps: list[tuple]) -> T:
+        """Apply field and subscript ``steps`` to ``base`` as an array path. A field read on an ARRAY applies to each
+        element, from then on, and the value is an ARRAY of what the steps give: an array-valued field is flattened
+        into it, unless a subscript picks one element from it per element."""
+
+        current, mapped = base.type, False  # mapped: ``current`` is the type of one element's value
+        for kind, step in steps:
+            if current is None:
+                return UNKNOWN
+            if kind == "index":
+                key = step.expressions[0]
+                subscript = step.args.get("offset") is not None or (
+                    isinstance(key, exp.Anonymous) and str(key.this).upper() in ("OFFSET", "ORDINAL", "SAFE_OFFSET",
+                                                                                 "SAFE_ORDINAL"))
+                if current.kind == "JSON":
+                    continue
+                if current.kind != "ARRAY" or not subscript:
+                    return UNKNOWN
+                current = current.element
+                continue
+            if current.kind == "ARRAY":
+                current, mapped = current.element, True
+                if current is None or current.kind == "ARRAY":
+                    return UNKNOWN  # an array of arrays: not a path this models
+            if current.kind == "JSON":
+                continue
+            if current.kind != "STRUCT":
+                return UNKNOWN
+            current = current.field(step)
+        if current is None:
+            return UNKNOWN
+        if not mapped:
+            return known(current)
+        if current.kind == "ARRAY":  # an array-valued last field is flattened into the result
+            return known(GType.array(current.element)) if current.element is not None and current.element.kind != "ARRAY" \
+                else UNKNOWN
+        return known(GType.array(current))
 
     # ---- SELECT list
 
@@ -1413,6 +1515,13 @@ class _Typer:
                 fields = base.type.fields
                 return known(fields[position].type) if 0 <= position < len(fields) else UNKNOWN
         return UNKNOWN
+
+
+def _is_path(node: exp.Expression) -> bool:
+    """Whether an expression is a field access or subscript chain (the shapes an array path can take)."""
+
+    return isinstance(node, (exp.Dot, exp.Bracket)) or (isinstance(node, exp.Paren) and _is_path(node.this)) or (
+        isinstance(node, exp.Column) and not isinstance(node.this, exp.Star) and bool(node.args.get("table")))
 
 
 def _set_mode(node: exp.SetOperation) -> str | None:
