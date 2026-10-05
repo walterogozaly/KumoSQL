@@ -137,11 +137,13 @@ _NOT_A_FUNCTION = frozenset({
     "MATCH", "MATCH_RECOGNIZE", "GRAPH_TABLE", "PARTITION", "ORDER", "GROUP", "HAVING", "QUALIFY", "LIMIT",
 })
 _FILTER_END = frozenset({"HAVING", "ORDER", "LIMIT", "GROUP"})
+_GROUP_END = frozenset({"HAVING", "ORDER", "LIMIT"})
 _FORBIDDEN = frozenset({"GRAPH_TABLE", "MATCH", "MATCH_RECOGNIZE", "|>"})
 
 
-def _aggregate_filter(sql: str, dialect: str) -> str | None:
-    """``COUNT(x WHERE cond)``: the filter picks which rows are aggregated; the aggregate's type is the same."""
+def _aggregate_clauses(sql: str, dialect: str) -> str | None:
+    """``COUNT(x WHERE cond)`` and ``SUM(AVG(x) GROUP BY k)``: a filter picks which rows are aggregated and a
+    multi-level ``GROUP BY`` groups the inner aggregate first; the aggregate's type is the same either way."""
 
     tokens = _tokens(sql, dialect)
     pairs = _pairs(tokens) if tokens is not None else None
@@ -159,14 +161,18 @@ def _aggregate_filter(sql: str, dialect: str) -> str | None:
         if any(tokens[i].upper in ("SELECT", "FROM", "WITH") for i in direct):
             continue
         where = [i for i in direct if tokens[i].type == "WHERE"]
-        if len(where) != 1:
+        group = [i for i in direct if tokens[i].upper.split(" ")[0] == "GROUP"]
+        if len(where) > 1 or len(group) > 1:
             continue
-        end = close
-        for i in direct:
-            if i > where[0] and tokens[i].upper.split(" ")[0] in _FILTER_END:
-                end = i
-                break
-        spans.append((tokens[where[0]].start, tokens[end - 1].end, ""))
+        for first, enders in ((where, _FILTER_END), (group, _GROUP_END)):
+            if not first:
+                continue
+            end = close
+            for i in direct:
+                if i > first[0] and tokens[i].upper.split(" ")[0] in enders:
+                    end = i
+                    break
+            spans.append((tokens[first[0]].start, tokens[end - 1].end, ""))
     return _cut(sql, spans) if spans else None
 
 
@@ -268,9 +274,32 @@ def _matching_bracket(tokens: list[_Tok], open_index: int) -> int | None:
     return None
 
 
+_COMPARISONS = frozenset({"=", "!=", "<>", "<", ">", "<=", ">=", "LIKE"})
+
+
+def _quantified_unnest(sql: str, dialect: str) -> str | None:
+    """``x > ALL UNNEST(arr)``, ``x LIKE ANY UNNEST(arr)``: a quantified comparison over an array. It is a BOOL
+    whatever the operands are, so the array becomes the equivalent one-column subquery sqlglot reads."""
+
+    tokens = _tokens(sql, dialect)
+    pairs = _pairs(tokens) if tokens is not None else None
+    if tokens is None or pairs is None:
+        return None
+    spans: list[tuple[int, int, str]] = []
+    for i in range(1, len(tokens) - 2):
+        if tokens[i].upper not in ("ALL", "ANY", "SOME") or tokens[i - 1].upper not in _COMPARISONS:
+            continue
+        if tokens[i + 1].upper != "UNNEST" or tokens[i + 2].type != "L_PAREN":
+            continue
+        close = pairs[i + 2]
+        spans.append((tokens[i + 1].start, tokens[close].end, f"(SELECT * FROM {sql[tokens[i + 1].start:tokens[close].end]})"))
+    return _cut(sql, spans) if spans else None
+
+
 _REWRITES = (
     ("privacy clause", _privacy_clause),
-    ("aggregate filter", _aggregate_filter),
+    ("aggregate filter or group", _aggregate_clauses),
+    ("quantified comparison over an array", _quantified_unnest),
     ("unknown cast type", _unknown_casts),
     ("unknown typed constructor", _unknown_typed_arrays),
 )
