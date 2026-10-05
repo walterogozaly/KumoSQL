@@ -50,6 +50,28 @@ def test_declaration_without_schema_uses_project_defaults():
     assert declared == [Target("proj", "analytics", "t")] and complete
 
 
+def test_js_assertion_uses_configured_assertion_dataset_for_refs(tmp_path):
+    (tmp_path / "workflow_settings.yaml").write_text(
+        "defaultProject: proj\ndefaultDataset: analytics\ndefaultAssertionDataset: checks\n"
+    )
+    (tmp_path / "definitions").mkdir()
+    (tmp_path / "definitions" / "users.sqlx").write_text('config { type: "table" }\nSELECT 1 AS id')
+    (tmp_path / "definitions" / "check.js").write_text(
+        'assert("check_users").query(ctx => `SELECT id FROM ${ctx.ref("users")} WHERE id IS NULL`);'
+    )
+    (tmp_path / "definitions" / "reader.sqlx").write_text(
+        'config { type: "table" }\nSELECT * FROM ${ref("check_users")}'
+    )
+
+    pipeline = load_sqlx_project(tmp_path)
+
+    assert "proj.checks.check_users" in pipeline.models
+    assert pipeline.models["proj.checks.check_users"].kind == "assertion"
+    assert {target.key for target in pipeline.models["proj.analytics.reader"].declared_dependencies} == {
+        "proj.checks.check_users"
+    }
+
+
 def test_dynamic_declarations_leave_unlisted_refs_unresolved(tmp_path):
     pl = project(tmp_path, {
         "definitions/decl.js": 'getTables().forEach((t) => declare({ schema: "raw", name: t }));\n',

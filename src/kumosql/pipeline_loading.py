@@ -578,7 +578,7 @@ def _read_project_defaults_strict(root: Path) -> tuple[str, str]:
 
 # ------------------------------------------------------- JavaScript declarations
 
-_JS_CALL_RE = re.compile(r"(?<![\w.$])(declare|publish)\s*\(")
+_JS_CALL_RE = re.compile(r"(?<![\w.$])(declare|publish|operate|assert)\s*\(")
 _JS_IDENT_RE = re.compile(r"^[A-Za-z_$][\w$]*$")
 
 
@@ -698,14 +698,15 @@ def js_declared_targets(
     text: str,
     default: Target,
     *,
+    assertion_dataset: str | None = None,
     modules: Mapping[str, Mapping[str, object]] | None = None,
     path: str = "",
     placeholders: Callable[[str], str | None] | None = None,
 ) -> tuple[list[Target], list[Target], bool]:
     """Declarations and named actions found in one Dataform JavaScript file.
 
-    Returns ``(declared, actions, complete)``. ``declared`` are ``declare({...})`` targets and ``actions`` the
-    ``publish("name", {...})`` ones, both with project defaults filled in. ``complete`` is False when a call's
+    Returns ``(declared, actions, complete)``. ``declared`` are ``declare({...})`` targets and ``actions`` are named
+    ``publish``, ``assert`` and ``operate`` calls, all with project defaults filled in. ``complete`` is False when a
     name, schema or database cannot be read without running the code (computed in a function, a loop over a
     list that is not literal): the file then may declare tables that are not listed. A loop over a literal list
     of tables, in this file or in a module it ``require``s (``modules``: exports by project path), is expanded.
@@ -735,7 +736,13 @@ def js_declared_targets(
                 databases = [stands_for]
         if not names or schemas is None or databases is None:
             return None
-        return [(name, db, schema) for name in names for db in (databases or [default.database]) for schema in (schemas or [default.schema])]
+        default_schema = (assertion_dataset or default.schema) if kind == "assert" else default.schema
+        return [
+            (name, db, schema)
+            for name in names
+            for db in (databases or [default.database])
+            for schema in (schemas or [default_schema])
+        ]
 
     for match in _JS_CALL_RE.finditer(text):
         kind = match.group(1)
@@ -835,18 +842,37 @@ def _js_depth_at(text: str, position: int) -> int:
     return depth
 
 
-def js_published_assets(text: str) -> list[tuple[str, str]]:
-    """``(name, sqlx)`` for each top-level ``publish("name", {config}).query(...)`` in a JavaScript file whose query is
-    written out as a literal, as the SQLX Dataform would read from a ``.sqlx`` file with the same config and body.
+def _js_operation_queries(argument: str) -> list[str] | None:
+    """Literal SQL statements returned by an ``operate`` call, or None when it computes them."""
 
-    Only a literal name, a literal config object and a literal query count; a publish inside a function or loop, a
-    computed query and chained calls other than ``query`` and ``config`` are left to the declaration scan, which
-    reports the names it cannot read.
+    argument = argument.strip()
+    for pattern in (_JS_BLOCK_ARROW_RE, _JS_FUNCTION_RE, _JS_ARROW_RE):
+        found = pattern.fullmatch(argument)
+        if found:
+            argument = found.group("body").strip()
+            break
+    if argument.startswith("[") and argument.endswith("]"):
+        parts = _split_top_level(argument[1:-1])
+        queries = [_js_query_text(part) for part in parts]
+        if not parts or any(query is None for query in queries):
+            return None
+        return [query for query in queries if query is not None]
+    query = _js_query_text(argument)
+    return [query] if query is not None else None
+
+
+def js_published_assets(text: str) -> list[tuple[str, str]]:
+    """``(name, sqlx)`` for top-level ``publish``, ``assert`` and ``operate`` calls with literal SQL.
+
+    Their query or operation body must be written out as a string/template literal, or a function of ``ctx`` that
+    returns one. Computed names and bodies, calls inside functions or loops, and unsupported chains are left to the
+    declaration scan, which reports names it cannot read.
     """
 
     found: list[tuple[str, str]] = []
     for match in _JS_CALL_RE.finditer(text):
-        if match.group(1) != "publish" or _js_depth_at(text, match.start()) != 0:
+        action = match.group(1)
+        if action not in {"publish", "assert", "operate"} or _js_depth_at(text, match.start()) != 0:
             continue
         opening = match.end() - 1
         arguments = _split_top_level(_call_arguments(text, opening))
@@ -857,6 +883,9 @@ def js_published_assets(text: str) -> list[tuple[str, str]]:
         for argument in arguments[1:]:
             if argument.startswith("{"):
                 config = argument
+            elif action == "operate":
+                operation_queries = _js_operation_queries(argument)
+                query = ";\n".join(operation_queries) if operation_queries is not None else None
             else:
                 query = _js_query_text(argument)
         end = opening + len(_call_arguments(text, opening)) + 2
@@ -865,7 +894,11 @@ def js_published_assets(text: str) -> list[tuple[str, str]]:
             inner_open = end + call.end() - 1
             inner = _call_arguments(text, inner_open)
             if call.group(1) == "query":
-                query = _js_query_text(inner)
+                if action == "operate":
+                    operation_queries = _js_operation_queries(inner)
+                    query = ";\n".join(operation_queries) if operation_queries is not None else None
+                else:
+                    query = _js_query_text(inner)
             elif inner.strip().startswith("{"):
                 config = inner.strip()
             else:
@@ -876,6 +909,10 @@ def js_published_assets(text: str) -> list[tuple[str, str]]:
         body = config.strip()[1:-1] if config.strip().startswith("{") else ""
         if _config_literal("config { " + body + " }", "name") != (None, False):
             continue  # a name in the config object as well as the argument: not read
+        type_, computed_type = _config_literal("config { " + body + " }", "type")
+        default_type = {"assert": "assertion", "operate": "operations"}.get(action)
+        if default_type and type_ is None and not computed_type:
+            body = (body.strip().rstrip(",") + ", " if body.strip() else "") + f"type: {json.dumps(default_type)}"
         sqlx = "config { " + (body.strip().rstrip(",") + ", " if body.strip() else "") + f"name: {json.dumps(name)} }}\n{query}\n"
         found.append((name, sqlx))
     return found
@@ -1254,7 +1291,8 @@ def load_sqlx_project(
         if not _JS_CALL_RE.search(text):
             continue
         declared, actions, complete = js_declared_targets(
-            text, Target(database, dataset, ""), modules=modules, path=relative_js, placeholders=placeholders)
+            text, Target(database, dataset, ""), assertion_dataset=assertion_dataset,
+            modules=modules, path=relative_js, placeholders=placeholders)
         for target in declared:
             known.setdefault(target.name, []).append(target)
             sources[target.key] = target

@@ -45,12 +45,23 @@ def test_workflow_settings_suffixes_and_prefix_are_applied():
 
 
 def test_javascript_api_actions_are_loaded():
-    # publish() with a literal name, config and query is read; operate(), assert() and a publish in a loop are not yet
+    # Static publish(), operate() and assert() bodies are read; a publish in a loop is not expanded into a model.
     pipeline = load_sqlx_project(PROJECTS / "js_api")
-    assert set(pipeline.models) == {"kumosql.kumosql_messy.users_copy", "kumosql.kumosql_messy.users_view_js"}
+    assert set(pipeline.models) == {
+        "kumosql.kumosql_messy.users_copy",
+        "kumosql.kumosql_messy.users_view_js",
+        "kumosql.kumosql_messy.js_op",
+        "kumosql.kumosql_messy.js_assert",
+    }
     assert pipeline.models["kumosql.kumosql_messy.users_view_js"].kind == "view"
     assert [t.key for t in pipeline.models["kumosql.kumosql_messy.users_view_js"].declared_dependencies] == [
         "kumosql.kumosql_messy.users_copy"]
+    operation = pipeline.models["kumosql.kumosql_messy.js_op"]
+    assert operation.kind == "operations" and "DELETE FROM" in operation.sql
+    assert [t.key for t in operation.declared_dependencies] == ["kumosql.kumosql_messy.users_copy"]
+    assertion = pipeline.models["kumosql.kumosql_messy.js_assert"]
+    assert assertion.kind == "assertion" and "WHERE id IS NULL" in assertion.sql
+    assert [t.key for t in assertion.declared_dependencies] == ["kumosql.kumosql_messy.users_copy"]
 
 
 @pytest.mark.xfail(reason="actions.yaml (types, dependencyTargets, file mapping) is not read; its SQL files load as untyped models", strict=True)
