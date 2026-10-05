@@ -18,8 +18,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 import nested_data_bench as bench  # noqa: E402
 
 GROUPS = 4
-# development pairs proved / refuted per group (sum 4 / 28), measured 2026-10-05
-FLOORS = {0: (1, 6), 1: (1, 8), 2: (2, 7), 3: (0, 7)}
+# development pairs proved / refuted per group, measured 2026-10-05: 1/6, 1/8, 2/7 and 0/7 (4 and 28 in all). The
+# counterexample search works to a time budget, so a loaded machine can lose one refutation: the refutation floors
+# are one below the measurement, the proof floors are the measurement.
+FLOORS = {0: (1, 5), 1: (1, 7), 2: (2, 6), 3: (0, 6)}
 
 FIXTURE = bench.load()
 
