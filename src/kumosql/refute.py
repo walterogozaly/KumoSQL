@@ -194,6 +194,8 @@ def find_targeted_difference(
     budget: float = 60.0,
     settings: Sequence[str] = (),
     booleans_are_integers: bool = False,
+    tie_aware: bool = True,
+    tie_artefacts: list | None = None,
 ) -> Refutation | None:
     """The first database on which ``left`` and ``right`` differ, or ``None``.
 
@@ -204,6 +206,12 @@ def find_targeted_difference(
     ``ordered`` compares the rows in order (queries with ``ORDER BY ... LIMIT``).
     ``booleans_are_integers`` reads ``TRUE`` as ``1`` (see ``compare_outputs``), for queries written in a
     dialect without a boolean type.
+
+    ``tie_aware`` (the default) reports a difference only when it is not a tie artefact on that database:
+    both queries must be determined there, or one determined and the other different under every
+    tie-break tried (:mod:`kumosql.tie_data`). A database where the difference may be which tied row a
+    query kept is skipped, and appended to ``tie_artefacts`` (a list, when given) as ``(label, reason)``.
+    ``tie_aware=False`` keeps only the repeat check.
     """
 
     compare = {
@@ -243,8 +251,17 @@ def find_targeted_difference(
                 continue
             if compare_outputs(a, b, **compare)[0]:
                 continue
-            if _confirmed(runner, left, right, dataset, compare):
-                return Refutation(label, dataset, a, b)
+            if not _confirmed(runner, left, right, dataset, compare):
+                continue
+            if tie_aware:
+                from .tie_data import tie_verdict
+
+                verdict = tie_verdict(runner, left, right, dataset, compare, timeout=timeout)
+                if verdict.status != "different":
+                    if tie_artefacts is not None:
+                        tie_artefacts.append((label, verdict.reason))
+                    continue
+            return Refutation(label, dataset, a, b)
     return None
 
 

@@ -17,8 +17,8 @@ Evidence levels
 ---------------
 ``bounded`` is its own evidence level, next to an unbounded proof and agreement on executed random
 databases. A counterexample is never returned unless it was replayed (both queries executed on
-DuckDB over the model's database, difference stable under row shuffles); a model the replay does
-not confirm gives ``unknown``, never a verdict.
+DuckDB over the model's database, difference not a tie artefact: see :mod:`kumosql.tie_data`); a model the
+replay does not confirm gives ``unknown``, never a verdict.
 
 Assumptions of the encoding (reported with every result): arithmetic is exact (no FLOAT64
 rounding or integer overflow), runtime errors are not modeled (division by zero gives NULL), strings
@@ -30,7 +30,6 @@ Anything the encoding does not model raises :class:`Unsupported` and the answer 
 from __future__ import annotations
 
 import datetime as _dt
-import random
 import re
 import time
 from dataclasses import dataclass, field
@@ -78,7 +77,7 @@ ASSUMPTIONS = (
     "runtime errors are not modeled (division by zero gives NULL)",
     "strings compare case-sensitively by code point",
     "results are compared as bags (row order ignored)",
-    "ORDER BY ties are broken by row position (a tie-dependent difference is reported only if it survives shuffles)",
+    "ORDER BY ties are broken by row position (a tie-dependent difference is reported only when both queries are determined on the database, or one is and the other differs under every tie-break tried)",
 )
 
 # --- schema ------------------------------------------------------------------------------------
@@ -2001,9 +2000,10 @@ def database_from_model(database: SymbolicDatabase, model) -> dict[str, list[tup
 class DuckDBReplay:
     """Execute both queries on DuckDB over a concrete database: the judge of every counterexample.
 
-    A counterexample counts only when the two result bags differ and keep differing after the rows
-    of every table are shuffled (so a tie in ``LIMIT``, or MySQL's arbitrary pick of an ungrouped
-    column, never produces one).
+    A counterexample counts only when the two result bags differ and no tie explains it
+    (:func:`_tie_checked`: so a tie in ``LIMIT`` or a window, or MySQL's arbitrary pick of an ungrouped
+    column, never produces one). ``shuffles`` is kept for callers and no longer used: the storage orders
+    tried are :func:`kumosql.tie_data.storage_orders`.
     """
 
     def __init__(self, schema: BoundedSchema, left: str, right: str, dialect: str = "bigquery", shuffles: int = 3, translate: Callable[[str], str] | None = None):
@@ -2046,36 +2046,39 @@ class DuckDBReplay:
             tree = faithful(tree)
         return spell_for_duckdb(tree).sql(dialect="duckdb")
 
-    def _run(self, data: dict[str, list[tuple]]):
+    def _load(self, data: dict[str, list[tuple]]) -> None:
         for name, table in self.schema.tables.items():
             self.db.execute(f'DELETE FROM "{name}"')
             rows = data.get(name) or []
             if rows:
                 marks = ", ".join("?" * len(table.columns))
                 self.db.executemany(f'INSERT INTO "{name}" VALUES ({marks})', rows)
-        left, right = self.db.execute(self.left).fetchall(), self.db.execute(self.right).fetchall()
+
+    def _query(self, sql: str, data: dict[str, list[tuple]]):
+        self._load(data)
+        rows = self.db.execute(sql).fetchall()
         if self.bigquery:
             from .bigquery_on_duckdb import UnfaithfulOutput, bigquery_rows
 
             try:
-                return bigquery_rows(left), bigquery_rows(right)
+                return bigquery_rows(rows)
             except UnfaithfulOutput as error:
                 raise self.duckdb.InvalidInputException(str(error)) from error
-        return left, right
+        return rows
+
+    def _run(self, data: dict[str, list[tuple]]):
+        return self._query(self.left, data), self._query(self.right, data)
 
     def differ(self, data: dict[str, list[tuple]]) -> bool | None:
-        """``True``: the bags differ on every shuffle; ``False``: they agree; ``None``: could not run."""
+        """``True``: the bags differ and no tie explains it; ``False``: they agree; ``None``: could not run
+        or the difference may be a tie artefact (:func:`_tie_checked`)."""
 
         try:
             a, b = self._run(data)
             expected = (self.cx._bag(a), self.cx._bag(b))
             if expected[0] == expected[1]:
                 return False
-            for shuffled in _reorders(data, random.Random(0), self.shuffles):
-                a2, b2 = self._run(shuffled)
-                if (self.cx._bag(a2), self.cx._bag(b2)) != expected:
-                    return None
-            return True
+            return _tie_checked(self, data, "duckdb", (self.duckdb.Error,))
         except self.duckdb.Error:
             return None
 
@@ -2101,14 +2104,17 @@ class SQLiteReplay:
             self.db.execute(f'CREATE TABLE "{name}" ({columns})')
         self.left, self.right = left, right
 
-    def _run(self, data: dict[str, list[tuple]]):
+    def _query(self, sql: str, data: dict[str, list[tuple]]):
         for name, table in self.schema.tables.items():
             self.db.execute(f'DELETE FROM "{name}"')
             rows = data.get(name) or []
             if rows:
                 marks = ", ".join("?" * len(table.columns))
                 self.db.executemany(f'INSERT INTO "{name}" VALUES ({marks})', rows)
-        return self.db.execute(self.left).fetchall(), self.db.execute(self.right).fetchall()
+        return self.db.execute(sql).fetchall()
+
+    def _run(self, data: dict[str, list[tuple]]):
+        return self._query(self.left, data), self._query(self.right, data)
 
     def differ(self, data: dict[str, list[tuple]]) -> bool | None:
         try:
@@ -2116,23 +2122,29 @@ class SQLiteReplay:
             expected = (self.cx._bag(a), self.cx._bag(b))
             if expected[0] == expected[1]:
                 return False
-            for shuffled in _reorders(data, random.Random(0), self.shuffles):
-                a2, b2 = self._run(shuffled)
-                if (self.cx._bag(a2), self.cx._bag(b2)) != expected:
-                    return None
-            return True
+            return _tie_checked(self, data, "sqlite", (self.sqlite3.Error,))
         except self.sqlite3.Error:
             return None
 
 
-def _reorders(data: dict[str, list[tuple]], rng: random.Random, shuffles: int):
-    """``data`` reversed, then rotated by a row, then ``shuffles`` random shuffles (random shuffles
-    alone keep a two-row table in order once in ``2**shuffles``)."""
+def _tie_checked(replay, data: dict[str, list[tuple]], engine: str, errors: tuple) -> bool | None:
+    """``True`` when the bags differ and the difference is not a tie artefact on ``data``, else ``None``.
 
-    yield {n: list(reversed(rows)) for n, rows in data.items()}
-    yield {n: list(rows[1:]) + list(rows[:1]) for n, rows in data.items()}
-    for _ in range(shuffles):
-        yield {n: rng.sample(rows, len(rows)) for n, rows in data.items()}
+    Both queries are probed under every tie-break :mod:`kumosql.tie_data` tries (storage orders, tied
+    cuts, free ``ANY_VALUE`` picks); the difference stands when both are determined, or one is determined
+    and the other differs under every tie-break tried.
+    """
+
+    from . import tie_data
+
+    def profile(sql: str) -> tie_data.TieProfile:
+        return tie_data.probe(
+            sql, data, lambda text, tables: replay._query(text, {n: list(r) for n, r in tables.items()}),
+            lambda x, y: replay.cx._bag(x) == replay.cx._bag(y), engine=engine, errors=errors,
+        )
+
+    verdict = tie_data.refutation_verdict(profile(replay.left), profile(replay.right), lambda x, y: replay.cx._bag(x) == replay.cx._bag(y))
+    return True if verdict.status == "different" else None
 
 
 def _sqlite_type(column: BColumn) -> str:

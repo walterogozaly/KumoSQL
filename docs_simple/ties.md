@@ -23,6 +23,14 @@ for site in report.sites:
 
 Each place that can depend on ties (a window function, `LIMIT`, `ANY_VALUE`, `ARRAY_AGG` and similar) is called `deterministic` or `unknown`. `unknown` means no reason was found that the result is stable. It does not prove the result changes.
 
+## Refuting a difference on real rows
+
+When KumoSQL says two queries are different, it shows a small database where they return different rows. If both queries return a tied row, the difference might only be "this one kept the first tied row and that one kept the second". That is not a different answer, so it must not count.
+
+For example, "latest event per user by `ROW_NUMBER`" and "the smallest value among the latest events" return different rows on a database where two events of a user share the latest time and hold different values. But the first query is allowed to return the second one's row, so it is not a counterexample. Now KumoSQL runs each query again on that database with its rows stored in other orders, with each `LIMIT` cut at another tied row, and with `ANY_VALUE` made to fail when it could pick several values. It reports the difference only if both queries give one answer however the tie goes, or one does and the other never matches it. Otherwise the answer is "unknown" and the search tries other databases, so a pair that really differs is still refuted on a database without ties.
+
+The limits: it tries a list of tie-breaks, all of them on tables of up to four rows and a sample on larger ones, so "no tie" is evidence, not proof. This only ever withholds a refutation, never adds a proof. Details: [Refuting on one database](../docs/ties.md#refuting-on-one-database).
+
 ## What the check does and does not show
 
 - It reads the query text and any declared keys; it runs no query and uses no data.

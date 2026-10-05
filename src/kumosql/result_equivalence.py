@@ -702,7 +702,11 @@ class DatasetRunner:
         self._loaded = dataset
 
     def run(self, sql: str, dataset: SyntheticDataset, *, timeout: float | None = None) -> QueryOutput:
-        text = self.prepare(sql)
+        return self.run_prepared(self.prepare(sql), dataset, timeout=timeout)
+
+    def run_prepared(self, text: str, dataset: SyntheticDataset, *, timeout: float | None = None) -> QueryOutput:
+        """Run DuckDB text (:meth:`prepare`'s result, or a variant of it) on ``dataset``."""
+
         self.load(dataset)
         timer = None
         if timeout is not None:
@@ -814,6 +818,26 @@ def compare_outputs(
     if not ignore_row_order and left_rows != right_rows:
         return False, "same rows but in a different order", (), ()
     return True, "results match", (), ()
+
+
+def _tie_dependent_difference(left_sql: str, right_sql: str, schema: Schema, dataset: SyntheticDataset, compare: Mapping[str, Any]) -> str:
+    """Why a difference on ``dataset`` may be a tie artefact (:mod:`kumosql.tie_data`), or ``""``.
+
+    Only single queries over the schema's tables can be probed; a script or a query the runner cannot read is
+    reported as it always was.
+    """
+
+    from .tie_data import profile, refutation_verdict
+
+    try:
+        with DatasetRunner(schema) as runner:
+            left, right = profile(runner, left_sql, dataset, compare), profile(runner, right_sql, dataset, compare)
+    except Exception:  # noqa: BLE001 - not probeable: no evidence of a tie
+        return ""
+    if not left.outputs or not right.outputs:
+        return ""  # a script or a query the runner does not take
+    verdict = refutation_verdict(left, right, lambda a, b: compare_outputs(a, b, **compare)[0])
+    return verdict.reason if verdict.status == "unknown" else ""
 
 
 def check_result_equivalence(
@@ -953,6 +977,30 @@ def check_result_equivalence(
                     ResultEquivalenceStatus.INCONCLUSIVE,
                     f"the results differ, but a query may pick rows freely ({free}), so the "
                     "difference may be a different choice rather than a different answer",
+                    tuple(checked),
+                    seed,
+                    left_output,
+                    right_output,
+                    only_left,
+                    only_right,
+                    tuple(left_sql_out),
+                    tuple(right_sql_out),
+                )
+            tie = _tie_dependent_difference(
+                left_sql,
+                right_sql,
+                schema,
+                dataset,
+                {
+                    "ignore_row_order": ignore_row_order,
+                    "check_column_names": check_column_names,
+                    "float_digits": float_digits,
+                },
+            )
+            if tie:
+                return ResultEquivalence(
+                    ResultEquivalenceStatus.INCONCLUSIVE,
+                    f"the results differ, but the difference may be a tie broken by chance ({tie}), not a different answer",
                     tuple(checked),
                     seed,
                     left_output,

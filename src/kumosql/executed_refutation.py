@@ -276,14 +276,6 @@ def _narrow_datasets(typed, rules, extras, count: int = 60):
         yield SyntheticDataset(1000 + index, tables)
 
 
-def _reversed(dataset):
-    from .result_equivalence import SyntheticDataset, SyntheticTable
-
-    return SyntheticDataset(
-        dataset.seed, {k: SyntheticTable(t.columns, tuple(reversed(t.rows))) for k, t in dataset.tables.items()}
-    )
-
-
 def _with_rows(dataset, rows: Mapping[str, list]):
     from .result_equivalence import SyntheticDataset, SyntheticTable
 
@@ -315,13 +307,11 @@ class _Search:
         a, b = first
         if compare_outputs(a, b, check_column_names=False, float_digits=6)[0]:
             return False
-        again = self.outputs(_reversed(dataset))
-        if again is None:
-            return False
-        for before, after in zip(first, again):
-            if not compare_outputs(before, after, check_column_names=False, float_digits=12)[0]:
-                return False  # depends on row order: not a refutation
-        return True
+        # a difference that rests on how a tie was broken (row order, a tied cut, a free pick) is no refutation
+        from .tie_data import tie_verdict
+
+        verdict = tie_verdict(self.runner, self.left, self.right, dataset, {"check_column_names": False, "float_digits": 12}, timeout=5)
+        return verdict.status == "different"
 
     def shrink(self, dataset, legal, deadline: float):
         """Drop rows, whole tables first, while the pair still differs and the database stays legal."""

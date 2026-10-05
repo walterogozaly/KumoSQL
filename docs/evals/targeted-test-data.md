@@ -67,7 +67,7 @@ Mutants that escape the single seed and the default eight databases but are caug
 
 ## Targeted databases in the equivalence evals
 
-`kumosql.refute.find_targeted_difference` runs two queries over the targeted suites built around each of them (then a few random databases), repairs foreign keys, skips databases where either query errors, and reports a difference only when it repeats. `engine="sqlite"` runs the SQL as written in SQLite for evals labelled by SQLite. The SQL-IQ judge, the Singh and Bedathur search, the SQLSolver family (QED, R-Bot, Cosette, mined Calcite) and the VeriEQL searcher call it after their own random search agrees. `KUMOSQL_TARGETED=0` turns it off for a baseline run.
+`kumosql.refute.find_targeted_difference` runs two queries over the targeted suites built around each of them (then a few random databases), repairs foreign keys, skips databases where either query errors, and reports a difference only when it repeats and is not a tie artefact on that database: both queries must return one result under every tie-break [`kumosql.tie_data`](../ties.md#refuting-on-one-database) tries, or one must and the other differ from it under all of them (`tie_aware=False` skips the check; `tie_artefacts=[]` collects the skipped databases). `engine="sqlite"` runs the SQL as written in SQLite for evals labelled by SQLite. The SQL-IQ judge, the Singh and Bedathur search, the SQLSolver family (QED, R-Bot, Cosette, mined Calcite) and the VeriEQL searcher call it after their own random search agrees. `KUMOSQL_TARGETED=0` turns it off for a baseline run.
 
 | Eval | Without | With | Notes |
 | --- | --- | --- | --- |
