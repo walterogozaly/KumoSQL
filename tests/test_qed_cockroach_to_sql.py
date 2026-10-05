@@ -160,3 +160,16 @@ def test_set_operations_and_distinct():
     assert "UNION ALL" in convert(both, both)["sql_a"]
     assert "SELECT DISTINCT" in convert({"distinct": both}, both)["sql_a"]
     assert "EXCEPT" in convert({"except": [project([col(0)]), project([col(1)])]}, both)["sql_a"]
+
+
+def test_opaque_column_ordinals_inside_an_apply_join_count_the_outer_columns():
+    # Right side of an apply join: ordinals 0..2 are the left scan's columns, 3..5 the right scan's own.
+    # Ordinal 2 is the LEFT scan's OID column; it used to be read as the right scan's own column 2, so a
+    # projection of it passed silently and the pair was converted with the wrong column.
+    scan = {"scan": 0}
+    outer_oid = {"correlate": {"kind": "INNER", "left": scan, "right": project([col(3), col(2)])}}
+    assert "(no exact encoding)" in skipped(project([col(0)], outer_oid), project([col(0)]))
+    # Ordinal 3 is the right scan's first column (an INT) and is read as c0 of the right side.
+    right_first = {"correlate": {"kind": "INNER", "left": scan, "right": project([col(3), col(4)])}}
+    sql = convert(project([col(0)], right_first), project([col(0)]))["sql_a"]
+    assert "t3.c0 AS c0, t3.c1 AS c1" in sql.replace("t2", "t3") or "t1.c0 AS c0, t1.c1 AS c1" in sql
