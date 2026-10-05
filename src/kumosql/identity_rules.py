@@ -12,6 +12,8 @@ One entry (:func:`identity_rules`) in the normalizer's rule list:
   null-rejecting conjunct of the same filter or of its derived table keeps non-NULL, a number, or
   arithmetic and casts of those), since ``p`` is then TRUE or FALSE. Repeated conjuncts are dropped.
   Only selects whose joins are all inner are read, so no column is null-extended.
+* ``union_all_repeats``: ``X UNION ALL X`` read by a select that cannot see repeated rows (DISTINCT, or
+  GROUP BY with MIN/MAX/DISTINCT aggregates only) is ``X``.
 * ``integer_decimal_casts``: ``CAST(i AS DECIMAL(p, s))`` of an integer expression ``i`` listed in a
   select list is ``i``. The value is unchanged; a value too large for the DECIMAL makes the cast an error
   in the engines, not another value, so the fold assumes every integer fits (the proof says so).
@@ -260,6 +262,49 @@ def truth_tests(select: exp.Select, not_null) -> exp.Expression | None:
     return copy if changed else None
 
 
+# --- repeated rows under a select that cannot see repeats ---------------------------------------
+
+
+def union_all_repeats(select: exp.Select) -> exp.Expression | None:
+    """``X UNION ALL X`` read by a duplicate-blind select is ``X``.
+
+    ``SELECT k, MIN(v) FROM (X UNION ALL X) GROUP BY k`` sees every row of ``X`` twice; MIN, MAX and
+    DISTINCT aggregates, and DISTINCT itself, give the same result for repeated rows
+    (:func:`kumosql.dedup_join_rules._duplicate_blind`). The operands must be the same text.
+    """
+
+    from .dedup_join_rules import _duplicate_blind
+
+    if not _duplicate_blind(select):
+        return None
+    from_ = _from(select)
+    if from_ is None:
+        return None
+    copy = select.copy()
+    changed = False
+    for source in [_from(copy).this] + [j.this for j in copy.args.get("joins") or []]:
+        if not isinstance(source, exp.Subquery) or not source.alias:
+            continue
+        union = source.this
+        while isinstance(union, exp.Paren):
+            union = union.this
+        if type(union) is not exp.Union or union.args.get("distinct"):
+            continue
+        operands = []
+        node = union
+        while type(node) is exp.Union and not node.args.get("distinct"):
+            operands.append(node.expression)
+            node = node.this
+            while isinstance(node, exp.Paren):
+                node = node.this
+        operands.append(node)
+        if len({_unparen(o).sql() for o in operands}) != 1:
+            continue
+        source.set("this", _unparen(operands[0]).copy())
+        changed = True
+    return copy if changed else None
+
+
 # --- integer casts to DECIMAL -------------------------------------------------------------
 
 
@@ -292,4 +337,4 @@ def integer_decimal_casts(select: exp.Select, types: dict, dialect: str, assumpt
 def identity_rules(select: exp.Select, keys=None, not_null=None, types=None, dialect: str = "bigquery", assumptions: set[str] | None = None) -> exp.Expression | None:
     """The rules of this module, as one entry of the normalizer's rule list."""
 
-    return key_distinct_aggregates(select, keys, not_null) or truth_tests(select, not_null) or integer_decimal_casts(select, types or {}, dialect, assumptions)
+    return key_distinct_aggregates(select, keys, not_null) or truth_tests(select, not_null) or union_all_repeats(select) or integer_decimal_casts(select, types or {}, dialect, assumptions)

@@ -95,10 +95,10 @@ class _View:
 
 
 def _ref(node: exp.Expression) -> exp.Column | None:
-    """The qualified plain column an output expression is, or None."""
+    """The plain column an output expression is, or None."""
 
     node = node.this if isinstance(node, exp.Alias) else node
-    return node if isinstance(node, exp.Column) and node.table and not isinstance(node.this, exp.Star) else None
+    return node if isinstance(node, exp.Column) and not isinstance(node.this, exp.Star) else None
 
 
 def _view(source: exp.Expression, facts: Facts, depth: int = 0) -> _View | None:
@@ -132,7 +132,8 @@ def _view(source: exp.Expression, facts: Facts, depth: int = 0) -> _View | None:
     table = next(iter(views.values())).table
 
     def resolve(column: exp.Column) -> str | None:
-        view = views.get(column.table.lower())
+        qualifier = column.table.lower() or (next(iter(views)) if len(views) == 1 else "")  # a lone source needs no qualifier
+        view = views.get(qualifier)
         return None if view is None else view.column(column.name.lower())
 
     for join in inner.args.get("joins") or []:
