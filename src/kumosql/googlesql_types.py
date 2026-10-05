@@ -770,6 +770,7 @@ class _Typer:
         self.text = text
         self.exact_text = exact_text  # ``text`` is the SQL the caller wrote, not regenerated from a tree
         self._format_casts: dict[int, dict[int, GType]] = {}
+        self.with_variables: list[dict[str, T]] = []  # the variables of the enclosing WITH(..) expressions
         self.types: dict[int, tuple[exp.Expression, GType | None]] = {}
         self.relations: dict[int, tuple[exp.Expression, tuple[Column, ...] | None]] = {}
         self.findings: list[Finding] = []
@@ -831,6 +832,12 @@ class _Typer:
         if len(direct) != len(nodes):
             return {}
         return {id(n): GType(w) for n, w in zip(direct, written)}
+
+    def with_variable(self, name: str) -> T:
+        for env in reversed(self.with_variables):
+            if name.strip("`").lower() in env:
+                return env[name.strip("`").lower()]
+        return UNKNOWN
 
     def datatype(self, node) -> GType | None:
         return from_datatype(node, self.ambiguous, self.renames)

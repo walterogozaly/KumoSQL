@@ -356,6 +356,8 @@ def type_call(typer, node: exp.Expression, scope, ctes) -> T:
         if path[0] == "SAFE":  # SAFE.fn(..) has the type of fn(..); only the error becomes NULL
             path = path[1:]
         return _named(typer, node.expression, ".".join(path + [name]), scope, ctes)
+    if isinstance(node, exp.Anonymous) and node.this == "__KUMO_WITH__" and len(node.expressions) >= 2:
+        return with_expression(typer, node, scope, ctes)
     if isinstance(node, exp.Extract):
         return extract(typer, node, scope, ctes)
     if isinstance(node, exp.StrToTime) and not (node.meta if node._meta is not None else {}).get("name"):  # noqa: SLF001
@@ -369,7 +371,9 @@ def type_call(typer, node: exp.Expression, scope, ctes) -> T:
         return UNKNOWN
     if isinstance(node, exp.Identifier):
         return _lambda_parameter(typer, node, scope)
-    if isinstance(node, (exp.Var, exp.Star, exp.Placeholder, exp.Parameter, exp.JSONPath, exp.Lambda)):
+    if isinstance(node, exp.Var):
+        return typer.with_variable(node.name)  # a WITH expression's variable (bigquery_syntax turns its uses into Var)
+    if isinstance(node, (exp.Star, exp.Placeholder, exp.Parameter, exp.JSONPath, exp.Lambda)):
         return UNKNOWN
     if not isinstance(node, exp.Func):
         _visit_children(typer, node, scope, ctes)
@@ -379,6 +383,26 @@ def type_call(typer, node: exp.Expression, scope, ctes) -> T:
         _visit_children(typer, node, scope, ctes)
         return UNKNOWN
     return _named(typer, node, name, scope, ctes)
+
+
+def with_expression(typer, node: exp.Anonymous, scope, ctes) -> T:
+    """``WITH(a AS e1, b AS e2, result)`` (written by bigquery_syntax as ``__KUMO_WITH__(__KUMO_WITH_VARIABLE__('a', e1),
+    .., result)``): each variable has the type of its expression, seen by the ones after it and by the result, and the
+    expression has the type of the result."""
+
+    *definitions, result = node.expressions
+    env: dict[str, T] = {}
+    typer.with_variables.append(env)
+    try:
+        for definition in definitions:
+            if not (isinstance(definition, exp.Anonymous) and definition.this == "__KUMO_WITH_VARIABLE__"
+                    and len(definition.expressions) == 2 and definition.expressions[0].is_string):
+                return UNKNOWN
+            value = typer.expr(definition.expressions[1], scope, ctes)
+            env[definition.expressions[0].this.strip("`").lower()] = _plain(value)
+        return _plain(typer.expr(result, scope, ctes))
+    finally:
+        typer.with_variables.pop()
 
 
 def _namespace(node) -> list[str] | None:
