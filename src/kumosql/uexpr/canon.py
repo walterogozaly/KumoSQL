@@ -73,7 +73,18 @@ def _rename(n, m: dict):
 def _masked(n, bound: set) -> str:
     """``repr`` with the given bound variables replaced by placeholders (names do not count)."""
 
-    return repr(_rename(n, {v: _placeholder(v) for v in bound}))
+    mapping = {v: _placeholder(v) for v in bound}
+    for v in _walk(n):
+        if isinstance(v, SVar) and v.kind == "param":
+            mapping[v] = SVar(0, "param")
+    return repr(_rename(n, mapping))
+
+
+def _pkey(n) -> tuple:
+    """A sort key that ignores the names of lifting parameters (their ids depend on the order of discovery)."""
+
+    params = {v: SVar(0, "param") for v in _walk(n) if isinstance(v, SVar) and v.kind == "param"}
+    return (repr(_rename(n, params)), repr(n)) if params else (repr(n), "")
 
 
 def _factors(body) -> list:
@@ -121,7 +132,7 @@ def _canon(n, namer: _Namer):
             if v not in order:
                 order.append(v)
         m = {v: namer.inner(v) for v in order}
-        factors = sorted((_rename(f, m) for f in factors), key=repr)
+        factors = sorted((_rename(f, m) for f in factors), key=_pkey)
         body = factors[0] if len(factors) == 1 else NMul(tuple(factors))
         return NSum(tuple(m[v] for v in order), body)
     if isinstance(n, Agg):
@@ -134,12 +145,17 @@ def _canon(n, namer: _Namer):
         body = _canon(n.body, namer)
         out = namer.inner(n.out)
         return Scalar(out, _rename(body, {n.out: out}))
-    if isinstance(n, (NAdd, And, Or)):
-        args = sorted((_canon(a, namer) for a in n.args), key=repr)
+    if isinstance(n, NAdd):
+        # The numbers a summand's bound variables get depend on the order the summands are visited in:
+        # order them first by their form under numbering of their own, then number them in that order.
+        ordered = sorted(n.args, key=lambda a: _pkey(_canon(a, _Namer())))
+        return NAdd(tuple(sorted((_canon(a, namer) for a in ordered), key=_pkey)))
+    if isinstance(n, (And, Or)):
+        args = sorted((_canon(a, namer) for a in n.args), key=_pkey)
         return type(n)(tuple(args))
     if isinstance(n, Same):
         a, b = _canon(n.a, namer), _canon(n.b, namer)
-        return Same(*sorted((a, b), key=repr))
+        return Same(*sorted((a, b), key=_pkey))
     vals = [_canon(getattr(n, f.name), namer) for f in fields(n)]
     return type(n)(*vals)
 
