@@ -404,6 +404,66 @@ class SqlfluffRefusals(Adapter):
                     source=(case.sql, result.sql), dialect="bigquery", meta={"rule": item["rule"], "status": result.verification.status.value})
 
 
+# --- analytical SQL coverage ----------------------------------------------------------------------------------------------------
+
+
+class AnalyticalCoverage(Adapter):
+    """The proven cleanup and formatter rewrites of ``tools/analytical_coverage.py`` (``--split all --limit 60``).
+
+    The eval converts each Postgres benchmark query to BigQuery, runs ``CLEANUP_RULES`` and ``format_sql``, and executes
+    original and every changed rewrite on generated tables for the corpus's schema (``check_result_equivalence``: the
+    BigQuery text prepared for DuckDB over that schema). A rewrite counts when its verification is trusted. The
+    self-equivalence "proofs" of the prover stage (a query against itself) are not pairs and are not re-checked."""
+
+    name = "analytical-sql-coverage"
+    stages = ("cleanup", "format")
+
+    def items(self) -> list[dict]:
+        import analytical_coverage as ac
+        import benchmark_corpora as corpora
+
+        out = []
+        for corpus in corpora.corpora():
+            for qid, _text in ac.sample(corpus, 60, "all"):
+                for stage in self.stages:
+                    out.append({"pair": f"{qid}#{stage}", "corpus": corpus, "qid": qid, "stage": stage, "held_out": corpora.held_out(qid)})
+        return out
+
+    def case(self, item: dict) -> Case | None:
+        import analytical_coverage as ac
+        import benchmark_corpora as corpora
+        from kumosql import rewrite
+        from kumosql.result_equivalence import _local_name, prepare_statements
+
+        new_evals_b._install()
+        text = dict(corpora.queries(item["corpus"]))[item["qid"]]
+        schema = corpora.schema(item["corpus"])
+        if schema is None:
+            return None
+        try:
+            sql = corpora.to_bigquery(text)
+            if item["stage"] == "cleanup":
+                result = rewrite.apply_rules(ac.cov.CLEANUP_RULES, sql)
+            else:
+                result = rewrite.apply_rule("format_sql", sql)
+        except Exception:  # noqa: BLE001
+            return None
+        if result.sql == sql or not result.verification.trusted:
+            return None
+        sides = []
+        for each in (sql, result.sql):
+            statements, target = prepare_statements(each, schema, run_tag="runner")
+            if len(statements) != 1 or target is not None:
+                return None
+            sides.append(statements[0])
+        tables = {}
+        for name, columns in schema.items():
+            tables[_local_name(name)] = Table(_local_name(name), [new_evals_b._bq_column(c, kind) for c, kind in columns.items()])
+        return Case(self.name, item["pair"], sides[0], sides[1], tables, setup=dr.bigquery_setup(), held_out=item["held_out"],
+                    source=(sql, result.sql), dialect="bigquery",
+                    meta={"stage": item["stage"], "status": result.verification.status.value})
+
+
 ADAPTERS = {
     a.name: a
     for a in [
@@ -415,6 +475,7 @@ ADAPTERS = {
         SampleRewrites("sample-databases-oracle_co-rewrites", ("oracle_co",)),
         SampleRewrites("sample-databases-oracle_hr-rewrites", ("oracle_hr",)),
         SqlfluffRefusals(),
+        AnalyticalCoverage(),
         TransformationWorkloads(),
         JobForms(),
     ]

@@ -253,3 +253,10 @@ def test_numeric_pair_without_a_faithful_duckdb_reading_is_unrunnable_not_a_diff
     assert case is not None and case.meta["faithful"] is False
     record = engine.recheck(case, budget=20, seconds=20)
     assert record["verdict"] == "unrunnable"
+
+
+def test_analytical_coverage_lists_two_stages_per_query_without_data(tmp_path, monkeypatch):
+    monkeypatch.setenv("KUMOSQL_BENCH_DIR", str(tmp_path))
+    adapter = nbp.ADAPTERS["analytical-sql-coverage"]
+    assert adapter.stages == ("cleanup", "format")
+    assert adapter.items() == []  # no corpus fetched: nothing to list
