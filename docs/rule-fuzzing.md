@@ -48,7 +48,7 @@ false proofs: shadowed aliases and scopes, global aggregates, ROLLUP/CUBE/GROUPI
 windows and QUALIFY, set operations with ORDER/LIMIT tails, correlated subqueries, CTEs that shadow tables, USING
 joins), `fuzz` (both sides of `tools/soundness_fuzz.py` template pairs), `evals` (the non-held-out queries of the
 SQLSolver, QED, mined Calcite, R-Bot, TPC-H and TPC-C evals; held-out pairs are never read) and `target:<module>`
-(`tools/rule_fuzz_targets/<module>.py`, template generators that expose `cases(seed, count)`; `count` is per module). The modules are `aggregates` (aggregate, eager-aggregation, regrouping and keyed rules), `distinct_sets` (DISTINCT, dedup joins, set operations and set splits), `outer_joins`, `grouping_windows` (grouping sets, windows, QUALIFY, LIMIT rules, empty relations) and `scalars` (casts, integer division, dates, LIKE, quantified comparisons, scalar subqueries, UNNEST, constant folding). A template is SQL with `{a|b|c}` choice groups (`tools/rule_fuzz_targets/_base.py`). A query
+(`tools/rule_fuzz_targets/<module>.py`, template generators that expose `cases(seed, count)`; `count` is per module). The modules are `aggregates` (aggregate, eager-aggregation, regrouping and keyed rules), `distinct_sets` (DISTINCT, dedup joins, set operations and set splits; `_setop_templates.py` adds the ALL and DISTINCT chains, EXCEPT ALL and INTERSECT ALL multiplicities, operands that keep an ORDER BY / LIMIT on their parentheses, empty and constant branches, GROUP BY operands, derived set operations under filters, joins, aggregates and IN / EXISTS, CASE join keys, BY NAME and CORRESPONDING, mixed column types, and cut branches of a UNION ALL; a template starting with `@duckdb ` is read in the DuckDB dialect), `outer_joins`, `grouping_windows` (grouping sets, windows, QUALIFY, LIMIT rules, empty relations) and `scalars` (casts, integer division, dates, LIKE, quantified comparisons, scalar subqueries, UNNEST, constant folding). A template is SQL with `{a|b|c}` choice groups (`tools/rule_fuzz_targets/_base.py`). A query
 that `normalize` cannot print faithfully (`LossySql`) still has its earlier firings checked.
 
 `tests/fixtures/rule_fuzz/known_rule_bugs.json` lists open bugs the run should not fail on; a thread that fixes one
@@ -72,3 +72,14 @@ branch lost its only aggregate and went from one row to a row per input row) and
 (`EXISTS (SELECT 1 FROM u GROUP BY ())` lost its grand-total row). All four are fixed with regression tests.
 About 8,000 template cases over the aggregate, distinct and set, outer-join, grouping and window, and scalar
 generators fired about 70 rules and found nothing else.
+
+The set-operation sweep ([#518](https://github.com/walterogozaly/KumoSQL/issues/518)) found three more, all fixed with
+regression tests:
+
+- `merge_same_source` and `set_operation_to_exists` unwrapped the parentheses of an operand and lost an `ORDER BY` /
+  `LIMIT` that sqlglot keeps on them (`((SELECT x FROM t) ORDER BY x LIMIT 1) INTERSECT DISTINCT ...` became a plain
+  filter), and `push_filter_into_set_operation` pushed a filter below such a cut
+  (`tests/test_set_operand_tail_rules.py`).
+- `split_distinct_select` found the `x IN (SELECT CASE ...)` it had judged by comparing SQL text in its copy, so a
+  look-alike test in a nested select was split instead, where only TRUE counting no longer holds
+  (`tests/test_set_split_scope.py`).
