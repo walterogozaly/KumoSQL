@@ -22,6 +22,7 @@ This folder is the plain-language companion to [the full documentation](../docs/
 | Clean up one query | [Rewrite rules](rewrite-rules.md) |
 | Understand whether two queries match | [Provers](provers.md) |
 | Understand singleton joins and nested UNION identities in a proof | [Singleton aggregation and set identity](singleton-and-set-identity.md) |
+| Understand how arrays taken apart and rebuilt are compared | [ARRAY and UNNEST round trips](nested-array-roundtrip.md) |
 | See how rewrites are double-checked | [Proof safeguards](proof-safeguards.md) |
 | See how KumoSQL checks it read a query correctly | [Parser checks](parser-checks.md) |
 | See when two queries match only if some facts hold | [Equivalent under conditions](conditional-equivalence.md) |

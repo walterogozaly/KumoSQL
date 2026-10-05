@@ -12,6 +12,7 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Connecting Dataform repositories](dataform-repositories.md) | Private repositories through local `git`, the data folder, logging and diagnostics, production schedules |
 | [Rewrite rules](rewrite-rules.md) | The rule registry and the subquery lifter |
 | [Singleton aggregation and set identity](singleton-and-set-identity.md) | Key-fixed aggregation and scoped set-tree identity, with explicit collation conditions |
+| [ARRAY and UNNEST round trips](nested-array-roundtrip.md) | `ARRAY(SELECT .. ORDER BY offset)` of an UNNEST, UNNEST of a round trip and UNNEST of literals as a UNION ALL, with the soundness conditions |
 | [Equivalence provers](provers.md) | Structural prover, synthetic-data comparison, Z3, the algebraic prover and SQLSolver |
 | [Proof safeguards](proof-safeguards.md) | The independent predicate, CTE, parenthesis, DISTINCT, qualification, layout, subquery-lift and prover column-resolution checkers, the checker registry, Dataform expressions in proofs, and what is not covered yet |
 | [Parser checks](parser-checks.md) | A second reading of every query a proof depends on, checked against MySQL, DuckDB and BigQuery, and what sqlglot gets wrong |
