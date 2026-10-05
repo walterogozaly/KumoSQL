@@ -54,6 +54,7 @@ kumosql-refactor = "kumosql.refactor:main"
 minimize-tables = "kumosql.table_minimizer:main"
 reduce-project = "kumosql.project_reduction:main"
 kumosql-shared-model = "kumosql.shared_models:main"
+kumosql-model-proposals = "kumosql.model_proposals:main"
 
 [build-system]
 requires = ["setuptools>=68"]

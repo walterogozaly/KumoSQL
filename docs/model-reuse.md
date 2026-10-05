@@ -73,6 +73,38 @@ Cases: `tests/fixtures/decomposition/cases.json` (`tools/make_decomposition_case
 
 Weighted averages (a per-group `AVG` and its `COUNT`) are rebuilt as `SUM(a * n) / NULLIF(SUM(n), 0)`. Open: standard deviation from a summary (`STDDEV_POP` from sums of squares needs a square-root identity the prover does not do). AVG assumes `/` is fractional division (BigQuery, DuckDB), as the prover already does.
 
+## Proposals for a Dataform project
+
+`kumosql.model_proposals.propose_model_reuse(pipeline)` and `python -m kumosql model-proposals DIR` list "model A can read model B" proposals for a loaded Dataform project. This is offered to the Dataform project refactoring workflow (the [Refactor](refactor.md) page and [Refactoring proposals](cost-and-change-reports.md#cost-change-reports-and-refactoring-proposals)); it is available through the API and the command line only, with no UI page yet, and it never edits the project.
+
+It asks `rewrite_over_model` of each pair of models. The proposer only proposes: a pair is listed only when the prover proved A's query equal to the replacement with B's query substituted for the read of B (`rewritten`). Nothing unproven is listed, the order and every figure are deterministic, and no file is written and no cloud service is called. Each proposal carries:
+
+* the replacement SQL in BigQuery, reading B by its table name (`replacement_sql`), and the same text with Dataform's `${ref("dataset", "name")}` (`replacement_sql_dataform`); B keeps the alias `mv0` the columns are qualified with, and the output columns are renamed to A's own names, because the prover compares columns by position and A's consumers read them by name;
+* the strategy that built it (`spj-filter`, `aggregate-rollup`, `projection`, ...) and the assumptions the proof rests on;
+* `saving`: an estimate of bytes saved per run, from metadata supplied with the project and never invented (below);
+* `conflicts`: the proposals that cannot be applied together with this one (the same reader, or two edits that would make a dependency cycle).
+
+**Estimate of bytes saved.** The loaded project carries no table sizes or costs of its own, so the estimate uses what you supply: `--table-bytes FILE` (`table_bytes=`, a JSON object of table name to size in bytes) and `--jobs FILE` (`jobs=`, exported job history as for the cost view, attributed to models by `kumosql.costs`). `bytes_saved` is signed and has `basis: "estimate"`:
+
+| Known | `bytes_saved` | `at_most_bytes` |
+| --- | --- | --- |
+| A's measured billed bytes (mean per run) and B's size | A's billed bytes per run minus B's size | A's billed bytes per run |
+| Sizes of every table A reads (each reference counted) and B's size | the sum of those sizes minus B's size | the sum of those sizes |
+| A's cost known, B's size not | `null` (unknown) | A's cost |
+| B is a view | `null`: reading a view runs its query again, so no scan is saved | `null` |
+| Anything else | `null` (unknown), with the reason | `null` |
+
+B is assumed to be read whole, the worst case for the saving; column and partition pruning make the real figures differ, and a negative value says B is larger than what A scans (a regression, kept, ordered last). `at_most_bytes` is what A scans today, so the saving cannot exceed it. Billed bytes include BigQuery's rounding up. These are planning figures, not measured savings: measure before and after a change.
+
+**What is not offered.** A model is read as its query only when its stored rows are what the query returns, so these are never a reader or a source: incremental and unknown-type models, models with pre or post operations, scripts, disabled models, SQL the loader could not resolve (unresolved `${...}`), and anything with a clock, `RAND`, a UUID or an unordered `LIMIT`. Also skipped: a pair that shares no source table, a model A already reads, a source that depends on A (a cycle), and a proven rewrite that keeps other tables of A beside B (those pieces are not offered yet) or whose replacement cannot be renamed back to A's columns. The report counts these under `counts.skipped` (counts only). A pair that is not listed is not shown to be impossible: the matcher declines what it cannot prove, and the proposals improve as `rewrite_over_model` reads more shapes. Tables with the same bare name in two datasets are not in the prover's schema, so a query over them gets fewer proofs rather than a wrong one.
+
+```shell
+python -m kumosql model-proposals path/to/dataform --table-bytes sizes.json --jobs jobs.json
+python -m kumosql model-proposals path/to/dataform --json --reader daily_revenue
+```
+
+`--source-schema`, `--reader` and `--model` (repeatable), `--timeout-ms` and `--json` are the other options. Tests: `tests/test_model_proposals.py` (synthetic projects, including a pair with no rewrite, a run of both queries on the same rows, and every estimate case).
+
 ## Prover changes made for these evals
 
 * `eager_aggregation.unnest_grouped_source` handles `SUM` of a per-group `COUNT(x)` and `HAVING`, and replaces calls by identity (equal calls are distinct nodes).

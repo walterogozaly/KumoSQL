@@ -30,3 +30,19 @@ Averages need the sum and count: averaging daily averages gives the wrong weight
 This rebuilding is called aggregate decomposition. The report checks whether the existing summary kept enough information, then proves a supported replacement or declines it.
 
 These checks depend on the schema, declared constraints, and the features the prover supports. The full guide contains API signatures and regression examples. [Pipeline analysis](pipeline-analysis.md) explains how to find candidate overlaps and rollups across a project.
+
+## 4. Which models in my project could read another model?
+
+For a loaded Dataform project, `python -m kumosql model-proposals DIR` goes through the pairs of models and lists "model A can read model B" for every pair where the prover proved the answer is the same. Each entry shows the replacement SQL, the assumptions behind the proof and a rough estimate of the bytes saved per run. It is a list of suggestions for the Dataform project refactoring workflow: it changes no file, and there is no screen for it yet.
+
+For example, if `wide_orders` keeps all orders with an amount and `paid_totals` sums the paid ones from the same raw table, the list can say `paid_totals` could read `wide_orders` and show the shorter query. A model that dropped rows or columns the other one needs is simply not listed.
+
+Limits to keep in mind:
+
+- Only proven pairs appear. A pair that is missing is not shown to be impossible; the matcher gives up on shapes it cannot read yet.
+- The savings come only from numbers you supply (table sizes and exported job history). Without them the figure says `unknown`; it is never guessed. Even with them it is a planning estimate that assumes the whole other table is read, so measure before and after you change anything.
+- Reading a view saves nothing, because the view runs its query again.
+- Models that run incrementally, run extra statements, use the clock or random values, or take an unordered `LIMIT` are left out.
+- Applying one proposal can rule out another (two models that could each read the other, for instance); each entry names the ones it conflicts with.
+
+See the [full reference](../docs/model-reuse.md#proposals-for-a-dataform-project) for the options, the exact estimate rules and the recorded tests.
