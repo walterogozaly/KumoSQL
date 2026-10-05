@@ -52,7 +52,7 @@ SQLSolver, QED, mined Calcite, R-Bot, TPC-H and TPC-C evals; held-out pairs are 
 that `normalize` cannot print faithfully (`LossySql`) still has its earlier firings checked.
 
 `tests/fixtures/rule_fuzz/known_rule_bugs.json` lists open bugs the run should not fail on; a thread that fixes one
-deletes its entry. `tests/test_rule_fuzz.py` checks that the harness sees an unsound rewrite, ignores a `LIMIT` cut
+deletes its entry. `tests/test_rule_fuzz_targets_reach.py` traces a few cases per targeted module (no DuckDB) and fails when a module stops reaching its rules, which happens when an earlier rewrite folds its shape first. `tests/test_rule_fuzz.py` checks that the harness sees an unsound rewrite, ignores a `LIMIT` cut
 among ties, and finds nothing on a small seeded generated run.
 
 ## Limits
