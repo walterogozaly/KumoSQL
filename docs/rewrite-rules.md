@@ -14,6 +14,8 @@ Not registry rules: rewrites `algebraic_equivalence.normalize` applies to both s
 
 Further guards: a derived table that is read twice (once for the rows, once for the groups) must give the same rows both times, so one with a `LIMIT`, `OFFSET`, `ORDER BY` or window is left alone, as is a `SUM` or `AVG` whose argument is a known floating-point column. A rewrite that fires records `window_aggregate_joins.WINDOW_JOIN_ASSUMPTION` in the proof's assumptions: a join and `PARTITION BY`/`GROUP BY` compare keys alike (no `NaN` keys where the type is unknown, one collation), and a floating-point `SUM` of unknown type adds in one order.
 
+The rule fuzzer (`--corpus target:window_joins`) also found a bug in an older rule, now fixed: `_inline_constant_columns` replaced a constant derived column in `ORDER BY` with a literal, which then read as a column ordinal (`ORDER BY g.a` with `a` = `1` became `ORDER BY 1`); it now drops the constant sort key.
+
 Tests: `tests/test_window_joins.py`: every proven pair also runs on DuckDB (`SET threads=1`, BigQuery semantics from `bigquery_on_duckdb`) over databases that keep the declared key and NOT NULL columns and put ties, NULL keys and NULL values in the rest, and so does the rewritten text; every pair that differs carries a witness database; every window the rules decline (one case per precondition) is checked to survive `normalize` untouched. Limits: a neighbour condition that is not `column ± integer literal` between two `ROW_NUMBER()` columns is compared as written; correlated-subquery spellings of `LAG` (the previous row by `MAX(id)` below the current one) are not covered; the declared key is trusted as everywhere in the prover.
 
 ## Rewrite rules
