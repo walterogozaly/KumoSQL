@@ -148,3 +148,34 @@ Every row stays in the denominator. A row is credited only when it parses strict
 `q09` and `q21` are still lifted, but the rewrite is `unproven` (see *Inputs BigQuery would reject*) and they are counted as invalid inputs, not credited.
 
 Set `KUMOSQL_TEST_FIXTURE` to score another CSV or JSON fixture. A requested path that does not exist fails the test instead of skipping it, and the fixture must be a non-empty list of rows with unique non-empty ids (`id`, or `record_id` in a CSV) and non-empty `sql_text` strings. Labels for it come from `KUMOSQL_TEST_FIXTURE_EXPECTED` or a sibling `<name>.expected.json` in the same format; without labels every row must still parse strictly and leave no relational subquery, and the other outcomes are only reported. `tests/test_generic_fixture.py` separately checks the sample file's shape.
+
+## Window idioms the prover reads alike
+
+The equivalence prover (`prove_equivalent_algebraic`) normalizes both queries before comparing them. One of its normalization rules reads the "first row of each group" idioms of [Window functions and ties](ties.md) and gives them one spelling. It is exact only under the preconditions below; when one cannot be shown the rule leaves the query alone, which at worst leaves a pair unproven. It is not a user-facing rewrite rule (no `apply_rule` name): it runs inside `normalize`, as one entry.
+
+### Latest row per key: `src/kumosql/latest_row_rules.py`
+
+These spellings are read as the join of the table to `SELECT k, MAX(o) FROM t GROUP BY k` (`MIN` for an ascending order) on `k` and `o`, the form the prover already proves equal to the correlated `o = (SELECT MAX(o) FROM t u WHERE u.k = t.k)`:
+
+- `QUALIFY ROW_NUMBER() OVER (PARTITION BY k ORDER BY o) = 1` (also `RANK`, `DENSE_RANK`, `<= 1`, `< 2`; the other `QUALIFY` conditions stay conditions on the joined row), and the same window as a derived-table column kept by `WHERE rn = 1` (the derived table becomes the join and `rn` the literal 1, the outer filter stays);
+- `SELECT k, ARRAY_AGG(x ORDER BY o [DESC] LIMIT 1)[OFFSET(0)] .. GROUP BY k` (`ORDINAL(1)` and the `SAFE_` forms too) and `MAX_BY(x, o)` / `MIN_BY(x, o) .. GROUP BY k`, next to `MAX(o)` / `MIN(o)` of the same key;
+- a top-level `WHERE (k, o) IN (SELECT k, MAX(o) FROM t [WHERE w] GROUP BY k)` (any mix of group expressions and `MIN`/`MAX` calls, every group expression selected): the grouped table has one row per group and the left side pins all of them, so the join returns the same rows. `IN` and the join both compare with `=`, so no NULL or tie condition applies. `NOT IN`, an `OR`, a `HAVING`, another aggregate, a correlated subquery and an unselected group key are left alone.
+
+When the select reads only the partition and order expressions (`SELECT k, o`), the join to the grouped table is the table itself, so it is written `SELECT k, MAX(o) .. GROUP BY k`: for `ROW_NUMBER` always (one row per group whichever tied row is kept, and the select cannot tell them apart), for `RANK`/`DENSE_RANK` only when the order is total (otherwise they return every tied row, a `GROUP BY` one).
+
+| Precondition | Why | What happens without it |
+| --- | --- | --- |
+| One ordering key `o`, no frame | the join matches one extreme value | the query is left as written |
+| `ROW_NUMBER` (when the select reads more than the partition and order expressions), `ARRAY_AGG .. LIMIT 1` and `MAX_BY`/`MIN_BY`: the order is total (the `PARTITION BY`/`GROUP BY` expressions and `o` are unique over the rows read, by a declared key with `not_null=` or by what [output properties](output-properties.md) can show unique) | they keep *one* of the tied rows, the join keeps all of them | left as written (the join would return every tied row) |
+| `RANK`, `DENSE_RANK` | every peer of the first row has rank 1, and the join keeps every row with the extreme `o`, so no key is needed | rewritten without one |
+| NULL placement: an order that puts NULL first (BigQuery and MySQL ascending, or `NULLS FIRST`) needs `o` provably NOT NULL; an order that puts NULL last needs nothing (the null-safe `o <=> g.m` also matches a group of only NULLs) | `MIN`/`MAX` skip NULL, an ordering does not | left as written |
+| `MAX_BY`/`MIN_BY` need `o` and `x` NOT NULL | they skip rows whose ordering value is NULL and return NULL for a group of only NULLs; engines also read a NULL `x` at the maximum differently (DuckDB skips the row), so a DuckDB check could not vouch for the rewrite | left as written |
+| `o` and the partition are not (and do not compute) a FLOAT64 | `ORDER BY` puts NaN first, `MAX` of a NaN is NaN | left as written |
+| One plain table, no star, a `WHERE` with no subquery or random function, no other window or aggregate, every other grouped output built from the `GROUP BY` expressions, a `GROUP BY` or `PARTITION BY` that is not empty | the `WHERE` is evaluated twice (once for the groups, once for the rows), and a global aggregate returns a row over no input where a window returns none | left as written |
+| `ARRAY_AGG` is not `IGNORE NULLS` or `DISTINCT`, the index is the first element | those are different values | left as written |
+
+Partition keys are compared null-safely (`<=>`), or with `=` where the column is provably NOT NULL.
+
+### Checks
+
+`tests/test_latest_row_rules.py` runs every rewrite on DuckDB (one thread, optimizer off) over random databases with ties, NULLs and empty tables that respect the declared keys, show for each refusal a database on which the refused rewrite changes the result, and check which pairs the prover proves and which it must not (including the LeetCode "first login" shapes under MySQL). `tools/rule_fuzz.py run --corpus target:latest_rows` fuzzes the rule at the rule level. On the development sample of the VeriEQL LeetCode suite (every 24th pair, the sample its search settings were tuned on) the prover proved 0 of the 76 window pairs before these rules; see [VeriEQL](evals/verieql.md) for the current count.

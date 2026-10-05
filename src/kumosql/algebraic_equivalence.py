@@ -55,6 +55,7 @@ from .having_rules import key_having_to_where
 from .window_canonical import canonical_windows
 from .unread_windows import drop_unread_windows
 from .window_rules import window_rules
+from .latest_row_rules import latest_row_to_grouped_join
 from .intersection_rules import collapse_counted_intersection, collapse_named_counted_intersection
 from .count_case_rules import fold_grouped_count_cases
 from .like_rules import drop_subsumed_like
@@ -4871,6 +4872,7 @@ def normalize(
     tree = _name_derived_columns(_lateral_joins(tree))
     if schema:
         tree = _expand_stars(tree, schema)
+    tree = latest_row_to_grouped_join(tree, keys, not_null, schema, types, dialect)
     tree = _isolate_windows(canonical_windows(drop_unread_windows(tree), types))
     if schema:
         # name each bare column's source before any rewrite reads a derived table as its base table, whose

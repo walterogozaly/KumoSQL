@@ -23,3 +23,5 @@ Almost all of a run is DuckDB answering both queries on many tiny databases. The
 The input can declare keys, non-NULL columns, and other restrictions. A database violating those restrictions is not a valid counterexample to a conditional claim. Read which constraints the prover models and which the execution generator enforces.
 
 The full guide documents translation, constraint handling, known non-equivalent pairs, commands, and separate proof/executed score rows. [Bounded verification](bounded-verification.md) covers KumoSQL's separate row-limited checker, inspired by the bounded approach used in VeriEQL's research.
+
+One measured effect of the window rules ([latest row per key](../rewrite-rules.md#window-idioms-the-prover-reads-alike)): on the development sample, 17 of the 76 pairs that use window functions are now proved equivalent (none were before), all of them "first row per player" queries written as `MIN`, `IN (SELECT MIN ...)` or `ROW_NUMBER`/`RANK`/`DENSE_RANK = 1`. The rest of the corpus was not rerun, so the headline score is unchanged; see the full guide for the details.
