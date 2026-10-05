@@ -269,6 +269,17 @@ def _is_lateral_join(node) -> bool:
     )
 
 
+def _normal_windows(node):
+    """``NTH_VALUE(x, 1)`` is ``FIRST_VALUE(x)`` over the same frame: spell it the second way."""
+
+    node = node.copy()
+    for call in list(node.find_all(exp.NthValue)):
+        offset = call.args.get("offset")
+        if isinstance(offset, exp.Literal) and not offset.is_string and offset.this == "1" and not call.args.get("from_first") and not call.args.get("from_last"):
+            call.replace(exp.FirstValue(this=call.this.copy()))
+    return node
+
+
 def _whole_number(node) -> int | None:
     if isinstance(node, exp.Literal) and not node.is_string and node.this.isdigit():
         return int(node.this)
@@ -309,7 +320,7 @@ _NONDETERMINISTIC = {
 _NONDETERMINISTIC_TYPES = {
     "AnyValue", "ApproxDistinct", "ApproxQuantile", "ArrayAgg", "CurrentDate", "CurrentDatetime", "CurrentTime",
     "CurrentTimestamp", "CurrentUser", "GroupConcat", "MaxBy", "MinBy", "ArgMax", "ArgMin", "Rand", "TableSample",
-    "Uuid", "Window", "WindowSpec", "StringAgg", "Randn",
+    "Uuid", "StringAgg", "Randn",
 }
 
 # Functions that return NULL whenever an argument is NULL (in every dialect we read).
@@ -364,6 +375,8 @@ class Translator:
         self.dialect = catalog.dialect
         self.exact = exact
         self.group_by_constants = group_by_constants
+        self.limit_sources = False  # a LIMIT query was read as an opaque relation named by its text
+        self.window_sources = False  # so was a select with a window function
         self.limit_sources = False  # a LIMIT query was read as an opaque relation named by its text
 
     # ---- entry ----------------------------------------------------------
@@ -442,20 +455,50 @@ class Translator:
                 return Query(q.out, ind(Exists(q.body)), q.names)
             rest = NMonus(q.body, NConst(Fraction(skip))) if skip else q.body
             return Query(q.out, NMin(rest, NConst(Fraction(count))), q.names)
+        self._closed(node, ctes)
+        q = self.query(bare, None, {})  # no outer scope: a correlated query is not one relation
+        # LIMIT 1 keeps at most one row, once: any two of its rows are the same row (the empty key).
+        return self._opaque("limit", node, q.names, [v.kind for v in q.out], at_most_one=count == 1 and not skip)
+
+    def _closed(self, node, ctes) -> None:
+        """Refuse a query that reads a CTE of the enclosing query: its text alone does not name the relation."""
+
         for table in node.find_all(exp.Table):
             if not table.db and not table.catalog and table.name.lower() in ctes:
-                raise Unsupported("a LIMIT query reading a CTE")
-        q = self.query(bare, None, {})  # no outer scope: a correlated query is not one relation
-        columns = [f"c{i}" for i in range(len(q.out))]
-        key = "limit!" + node.sql(dialect=self.dialect)
-        # LIMIT 1 keeps at most one row, once: any two of its rows are the same row (the empty key).
-        keys = ((),) if count == 1 and not skip else ()
-        self.catalog.tables[key] = TableInfo(key, columns, {c: v.kind for c, v in zip(columns, q.out)}, frozenset(), keys, ())
-        self.limit_sources = True
+                raise Unsupported("an opaque query reading a CTE")
+
+    def _opaque(self, label: str, node, names: list, kinds: list, at_most_one: bool = False) -> Query:
+        """The rows of ``node`` as a relation named by its text, with its columns read as they are.
+
+        Two queries that spell ``node`` alike (table aliases renamed by position) read the same
+        relation, whatever it holds: the same text over the same database returns the same rows.
+        """
+
+        from ..smt_equivalence import _canonical_aliases
+
+        columns = [f"c{i}" for i in range(len(names))]
+        key = f"{label}!" + _canonical_aliases(node, self.catalog.schema).sql(dialect=self.dialect)
+        keys = ((),) if at_most_one else ()
+        self.catalog.tables[key] = TableInfo(key, columns, dict(zip(columns, kinds)), frozenset(), keys, ())
+        if label == "window":
+            self.window_sources = True
+        else:
+            self.limit_sources = True
         x = TVar(fresh_id(), key)
-        out = tuple(SVar(fresh_id(), v.kind) for v in q.out)
-        body = nsum((x,), nmul(NRel(x), ind(conj(*[Same(Ref(o), Col(x, c, v.kind)) for o, c, v in zip(out, columns, q.out)]))))
-        return Query(out, body, q.names)
+        out = tuple(SVar(fresh_id(), k) for k in kinds)
+        body = nsum((x,), nmul(NRel(x), ind(conj(*[Same(Ref(o), Col(x, c, k)) for o, c, k in zip(out, columns, kinds)]))))
+        return Query(out, body, names)
+
+    def _window_select(self, node: exp.Select, outer, ctes) -> Query:
+        """A select with a window function is one opaque relation (``window_sources``): its values depend on
+        the whole input, and are not modeled."""
+
+        if outer is not None:
+            raise Unsupported("window function")
+        if any(isinstance(i, exp.Star) or (isinstance(i, exp.Column) and isinstance(i.this, exp.Star)) for i in node.expressions):
+            raise Unsupported("window function with a star select list")
+        self._closed(node, ctes)
+        return self._opaque("window", _normal_windows(node), [i.alias_or_name.lower() for i in node.expressions], [None] * len(node.expressions))
 
     def set_operation(self, node, outer, ctes) -> Query:
         for key in ("by_name", "side", "kind", "on"):
@@ -700,7 +743,7 @@ class Translator:
         if node.args.get("kind"):
             raise Unsupported("SELECT AS STRUCT/VALUE")
         if any(isinstance(e, exp.Window) for item in node.expressions for e in item.walk()):
-            raise Unsupported("window function")
+            return self._window_select(node, outer, ctes)
         group = node.args.get("group")
         having = node.args.get("having")
         grouped = group is not None or having is not None or any(_has_aggregate(e) for e in node.expressions)

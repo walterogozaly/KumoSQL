@@ -200,6 +200,7 @@ def prove_bag_equivalent(
         EXACT_ARITHMETIC_ASSUMPTION,
         LIMIT_SOURCE_ASSUMPTION,
         TIE_ASSUMPTION,
+        WINDOW_SOURCE_ASSUMPTION,
         SmtEquivalenceResult,
         SmtStatus,
         _split_limit,
@@ -264,6 +265,8 @@ def prove_bag_equivalent(
         assumptions.append(EXACT_ARITHMETIC_ASSUMPTION)
     if translator.limit_sources:
         assumptions.append(LIMIT_SOURCE_ASSUMPTION)
+    if translator.window_sources:
+        assumptions.append(WINDOW_SOURCE_ASSUMPTION)
     if catalog.used_constraints:
         assumptions.append(DECLARED_CONSTRAINTS_ASSUMPTION)
     return SmtEquivalenceResult(SmtStatus.PROVEN_EQUIVALENT, "proved by the bag procedure (multiplicity algebra)", assumptions=tuple(dict.fromkeys(assumptions)))
