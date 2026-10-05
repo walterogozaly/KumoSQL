@@ -10,7 +10,7 @@ result to the operand, and every column that is (``fv``) to nothing.
 columns that decide which rows match are read and counted as deciding. It is never printed, proven or run.
 
 The result columns are named as BigQuery names them (checked by dry run): a partition column keeps its name, any other partition
-expression is ``f0_``, ``f1_`` ... in the order they stand, and a name that is already taken becomes ``name_1``. Where the names
+expression is ``f0_``, ``f1_`` ... in the order they stand, and a name that stands again becomes ``name_1``, ``name_2``. Where the names
 cannot be told the form is refused (:class:`UnknownOutput`), which every caller already treats as a query it cannot trace.
 """
 
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from sqlglot import exp
 
-from .match_recognize import is_match_select
+from .match_recognize import MATCH_OPTIONS, is_match_select
 
 
 class UnknownOutput(Exception):
@@ -57,15 +57,17 @@ def output_names(match: exp.MatchRecognize) -> list[str]:
         if not isinstance(measure, exp.Alias) or not measure.alias:
             raise UnknownOutput("a MEASURES item without an alias")
         names.append(measure.alias)
+    # A name that stands again becomes ``name_1``, ``name_2`` ... in the order of its repeats (checked by dry run). Where one of
+    # those is also a name the clause writes, BigQuery's choice is not known, so the columns are not named.
+    written = [name.lower() for name in names]
+    seen: dict[str, int] = {}
     result: list[str] = []
-    taken: set[str] = set()
     for name in names:
-        unique = name
-        if unique.lower() in taken:
-            unique = f"{name}_1"
-            if unique.lower() in taken or unique.lower() in {n.lower() for n in names}:
-                raise UnknownOutput(f"{name} is used more than twice")
-        taken.add(unique.lower())
+        count = seen.get(name.lower(), 0)
+        seen[name.lower()] = count + 1
+        unique = name if count == 0 else f"{name}_{count}"
+        if count and (unique.lower() in written or unique.lower() in (r.lower() for r in result)):
+            raise UnknownOutput(f"{name} is used again and {unique} is also a name here")
         result.append(unique)
     return result
 
@@ -117,7 +119,10 @@ def _plain(select: exp.Select) -> exp.Select:
         projections.append(exp.alias_(value, target, quoted=False))
     deciding: list[exp.Expression] = []
     for item in _define_items(match):
-        deciding.append(_strip_variables((item.this if isinstance(item, exp.Alias) else item).copy(), variables))
+        condition = item.this if isinstance(item, exp.Alias) else item
+        if isinstance(condition, exp.Anonymous) and condition.name == MATCH_OPTIONS and condition.expressions:
+            condition = condition.expressions[0]  # the OPTIONS (...) that stand after the last condition are not a condition
+        deciding.append(_strip_variables(condition.copy(), variables))
     order = match.args.get("order")
     for key in (order.expressions if order is not None else []):
         deciding.append(exp.Is(this=_strip_variables(key.this.copy(), variables), expression=exp.Null()).not_())

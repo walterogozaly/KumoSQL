@@ -1,0 +1,1 @@
+select m.p, m.n from (select 1 as ts, 2 as v, 'a' as p) as t match_recognize (partition by p order by ts desc nulls last measures count(*) as n, last(v) as lv pattern (x{2,} | (y z)*? w?) define x as v > prev(v), y as v = 1, z as v = 2, w as v < 0) as m, unnest([1, 2]) as k
