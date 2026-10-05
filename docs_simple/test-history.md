@@ -18,6 +18,16 @@ python tools/run_tests.py --label "simple documentation" --target tests/test_doc
 
 `--target` records the intended test file in history. The final positional path chooses which tests actually run. Use `-j 2` to choose two workers or `-j 1` for a serial run.
 
+## What to run before merging
+
+For a code PR, first run the tests for the change and the benchmarks it affects, then `--quick` to check broadly. An improvement to one benchmark still needs checks for losses elsewhere when it touches shared prover or parser code. A documentation-only PR can just run the documentation checks.
+
+Before merging several code PRs together, run the full default suite once on their combined candidate, including the benchmark floors. Check that the results name that exact commit; changing the candidate means checking it again. This avoids repeating the entire suite for every separate PR. Tests marked `slow` are normally excluded, so run an affected slow check explicitly. Investigate failures and worker crashes before calling a batch passing.
+
+The Dell currently tests commits after they reach `master`. It is not yet connected to the pre-merge candidate, and GitHub does not currently force this gate. The person operating the merge train must arrange and inspect the candidate's tests before merging code changes.
+
+The optional SQLSolver cache reuses identical sample-data executions, but always reruns the prover and its targeted search for a difference. Use `--eval-cache off` for fresh execution checks. See the [full procedure](../docs/test-history.md#merge-testing-procedure) for coverage, score changes and evidence requirements.
+
 ## Other useful runs
 
 | Command option | What runs |
