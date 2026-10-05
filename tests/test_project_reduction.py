@@ -1,6 +1,7 @@
 """Project reduction: keep chosen outputs of a Dataform project and prove the smallest project that makes them."""
 
 import json
+import re
 import shutil
 import subprocess
 
@@ -198,13 +199,13 @@ def test_a_query_repeated_in_three_reports_becomes_one_shared_table(tmp_path):
     assert plain.added == [] and plain.score_after > result.score_after
 
 
-def test_project_variables_as_names_are_moved_and_as_values_kept_as_written(tmp_path):
+def test_project_variables_as_names_and_as_values_are_moved(tmp_path):
     files = {
         "workflow_settings.yaml": SETTINGS + "  raw_schema: raw\n",
         "definitions/sources/orders.sqlx": _declare("orders"),
-        # a variable as a value: the prover would read it as one more string, different from 'paid'
+        # a variable as a value: an unknown constant, the same wherever it is written, never the string 'paid'
         "definitions/stg_var.sqlx": _sqlx(
-            '  type: "view"', 'SELECT order_id, amount\nFROM ${ref("orders")}\nWHERE status = "${dataform.projectConfig.vars.paid}"'),
+            '  type: "view"', 'SELECT order_id, amount, status\nFROM ${ref("orders")}\nWHERE status = "${dataform.projectConfig.vars.paid}"'),
         "definitions/rpt_var.sqlx": _sqlx(
             '  type: "table"', "SELECT SUM(amount) AS total\nFROM ${ref(\"stg_var\")}\nWHERE status = 'paid' AND amount > 0"),
         # a variable in a table name: the same expression is the same table wherever it is written
@@ -215,14 +216,169 @@ def test_project_variables_as_names_are_moved_and_as_values_kept_as_written(tmp_
     root = _write(tmp_path / "vars", files)
     result = reduce_project(root, ["rpt_var", "rpt_name"], factor=False)
     assert result.verified
-    assert {"model": "shop.an.stg_var", "why": "uses a project variable or constant as a value, which the prover cannot read"} in result.fixed
-    assert result.moves == ["fold shop.an.stg_name into shop.an.rpt_name"]
+    assert not any(entry["model"] == "shop.an.stg_var" for entry in result.fixed)
+    assert "fold shop.an.stg_var into shop.an.rpt_var" in result.moves
+    assert "fold shop.an.stg_name into shop.an.rpt_name" in result.moves
     patched = _patched(tmp_path, root, result)
-    assert (patched / "definitions/stg_var.sqlx").read_text(encoding="utf-8") == files["definitions/stg_var.sqlx"]
     folded = (patched / "definitions/rpt_name.sqlx").read_text(encoding="utf-8")
     assert "`${dataform.projectConfig.vars.raw_schema}.orders`" in folded and "stg_name" not in folded
-    assert "__kumo_x_" not in folded and "__sqlx_token" not in folded
+    # the variable is written back as it was written, quotes included, and both conditions stay
+    value = (patched / "definitions/rpt_var.sqlx").read_text(encoding="utf-8")
+    assert '"${dataform.projectConfig.vars.paid}"' in value and "'paid'" in value and "stg_var" not in value
+    for text in (folded, value):
+        assert "__kumo_" not in text and "__sqlx_token" not in text
+    assert any("project variable" in a for a in result.to_json()["assumptions"])
     _git_apply(root, result.patch())
+
+
+# ------------------------------------------------------------------ project variables as values, run on DuckDB
+
+ORDERS_ROWS = [(1, 10, "paid"), (2, 20, "paid"), (3, 5, "free"), (4, 7, "x"), (5, 3, "x"), (6, 9, None)]
+VALUE_FILES = {
+    "workflow_settings.yaml": SETTINGS,
+    "definitions/sources/orders.sqlx": _declare("orders"),
+}
+VAR = "${dataform.projectConfig.vars.paid}"
+
+
+def _compile(root, value):
+    """``{name: SQL}`` of a project with ``paid`` bound to ``value``: ref() to names, the variable to its value."""
+
+    out = {}
+    for path in sorted((root / "definitions").rglob("*.sqlx")):
+        text = path.read_text(encoding="utf-8")
+        if '"declaration"' in text:
+            continue
+        body = re.sub(r'\$\{\s*ref\(\s*"(\w+)"\s*\)\s*\}', r"\1", text.split("}\n", 1)[1])
+        body = re.sub(r"\$\{\s*dataform\.projectConfig\.vars\.paid\s*\}", value, body)
+        assert "${" not in body, body
+        out[path.stem] = body.strip()
+    return out
+
+
+def _run(root, value, output):
+    duckdb = pytest.importorskip("duckdb")
+    connection = duckdb.connect()
+    connection.execute("CREATE TABLE orders(order_id INT, amount INT, status VARCHAR)")
+    connection.executemany("INSERT INTO orders VALUES (?, ?, ?)", ORDERS_ROWS)
+    pending = _compile(root, value)
+    while pending:
+        built = False
+        for name, sql in list(pending.items()):
+            try:
+                connection.execute(f"CREATE TABLE {name} AS {sql}")
+            except duckdb.CatalogException:
+                continue
+            del pending[name]
+            built = True
+        assert built, f"cannot build {sorted(pending)}"
+    return sorted(connection.execute(f"SELECT * FROM {output}").fetchall(), key=repr)
+
+
+def _same_on_other_bindings(original, patched, output):
+    """The kept output returns the same rows in both projects with the variable bound to each of three values."""
+
+    seen = []
+    for value in ("paid", "x", "never_used"):
+        rows = _run(original, value, output)
+        assert rows == _run(patched, value, output), value
+        seen.append(rows)
+    assert seen[0] != seen[1]  # the variable matters: a reduction that ignored it would show
+
+
+def test_a_variable_is_not_the_string_it_currently_holds(tmp_path):
+    # status = <paid> AND status = 'x' is not a contradiction when the variable is 'x'
+    files = {
+        **VALUE_FILES,
+        "definitions/stg_var.sqlx": _sqlx(
+            '  type: "view"', f'SELECT order_id, amount, status\nFROM ${{ref("orders")}}\nWHERE status = "{VAR}"'),
+        "definitions/rpt_x.sqlx": _sqlx(
+            '  type: "table"', "SELECT order_id, amount\nFROM ${ref(\"stg_var\")}\nWHERE status = 'x'"),
+    }
+    root = _write(tmp_path / "false_proof", files)
+    result = reduce_project(root, ["rpt_x"], factor=False)
+    assert result.verified and "fold shop.an.stg_var into shop.an.rpt_x" in result.moves
+    patched = _patched(tmp_path, root, result)
+    text = (patched / "definitions/rpt_x.sqlx").read_text(encoding="utf-8")
+    assert VAR in text and "'x'" in text
+    _same_on_other_bindings(root, patched, "rpt_x")
+
+
+def test_the_same_variable_in_two_models_is_the_same_value(tmp_path):
+    body = f'SELECT order_id, amount\nFROM ${{ref("orders")}}\nWHERE status = "{VAR}"'
+    files = {
+        **VALUE_FILES,
+        "definitions/lo.sqlx": _sqlx('  type: "view"', body),
+        "definitions/hi.sqlx": _sqlx('  type: "view"', body),
+        "definitions/rpt.sqlx": _sqlx(
+            '  type: "table"', 'SELECT l.order_id, l.amount + h.amount AS twice\n'
+                              'FROM ${ref("lo")} AS l\nJOIN ${ref("hi")} AS h ON l.order_id = h.order_id'),
+    }
+    root = _write(tmp_path / "same", files)
+    result = reduce_project(root, ["rpt"], factor=False)
+    assert result.verified and result.improved
+    assert result.actions_after == 1  # both views folded: the two copies of the variable are one value
+    patched = _patched(tmp_path, root, result)
+    text = (patched / "definitions/rpt.sqlx").read_text(encoding="utf-8")
+    assert f'"{VAR}"' in text and '${ref("lo")}' not in text and '${ref("hi")}' not in text
+    _same_on_other_bindings(root, patched, "rpt")
+
+
+def test_a_variable_and_the_literal_it_holds_are_not_merged(tmp_path):
+    files = {
+        **VALUE_FILES,
+        "definitions/by_var.sqlx": _sqlx(
+            '  type: "view"', f'SELECT order_id\nFROM ${{ref("orders")}}\nWHERE status = "{VAR}"'),
+        "definitions/by_literal.sqlx": _sqlx(
+            '  type: "view"', "SELECT order_id\nFROM ${ref(\"orders\")}\nWHERE status = 'paid'"),
+        "definitions/rpt.sqlx": _sqlx(
+            '  type: "table"', 'SELECT order_id FROM ${ref("by_var")}\nUNION ALL\nSELECT order_id FROM ${ref("by_literal")}'),
+    }
+    root = _write(tmp_path / "not_merged", files)
+    result = reduce_project(root, ["rpt"], factor=False)
+    assert result.verified
+    assert not any(move.startswith("merge") for move in result.moves)
+    patched = _patched(tmp_path, root, result)
+    text = (patched / "definitions/rpt.sqlx").read_text(encoding="utf-8")
+    assert VAR in text and "'paid'" in text
+    _same_on_other_bindings(root, patched, "rpt")
+
+
+def test_variables_in_lists_and_either_quote_survive_reduction_on_other_values(tmp_path):
+    files = {
+        **VALUE_FILES,
+        "definitions/stg.sqlx": _sqlx(
+            '  type: "view"',
+            'SELECT order_id, amount, status\nFROM ${ref("orders")}\n'
+            f"WHERE status IN (\"{VAR}\", 'free') AND amount > 0"),
+        "definitions/rpt.sqlx": _sqlx(
+            '  type: "table"',
+            'SELECT status, COUNT(*) AS n, SUM(amount) AS total\nFROM ${ref("stg")}\n'
+            f"WHERE status <> 'free' OR status = '{VAR}'\nGROUP BY status"),
+    }
+    root = _write(tmp_path / "lists", files)
+    result = reduce_project(root, ["rpt"], factor=False)
+    assert result.verified
+    patched = _patched(tmp_path, root, result)
+    text = (patched / "definitions/rpt.sqlx").read_text(encoding="utf-8")
+    assert "__kumo_" not in text and VAR in text
+    _same_on_other_bindings(root, patched, "rpt")
+
+
+def test_a_variable_inside_a_longer_string_stays_as_written(tmp_path):
+    files = {
+        **VALUE_FILES,
+        "definitions/stg_embedded.sqlx": _sqlx(
+            '  type: "view"', f'SELECT order_id, status\nFROM ${{ref("orders")}}\nWHERE status = "pre_{VAR}"'),
+        "definitions/rpt.sqlx": _sqlx('  type: "table"', 'SELECT COUNT(*) AS n\nFROM ${ref("stg_embedded")}'),
+    }
+    root = _write(tmp_path / "embedded", files)
+    result = reduce_project(root, ["rpt"], factor=False)
+    assert result.verified
+    fixed = {entry["model"]: entry["why"] for entry in result.fixed}
+    assert "longer string" in fixed["shop.an.stg_embedded"]
+    patched = _patched(tmp_path, root, result)
+    assert (patched / "definitions/stg_embedded.sqlx").read_text(encoding="utf-8") == files["definitions/stg_embedded.sqlx"]
 
 
 def test_config_assertions_are_listed_when_their_table_goes_and_kept_when_awaited(tmp_path):

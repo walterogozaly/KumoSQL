@@ -79,6 +79,22 @@ def test_positional_tokens_of_two_models_are_not_the_same_expression():
     assert not prove_equivalent(free, paid).proven
 
 
+def test_a_project_wide_variable_token_in_a_string_is_not_one_more_constant():
+    # Project reduction masks a movable ${...} as __kumo_x_<hash>__. In a string it is a value nobody knows
+    # (the false proof the first reduction eval found): it must not look different from 'paid'.
+    token = "__kumo_x_0123456789ab__"
+    filtered = f"SELECT n FROM t WHERE s = '{token}' AND s = 'paid'"
+    nothing = "SELECT n FROM t WHERE FALSE"
+    assert masked_template_problem(filtered, nothing)
+    assert masked_template_problem(f'SELECT n FROM t WHERE s = "{token}"', "SELECT 1")
+    assert masked_template_problem(f"SELECT n FROM t WHERE s = 'a_{token}'", "SELECT 1")
+    assert not prove_equivalent(filtered, nothing).proven
+    assert prove_equivalent_smt(filtered, nothing).status is not SmtStatus.PROVEN_EQUIVALENT
+    assert not prove_equivalent_algebraic(filtered, nothing).proven
+    # as a table name the token is sound: it is not a string literal
+    assert masked_template_problem(f"SELECT n FROM {token} WHERE s = 'paid'", "SELECT 1") is None
+
+
 def test_text_without_masked_expressions_is_not_refused():
     assert masked_template_problem("SELECT n FROM t WHERE s = 'paid'", "SELECT 1") is None
 
