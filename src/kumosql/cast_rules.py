@@ -9,7 +9,8 @@
   folds only when the input is declared that narrow).
 * ``CAST(CAST(x AS T) AS T)`` is ``CAST(x AS T)``.
 * A numeric literal cast to ``DECIMAL(p, s)`` that it fits exactly is that
-  decimal literal (``CAST(5 AS DECIMAL(11, 1))`` is ``5.0``), and an integer
+  decimal literal (``CAST(5 AS DECIMAL(11, 1))`` is ``5.0``; not in BigQuery,
+  where a decimal literal is a FLOAT64 and ``NUMERIC`` is exact), and an integer
   string literal cast to an integer type is the integer (``CAST('12' AS
   SIGNED)`` is ``12``).
 * A strict comparison of a ``COUNT`` with an integer literal is the
@@ -226,8 +227,8 @@ def _literal_cast(cast: exp.Cast, dialect: str) -> exp.Expression | None:
         return (exp.Neg(this=value.copy()) if negative else value.copy()) if _fits(int(value.this), to) else None
     params = _decimal_params(to)
     match = re.fullmatch(r"(\d+)(?:\.(\d*))?", value.this or "")
-    if params is None or match is None:
-        return None
+    if params is None or match is None or dialect == "bigquery":
+        return None  # a BigQuery decimal literal is a FLOAT64: ``CAST(0.1 AS NUMERIC(2, 1)) + CAST(0.2 AS NUMERIC(2, 1))`` is 0.3, ``0.1 + 0.2`` is not
     precision, scale = params
     whole = match.group(1).lstrip("0") or "0"
     fraction = (match.group(2) or "").rstrip("0")

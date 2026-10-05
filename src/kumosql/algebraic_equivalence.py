@@ -1661,6 +1661,23 @@ def _unbounded_text_cast(to: exp.DataType, dialect: str) -> bool:
     return to.this in kinds
 
 
+_INTEGER_TYPE = re.compile(r"^\s*(tinyint|smallint|mediumint|int|integer|bigint|byteint|int2|int4|int8|int64)\b", re.I)
+_COMPARISONS_AND_TESTS = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.NullSafeEQ, exp.NullSafeNEQ, exp.Is, exp.Between, exp.In)
+
+
+def _is_decimal_type(datatype: exp.DataType) -> bool:
+    return isinstance(datatype.this, exp.DataType.Type) and datatype.this in (exp.DataType.Type.DECIMAL, exp.DataType.Type.BIGDECIMAL)
+
+
+def _compared_directly(cast: exp.Expression) -> bool:
+    """The cast's value goes straight into a comparison or a NULL test, which reads an INT64 and its NUMERIC alike."""
+
+    parent = cast.parent
+    while isinstance(parent, exp.Paren):
+        parent = parent.parent
+    return isinstance(parent, _COMPARISONS_AND_TESTS)
+
+
 def _fold_identity_casts(select: exp.Select, types: dict[str, dict[str, str]], dialect: str = "bigquery") -> exp.Expression | None:
     """``CAST(x AS DECIMAL(p, s))`` is ``x`` when ``x``'s declared type already fits it.
 
@@ -1691,6 +1708,8 @@ def _fold_identity_casts(select: exp.Select, types: dict[str, dict[str, str]], d
             continue
         declared = _origin_type(copy, input_column(cast), types)
         have = _decimal_shape(declared) if declared else None
+        if dialect == "bigquery" and declared and _INTEGER_TYPE.match(declared) and _is_decimal_type(cast.args["to"]) and not _compared_directly(cast):
+            continue  # NUMERIC is not INT64: its quotients round to 9 digits where an INT64 quotient is a FLOAT64
         if isinstance(cast.this, exp.Sum):
             # SUM of integers stays integral. As elsewhere in this prover,
             # overflow/failed casts and output type differences are excluded.

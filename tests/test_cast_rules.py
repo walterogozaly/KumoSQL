@@ -206,3 +206,28 @@ EXACT_CASTS = [
 @pytest.mark.parametrize("left, right, dialect, declared", EXACT_CASTS)
 def test_exact_casts_stay_proven(left, right, dialect, declared):
     assert prove_equivalent_algebraic(left, right, schema={"t": ["x"]}, types={"t": {"x": declared}}, dialect=dialect, compare_names=False).proven
+
+
+BQ_TYPES = {"t": {"id": "INT64"}}
+
+
+def _bq_proven(left, right):
+    return prove_equivalent_algebraic(left, right, schema={"t": ["id"]}, types=BQ_TYPES, dialect="bigquery").proven
+
+
+def test_bigquery_numeric_is_not_a_float_literal():
+    # NUMERIC is exact: 0.1 + 0.2 = 0.3 is TRUE for NUMERIC literals and FALSE for the FLOAT64 literals a bare 0.1 is
+    exact = "SELECT CAST(0.1 AS NUMERIC(2, 1)) + CAST(0.2 AS NUMERIC(2, 1)) = CAST(0.3 AS NUMERIC(2, 1)) AS e FROM t"
+    assert not _bq_proven(exact, "SELECT 0.1 + 0.2 = 0.3 AS e FROM t")
+    assert not _bq_proven(exact, "SELECT FALSE AS e FROM t")
+    assert _fold("SELECT CAST(5 AS DECIMAL(11, 1)) FROM t", "bigquery") is None
+    assert _fold("SELECT CAST(5 AS DECIMAL(11, 1)) FROM t", "mysql") == "SELECT 5.0 FROM t"  # MySQL's literal is exact too
+
+
+def test_bigquery_numeric_cast_of_an_int64_column_changes_what_a_division_gives():
+    # NUMERIC quotients round to 9 digits, an INT64 quotient is a FLOAT64
+    assert not _bq_proven("SELECT CAST(t.id AS NUMERIC) / 3 AS q FROM t", "SELECT t.id / 3 AS q FROM t")
+    assert not _bq_proven("SELECT CAST(t.id AS NUMERIC) AS q FROM t", "SELECT t.id AS q FROM t")
+    # compared or tested directly, an INT64 and its NUMERIC read alike
+    assert _bq_proven("SELECT t.id FROM t WHERE CAST(t.id AS NUMERIC) > 1", "SELECT t.id FROM t WHERE t.id > 1")
+    assert _bq_proven("SELECT t.id FROM t WHERE CAST(t.id AS NUMERIC) IS NULL", "SELECT t.id FROM t WHERE t.id IS NULL")
