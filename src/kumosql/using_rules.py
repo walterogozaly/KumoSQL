@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from sqlglot import exp
 
+from . import proof_columns
+
 
 def _alias(source: exp.Expression) -> str:
     return (source.alias_or_name or "").lower() if isinstance(source, (exp.Table, exp.Subquery)) else ""
@@ -34,6 +36,7 @@ def using_to_on_unqualified(tree: exp.Expression) -> exp.Expression:
         from_ = select.args.get("from_") or select.args.get("from")
         if from_ is None:
             continue
+        guard = proof_columns.begin(select, "algebraic_using_to_on_unqualified")
         sources = [from_.this] + [j.this for j in joins]
         aliases = [_alias(s) for s in sources]
         if "" in aliases or len(set(aliases)) != len(aliases):
@@ -81,12 +84,25 @@ def using_to_on_unqualified(tree: exp.Expression) -> exp.Expression:
             for c in select.find_all(exp.Column)
         ):
             continue
+        guard.snapshot()
         for column in list(select.find_all(exp.Column)):
             if column.table or isinstance(column.this, exp.Star) or column.name.lower() not in merged:
                 continue
-            value = merged[column.name.lower()].copy()
+            value = proof_columns.rebuilt(merged[column.name.lower()].copy(), column)
             if isinstance(column.parent, exp.Select) and isinstance(value, exp.Coalesce):
                 value = exp.alias_(value, column.name)
             column.replace(value)
         select.set("joins", new_joins)
+        _check(guard, select)
     return tree
+
+
+def _check(guard, select: exp.Select) -> None:
+    """Have ``proof_columns`` re-read the statement after the rewrite; a column that reads other base columns declines the query."""
+
+    from .ast_utils import UnmodeledConstruct
+
+    try:
+        guard.check(select.root())
+    except proof_columns.ColumnResolutionRefused as refusal:
+        raise UnmodeledConstruct(f"independent check of column resolution: {refusal}") from None

@@ -2178,6 +2178,7 @@ def _wrap_outer_join_aggregate(select: exp.Select) -> exp.Expression | None:
         positions.setdefault(key, len(positions))
     if not positions:
         return None
+    guard = _rewriting(select, "algebraic_wrap_outer_join_aggregate")
     inner = exp.Select(
         expressions=[
             exp.alias_(exp.column(name, table=spelled[table]), f"c{index}") for (table, name), index in positions.items()
@@ -2185,6 +2186,7 @@ def _wrap_outer_join_aggregate(select: exp.Select) -> exp.Expression | None:
     )
     inner.set(FROM_KEY, from_.copy())
     inner.set("joins", [j.copy() for j in joins])
+    guard.freeze()
     # An output that is a bare column keeps its name once the column is renamed to kqj.cN.
     select.set(
         "expressions",
@@ -2195,6 +2197,7 @@ def _wrap_outer_join_aggregate(select: exp.Select) -> exp.Expression | None:
         column.set("this", exp.to_identifier(f"c{positions[key]}"))
     select.set("joins", None)
     select.set(FROM_KEY, exp.From(this=exp.Subquery(this=inner, alias=exp.TableAlias(this=exp.to_identifier("kqj")))))
+    guard.edited()
     return select
 
 
@@ -2403,6 +2406,7 @@ def _canonicalize_union_source(node: exp.Subquery) -> exp.Expression | None:
     first_names = [item.alias_or_name for item in branches[0].expressions]
     if "" in first_names or len(set(first_names)) != len(first_names):
         return None
+    guard = _rewriting(node, "algebraic_canonicalize_union_source")
     canonical = [_canonical_branch(b) for b in branches]
     if any(c is None for c in canonical):
         return None
@@ -2434,13 +2438,16 @@ def _canonicalize_union_source(node: exp.Subquery) -> exp.Expression | None:
             targets.append(column)
         elif column.name.lower() in renames:
             return None  # ambiguous unqualified use: leave it alone
+    guard.freeze()
     for column in targets:
         column.set("this", exp.to_identifier(renames[column.name.lower()]))
     canonical.sort(key=lambda b: b.sql(dialect="bigquery"))
     union: exp.Expression = canonical[0]
     for branch in canonical[1:]:
         union = exp.Union(this=union, expression=branch, distinct=False)
-    return exp.Subquery(this=union, alias=node.args.get("alias"))
+    replacement = proof_columns.carry_source(exp.Subquery(this=union, alias=node.args.get("alias")), node)
+    guard.replaced_by(replacement)
+    return replacement
 
 
 _VALUES_COUNTER = itertools.count()
@@ -3176,6 +3183,8 @@ def _using_to_on(tree: exp.Expression, schema: dict[str, list[str]] | None) -> e
         joins = select.args.get("joins") or []
         if not any(j.args.get("using") is not None or _natural(j) for j in joins):
             continue
+        guard = _rewriting(select, "algebraic_using_to_on")
+        guard.freeze()
         from_ = select.args.get("from_") or select.args.get("from")
         sources = [from_.this] + [j.this for j in joins]
         for position, src in enumerate(sources):
@@ -3246,13 +3255,14 @@ def _using_to_on(tree: exp.Expression, schema: dict[str, list[str]] | None) -> e
             if column.table or isinstance(column.this, exp.Star) or column.find_ancestor(exp.Select) is not select:
                 continue
             if column.name.lower() in merged:
-                column.replace(merged[column.name.lower()].copy())
+                column.replace(proof_columns.rebuilt(merged[column.name.lower()].copy(), column))
         if stars:
             select.set(
                 "expressions",
                 [e.copy() if isinstance(e, exp.Column) and e.name.lower() == n else exp.alias_(e.copy(), n) for n, e in running],
             )
         select.set("joins", new_joins)
+        guard.edited()
     return tree
 
 
@@ -3362,7 +3372,17 @@ def _left_join_indicator_to_exists(tree: exp.Expression, keys: dict[str, list[tu
     key_sets = {t.lower(): [frozenset(c.lower() for c in k) for k in ks if k] for t, ks in (keys or {}).items()}
 
     for select in list(tree.find_all(exp.Select))[::-1]:
-        _apply_indicator_joins(select, key_sets)
+        if not any(isinstance(j.this, exp.Subquery) for j in select.args.get("joins") or []):
+            continue
+        guard = _rewriting(select, "algebraic_indicator_join")
+        trial = select.copy()
+        if not _apply_indicator_joins(trial, key_sets):
+            continue
+        guard.replaced_by(trial)
+        if select is tree:
+            tree = trial
+        else:
+            select.replace(trial)
     return tree
 
 
@@ -3385,9 +3405,11 @@ def _indicator_join_above(select: exp.Select, keys: dict[str, list[tuple[str, ..
     from_ = select.args.get("from_") or select.args.get("from")
     if from_ is None or not isinstance(from_.this, exp.Subquery) or select.args.get("joins"):
         return None
+    guard = _rewriting(select, "algebraic_indicator_join_above")
     flat = _flatten_projections(select.copy())
     if flat is None or not flat.args.get("joins") or not _apply_indicator_joins(flat, key_sets):
         return None
+    guard.replaced_by(flat)
     return flat
 
 
@@ -4056,6 +4078,7 @@ def _push_distinct_into_sources(select: exp.Select, schema: dict[str, list[str]]
         chosen.append((src, alias))
     if not chosen:
         return None
+    guard = _rewriting(select, "algebraic_push_distinct_into_sources")
     copy = select.copy()
     new_sources = [copy.args.get("from_", copy.args.get("from")).this] + [j.this for j in copy.args["joins"]]
     removed: list[exp.Expression] = []
@@ -4079,6 +4102,7 @@ def _push_distinct_into_sources(select: exp.Select, schema: dict[str, list[str]]
         removed.extend(own[alias])
     leftover = [p for p in _conjuncts(copy.args["where"].this) if not any(p.sql() == r.sql() for r in removed)] if copy.args.get("where") is not None else []
     copy.set("where", exp.Where(this=_and_all(leftover)) if leftover else None)
+    guard.replaced_by(copy)
     return copy
 
 
