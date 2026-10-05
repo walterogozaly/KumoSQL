@@ -231,9 +231,9 @@ def parse_type_name(text: str) -> Type:
                 save = pos
                 first = word()
                 skip()
-                if first and pos < len(text) and text[pos] not in ",><" and first.upper() not in BY_NAME | {"ARRAY", "STRUCT"}:
+                if first and pos < len(text) and text[pos] not in ",><" and first.upper() not in (set(BY_NAME) | {"ARRAY", "STRUCT"}):
                     fields.append((first, one()))
-                elif first and pos < len(text) and text[pos] not in ",><" and first.upper() in BY_NAME | {"ARRAY", "STRUCT"} and \
+                elif first and pos < len(text) and text[pos] not in ",><" and first.upper() in (set(BY_NAME) | {"ARRAY", "STRUCT"}) and \
                         text[pos].isalpha():
                     fields.append((first, one()))  # a field named like a type: "int64 INT64"
                 else:
