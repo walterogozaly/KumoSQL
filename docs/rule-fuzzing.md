@@ -26,7 +26,7 @@ runs, each rewrite that fires is checked on its own, on the exact query it saw.
      prover does not compare result types).
 4. Runtime errors on either side are "unchecked", never a bug: the prover does not model them. Numbers compare
    exactly (an integer and a float need the same value); non-integral floats compare to 10 significant digits.
-   BigQuery's `COUNTIF` is 0 over no rows and DuckDB's `count_if` is NULL, so it is rewritten to `COUNT(CASE ...)`.
+   BigQuery's `COUNTIF` is 0 over no rows and DuckDB's `count_if` is NULL, so it is rewritten to `COUNT(CASE ...)`. Spark's `COUNT(a, b)` and `COUNT(DISTINCT a, b)` skip rows where any argument is NULL, so they are rewritten the same way (a tuple for the distinct form).
 5. A confirmed difference is reduced to a small witness (query, then rows) while the same rule still fires and still
    changes the result.
 
@@ -48,7 +48,7 @@ false proofs: shadowed aliases and scopes, global aggregates, ROLLUP/CUBE/GROUPI
 windows and QUALIFY, set operations with ORDER/LIMIT tails, correlated subqueries, CTEs that shadow tables, USING
 joins), `fuzz` (both sides of `tools/soundness_fuzz.py` template pairs), `evals` (the non-held-out queries of the
 SQLSolver, QED, mined Calcite, R-Bot, TPC-H and TPC-C evals; held-out pairs are never read) and `target:<module>`
-(`tools/rule_fuzz_targets/<module>.py`, template generators that expose `cases(seed, count)`; `count` is per module). The modules are `aggregates` (aggregate, eager-aggregation, regrouping and keyed rules), `distinct_sets` (DISTINCT, dedup joins, set operations and set splits), `outer_joins`, `grouping_windows` (grouping sets, windows, QUALIFY, LIMIT rules, empty relations) and `scalars` (casts, integer division, dates, LIKE, quantified comparisons, scalar subqueries, UNNEST, constant folding). A template is SQL with `{a|b|c}` choice groups (`tools/rule_fuzz_targets/_base.py`). A query
+(`tools/rule_fuzz_targets/<module>.py`, template generators that expose `cases(seed, count)`; `count` is per module). The modules are `aggregates` (aggregate, eager-aggregation, regrouping and keyed rules), `distinct_sets` (DISTINCT, dedup joins, set operations and set splits), `outer_joins`, `grouping_windows` (grouping sets, windows, QUALIFY, LIMIT rules, empty relations) `scalars` (casts, integer division, dates, LIKE, quantified comparisons, scalar subqueries, UNNEST, constant folding), `count_shapes` (constant regroupings, CASE arms on grouped counts, singleton joins to a grouped count, tuple counts, sums of grouped counts, key counts, GROUPING-set expansions) and `aggregate_forms` (constant COUNT and GROUP BY keys, key aggregates, shifted sums, mean times count, filters folded into a grouping, aggregates over `UNION ALL`, COUNTIF, AVG and `COUNT(DISTINCT ..)` variants, global aggregates over no rows). A template is SQL with `{a|b|c}` choice groups (`tools/rule_fuzz_targets/_base.py`). A query
 that `normalize` cannot print faithfully (`LossySql`) still has its earlier firings checked.
 
 `tests/fixtures/rule_fuzz/known_rule_bugs.json` lists open bugs the run should not fail on; a thread that fixes one

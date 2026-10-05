@@ -361,6 +361,16 @@ def to_duckdb(tree: exp.Expression, dialect: str = "bigquery") -> str:
     def guard(node: exp.Expression) -> exp.Expression:
         if isinstance(node, exp.CountIf):
             return exp.Count(this=exp.Case(ifs=[exp.If(this=node.this, true=exp.Literal.number(1))]))
+        if isinstance(node, exp.Count):
+            # DuckDB's COUNT takes one argument; Spark/Calcite's COUNT(a, b) and COUNT(DISTINCT a, b) skip the rows
+            # where any argument is NULL, then count rows or distinct tuples
+            distinct = isinstance(node.this, exp.Distinct)
+            args = list(node.this.expressions) if distinct else [node.this, *(node.args.get("expressions") or [])]
+            if len(args) > 1:
+                present = exp.and_(*[exp.Is(this=exp.Paren(this=a.copy()), expression=exp.Null()).not_() for a in args])
+                value = exp.Tuple(expressions=[a.copy() for a in args]) if distinct else exp.Literal.number(1)
+                case = exp.Case(ifs=[exp.If(this=present, true=value)])
+                return exp.Count(this=exp.Distinct(expressions=[case]) if distinct else case)
         if isinstance(node, (exp.Div, exp.IntDiv, exp.Mod)) and not node.args.get("safe"):
             zero = exp.EQ(this=exp.Paren(this=node.expression.copy()), expression=exp.Literal.number(0))
             error = exp.Anonymous(this="ERROR", expressions=[exp.Literal.string("division by zero")])
