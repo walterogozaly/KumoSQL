@@ -152,6 +152,7 @@ def mark_tokens(tokens: list) -> list:
 
 _IDENTIFIER = (TokenType.VAR, TokenType.IDENTIFIER)
 _PATH_JOINER = (TokenType.DOT, TokenType.DASH)  # ``p.d.t`` and the dashed project of ``my-project.d.t``
+_NO_OPERATOR_AFTER = ("TABLESAMPLE", "PIVOT", "UNPIVOT")
 _NOT_AN_ALIAS = ("WINDOW", "QUALIFY", "OFFSET", "WITH", "FOR", "UNION", "INTERSECT", "EXCEPT")
 # What may follow a clause that is the whole of its statement or of a parenthesized query.
 _QUERY_END = (TokenType.SEMICOLON, TokenType.R_PAREN)
@@ -280,6 +281,8 @@ def rewrite_text(sql: str, tokens: list) -> str:
         if start is None:
             raise ParseError("MATCH_RECOGNIZE follows something other than a table or a subquery")
         alias_end = _trailing_alias(tokens, closed)
+        if alias_end + 1 < len(tokens) and tokens[alias_end + 1].text.upper() in _NO_OPERATOR_AFTER:
+            raise ParseError("MATCH_RECOGNIZE with TABLESAMPLE, PIVOT or UNPIVOT: BigQuery allows no other table operator with it")
         if _canonical(tokens, start, closed, alias_end):
             continue
         operand = sql[tokens[start].start : tokens[index - 1].end + 1]

@@ -148,6 +148,10 @@ REJECTED = {
     "out_of_order": mr("ORDER BY ts PARTITION BY p MEASURES COUNT(*) AS n PATTERN (X+) DEFINE X AS v > 1"),
     "repeated": mr("ORDER BY ts MEASURES COUNT(*) AS n PATTERN (X+) PATTERN (Y+) DEFINE X AS v > 1"),
     "measure_without_a_name": mr("ORDER BY ts MEASURES COUNT(*) PATTERN (X+) DEFINE X AS v > 1"),
+    "tablesample_after": mr() + " TABLESAMPLE SYSTEM (10 PERCENT)",
+    "pivot_after": mr() + " PIVOT (SUM(fv) FOR p IN ('a'))",
+    "after_an_array_scan": "SELECT * FROM UNNEST([1, 2, 3]) AS v MATCH_RECOGNIZE (ORDER BY v MEASURES COUNT(*) AS n PATTERN (X+) DEFINE X AS v > 1)",
+    "after_a_join": "SELECT * FROM d.t AS t JOIN d.u AS u USING (a) MATCH_RECOGNIZE (ORDER BY a MEASURES COUNT(*) AS n PATTERN (X+) DEFINE X AS v > 1)",
     "nested_in_the_table": f"SELECT * FROM ({mr()}) MATCH_RECOGNIZE (ORDER BY p MEASURES COUNT(*) AS n PATTERN (Y+) DEFINE Y AS fv > 0)",
     "nested_in_a_pipe": f"FROM {SRC} |> MATCH_RECOGNIZE (ORDER BY ts MEASURES COUNT(*) AS n PATTERN (X+) DEFINE X AS v > 1) |> MATCH_RECOGNIZE (ORDER BY n MEASURES COUNT(*) AS m PATTERN (Y+) DEFINE Y AS n > 0)",
 }

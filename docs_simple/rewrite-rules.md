@@ -28,6 +28,8 @@ These rules have exceptions. For example, combining duplicate queries containing
 
 ## Qualify columns
 
+A statement that uses BigQuery's `MATCH_RECOGNIZE` clause is never rewritten: it comes back exactly as written, with a note saying so ([MATCH_RECOGNIZE](match-recognize.md)).
+
 `qualify_columns` is for queries that join tables. `SELECT id, name FROM orders o JOIN customers c ON o.cid = c.cid` becomes `SELECT o.id, c.name ...`, so a reader sees where each column comes from. It does not run in the default pipeline; ask for it with `-r qualify_columns`. Every qualification is also re-checked by a separate checker that confirms only table names were added and that each one names the only table the column can come from ([how](proof-safeguards.md#qualifying-columns)). The rule leaves a column alone when it is a nickname in `GROUP BY` or `ORDER BY`, or is used before its table is read.
 
 It only adds a table name when it is sure. It leaves a column alone when:
