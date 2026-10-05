@@ -13,7 +13,7 @@ TOOLS = Path(__file__).resolve().parent.parent / "tools"
 sys.path.insert(0, str(TOOLS))
 import rule_fuzz as fuzz  # noqa: E402
 
-from sqlglot import exp  # noqa: E402
+from sqlglot import exp, parse_one  # noqa: E402
 
 SCHEMA = {"t": [["id", "INT64"], ["x", "INT64"]], "u": [["k", "INT64"]]}
 KEYED = {"t": {"keys": [["id"]], "not_null": ["id"]}}
@@ -28,6 +28,23 @@ def test_every_rule_normalize_calls_is_found():
     assert len(names) > 60
     assert names["_prune_derived"] == "algebraic_equivalence"
     assert names["distinct_rules"] == "distinct_rules"
+    assert names["fold_grouped_count_cases"] == "count_case_rules"
+    assert names["rewrite_counted_membership"] == "counted_membership"
+
+
+def test_multiargument_count_translates_with_tuple_null_and_distinct_semantics():
+    db = duckdb.connect()
+    try:
+        db.execute("CREATE TABLE t (x INT, id INT)")
+        db.execute("INSERT INTO t VALUES (1, 1), (1, 1), (NULL, 2), (1, NULL)")
+        for sql, expected in (
+            ("SELECT COUNT(x, id) FROM t", 2),
+            ("SELECT COUNT(DISTINCT x, id) FROM t", 1),
+        ):
+            translated = fuzz.to_duckdb(parse_one(sql, read="bigquery"), "bigquery")
+            assert db.execute(translated).fetchone() == (expected,)
+    finally:
+        db.close()
 
 
 def test_a_rewrite_that_changes_results_is_reported(monkeypatch):

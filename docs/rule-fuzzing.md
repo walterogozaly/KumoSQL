@@ -8,6 +8,9 @@
 a pair that meets the bad rule. `tools/rule_fuzz.py` checks the rewrites one at a time instead: on every query it
 runs, each rewrite that fires is checked on its own, on the exact query it saw.
 
+`target:aggregate_counts` covers empty and grouped counts, sum-of-counts, singleton keyed joins, and tuple counts
+after regrouping. Its nullable and non-unique cases serve as near misses for the same guards.
+
 ## How it works
 
 1. `Tracer` wraps every rewrite `normalize` calls (whole-tree passes, per-node `step` rules, fixpoint passes and the

@@ -37,12 +37,15 @@ TPC-H and TPC-C, QED, R-Bot and the mined Calcite pairs; held-out pairs are neve
 from __future__ import annotations
 
 import argparse
+import ast
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 import datetime as _dt
 from decimal import Decimal
 from fractions import Fraction
 import functools
+import importlib
+import importlib.util
 import inspect
 import json
 import math
@@ -359,6 +362,18 @@ def to_duckdb(tree: exp.Expression, dialect: str = "bigquery") -> str:
     # BigQuery fails on a zero divisor where DuckDB returns NULL or infinity; DATE + INTERVAL is a TIMESTAMP in DuckDB;
     # DuckDB's count_if is NULL over no rows or only NULLs where BigQuery's COUNTIF is 0
     def guard(node: exp.Expression) -> exp.Expression:
+        if isinstance(node, exp.Count) and isinstance(node.this, exp.Distinct) and len(node.this.expressions) > 1:
+            arguments = list(node.this.expressions)
+            non_null = exp.and_(*(exp.Not(this=exp.Is(this=value.copy(), expression=exp.Null())) for value in arguments))
+            row = exp.Tuple(expressions=[value.copy() for value in arguments])
+            node.set("this", exp.Distinct(expressions=[exp.Case(ifs=[exp.If(this=non_null, true=row)])]))
+            return node
+        if isinstance(node, exp.Count) and node.expressions and not isinstance(node.this, exp.Distinct):
+            arguments = [node.this, *node.expressions]
+            non_null = exp.and_(*(exp.Not(this=exp.Is(this=value.copy(), expression=exp.Null())) for value in arguments))
+            node.set("this", exp.Case(ifs=[exp.If(this=non_null, true=exp.Literal.number(1))]))
+            node.set("expressions", [])
+            return node
         if isinstance(node, exp.CountIf):
             return exp.Count(this=exp.Case(ifs=[exp.If(this=node.this, true=exp.Literal.number(1))]))
         if isinstance(node, (exp.Div, exp.IntDiv, exp.Mod)) and not node.args.get("safe"):
@@ -676,7 +691,7 @@ class Fire:
 
 
 def rule_names() -> dict[str, str]:
-    """``{name: module}`` for every rewrite ``normalize`` calls by a module-level name."""
+    """``{name: module}`` for rewrite functions referenced by ``normalize``, including local imports."""
 
     import types
 
@@ -690,12 +705,35 @@ def rule_names() -> dict[str, str]:
             if isinstance(const, types.CodeType):
                 visit(const)
 
-    visit(inspect.unwrap(ae.normalize).__code__)  # normalize is wrapped by solver_lock.serialized
+    normalize = inspect.unwrap(ae.normalize)
+    visit(normalize.__code__)  # normalize is wrapped by solver_lock.serialized
     out = {}
     for name in sorted(names):
         value = ae.__dict__.get(name)
         if isinstance(value, types.FunctionType) and name not in _NOT_RULES and name != "normalize":
             out[name] = value.__module__.rsplit(".", 1)[-1]
+    # Some rewrite passes are imported inside normalize(), so they are not in
+    # algebraic_equivalence.__dict__ for the global-name lookup above.
+    try:
+        tree = ast.parse(inspect.getsource(normalize))
+    except (OSError, TypeError, SyntaxError):
+        tree = None
+    for node in ast.walk(tree) if tree is not None else ():
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        relative = "." * node.level + (node.module or "")
+        try:
+            module_name = importlib.util.resolve_name(relative, ae.__package__) if node.level else relative
+            owner = importlib.import_module(module_name)
+        except (ImportError, ValueError):
+            continue
+        for imported in node.names:
+            name = imported.asname or imported.name
+            if name in out or name not in names or name in _NOT_RULES or name == "normalize":
+                continue
+            value = getattr(owner, imported.name, None)
+            if isinstance(value, types.FunctionType) and value.__module__ == module_name:
+                out[name] = value.__module__.rsplit(".", 1)[-1]
     out["qualify"] = "algebraic_equivalence"  # the local ``qualify`` step, through _qualify_outer_join_columns
     return out
 
@@ -738,14 +776,18 @@ class Tracer:
         for name, module in rule_names().items():
             if name == "qualify":
                 continue
-            original = self.ae.__dict__[name]
-            self.saved[name] = original
-            self.ae.__dict__[name] = self._wrap(name, module, original)
+            if name in self.ae.__dict__:
+                owner = self.ae
+            else:
+                owner = importlib.import_module(f"{self.ae.__package__}.{module}")
+            original = owner.__dict__[name]
+            self.saved[(owner, name)] = original
+            owner.__dict__[name] = self._wrap(name, module, original)
         return self
 
     def __exit__(self, *exc):
-        for name, original in self.saved.items():
-            self.ae.__dict__[name] = original
+        for (owner, name), original in self.saved.items():
+            owner.__dict__[name] = original
         self.saved.clear()
 
     def _wrap(self, name: str, module: str, fn):
