@@ -25,6 +25,12 @@ When a pair is not proven, the provers look for conditions in this catalog, all 
 
 Facts that are already declared (the saved BigQuery catalog, Dataform assertions, a `constraints` argument) stay assumed and are never listed as conditions: only the extra facts are. A column the schema does not list is never a candidate. At most 40 candidates are tried.
 
+## Saving project input contracts
+
+`kumosql.input_contracts` provides a Python storage API for named project baselines. It records each contract's stable ID, relation and columns, predicate, exact checking SQL, result and timestamp, source identity, snapshot or partition/filter scope, and schema and definition fingerprints. Baselines are stored under KumoSQL's configured local data folder and can be loaded by project identity and name. A changed source, scope, schema, or definition does not match the recorded fingerprints; callers should treat that evidence as stale.
+
+Evidence provenance is explicit: `user_assertion`, `declared_metadata`, `snapshot_check`, or `sql_guarantee`. Only explicit user assertions are currently returned by `proof_premises`; a check of current rows and declared metadata are not promoted to future-data guarantees. The store does not yet wire these premises into conditional proof verdicts or derive SQL guarantees. In particular, a BigQuery `NOT ENFORCED` key remains metadata, not a validated fact. Conditional verdict integration must include the actual contract IDs and provenance in each verdict before saved premises are used there.
+
 The search assumes every candidate at once; if that does not prove the pair, the answer stays what it was. If it does, conditions are dropped in chunks while the proof survives, until every single condition has been tried against the set that is left (the last one too, so a set the prover can shrink to nothing is not reported as conditional). The reported set is **minimal for the prover**: it is a set the prover proves the pair under and cannot shrink by one condition. That is a statement about this prover, not about the data:
 
 - A condition that cannot be dropped is not thereby *necessary*. An abstention ("not proven") after a deletion says the prover gave up, not that a database exists where the pair differs without the condition. A returned condition can be stronger than the pair needs (a UNIQUE on an inner table whose duplicates a `DISTINCT` collapses anyway).

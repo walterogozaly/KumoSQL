@@ -25,4 +25,10 @@ The facts come from the queries themselves: a column is NOT NULL, a set of colum
 - The proof shown next to the list names its own assumptions, including, when declared keys come from BigQuery, that those keys are not enforced.
 - The answer says nothing about speed or cost, only about the rows returned.
 
+## Saving input contracts
+
+Python users can save contracts in named project baselines with `kumosql.input_contracts`. Each record keeps a stable ID, relation and columns, predicate, exact check SQL and result, timestamp, source identity, snapshot/filter scope, and schema and definition fingerprints. A baseline only matches the same source, scope, schema, and definition.
+
+Records keep their provenance: `user_assertion`, `declared_metadata`, `snapshot_check`, or `sql_guarantee`. Only explicit user assertions are currently eligible from `proof_premises`. A successful check on today's rows does not guarantee future rows, and BigQuery `NOT ENFORCED` keys remain metadata. Conditional verdicts do not yet consume saved baselines; the full guide describes this current storage-only slice.
+
 The full guide has the API fields, the command-line exit codes and how the search avoids proving a pair for the wrong reason. The [eval guide](evals/conditional-equivalence.md) says how well it works on public benchmarks.
