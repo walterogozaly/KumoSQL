@@ -542,6 +542,9 @@ class Adapter:
     #: True: part of the data is fetched at run time (too large or not licensed to commit); the shared tests that
     #: sweep every adapter leave such a database to its own test file, which skips when the data cannot be fetched
     remote: bool = False
+    #: seconds a query of the workload may run on the real data before it is interrupted (None: the engine suite's
+    #: 5 s); a database with a million-row fact table needs more for the unrewritten original of a full join
+    query_timeout_s: float | None = None
 
     @property
     def folder(self) -> Path:
@@ -1516,6 +1519,7 @@ class OracleSH(OracleSample):
     title = "Oracle SH"
     results_order = 356
     remote = True
+    query_timeout_s = 60.0
     workload_note = (
         "SH's one view (profits) and its two materialized views (cal_month_sales_mv, fweek_pscat_sales_mv) are the only queries the scripts hold; "
         "they are adapted from Oracle SQL to BigQuery (the schema prefix dropped; recorded in the workload file). "
@@ -1856,6 +1860,8 @@ def rewrite_cases(job: tuple[str, list[str], bool]) -> list[dict]:
 
     name, query_ids, optimizer = job
     adapter = ADAPTERS[name]
+    if adapter.query_timeout_s:
+        es.QUERY_TIMEOUT_S = adapter.query_timeout_s
     wanted = set(query_ids)
     queries = [q for q in adapter.workload() if q["id"] in wanted]
     con = adapter.connect()

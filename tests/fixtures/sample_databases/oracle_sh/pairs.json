@@ -777,7 +777,35 @@
    "why": "an average of daily averages weights each day equally, not each sale",
    "left": "SELECT t.calendar_month_desc, AVG(s.amount_sold) AS average FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9 GROUP BY t.calendar_month_desc",
    "right": "SELECT t.calendar_month_desc, AVG(a.average) AS average FROM (SELECT time_id, AVG(amount_sold) AS average FROM sales WHERE channel_id = 9 GROUP BY time_id) AS a JOIN times AS t ON a.time_id = t.time_id GROUP BY t.calendar_month_desc",
-   "witness": "real"
+   "witness": {
+    "times": [
+     {
+      "time_id": "2020-01-05",
+      "calendar_month_desc": "2020-01"
+     },
+     {
+      "time_id": "2020-01-06",
+      "calendar_month_desc": "2020-01"
+     }
+    ],
+    "sales": [
+     {
+      "time_id": "2020-01-05",
+      "channel_id": 9,
+      "amount_sold": "10.00"
+     },
+     {
+      "time_id": "2020-01-05",
+      "channel_id": 9,
+      "amount_sold": "20.00"
+     },
+     {
+      "time_id": "2020-01-06",
+      "channel_id": 9,
+      "amount_sold": "40.00"
+     }
+    ]
+   }
   },
   {
    "id": "sh-pushdown-count-distinct-of-daily-counts",
@@ -787,7 +815,30 @@
    "why": "a customer who buys on two days of a month is counted twice",
    "left": "SELECT t.calendar_month_desc, COUNT(DISTINCT s.cust_id) AS customers FROM sales AS s JOIN times AS t ON s.time_id = t.time_id WHERE s.channel_id = 9 GROUP BY t.calendar_month_desc",
    "right": "SELECT t.calendar_month_desc, SUM(a.customers) AS customers FROM (SELECT time_id, COUNT(DISTINCT cust_id) AS customers FROM sales WHERE channel_id = 9 GROUP BY time_id) AS a JOIN times AS t ON a.time_id = t.time_id GROUP BY t.calendar_month_desc",
-   "witness": "real"
+   "witness": {
+    "times": [
+     {
+      "time_id": "2020-01-05",
+      "calendar_month_desc": "2020-01"
+     },
+     {
+      "time_id": "2020-01-06",
+      "calendar_month_desc": "2020-01"
+     }
+    ],
+    "sales": [
+     {
+      "cust_id": 1,
+      "time_id": "2020-01-05",
+      "channel_id": 9
+     },
+     {
+      "cust_id": 1,
+      "time_id": "2020-01-06",
+      "channel_id": 9
+     }
+    ]
+   }
   },
   {
    "id": "sh-pushdown-loses-the-fact-filter",
