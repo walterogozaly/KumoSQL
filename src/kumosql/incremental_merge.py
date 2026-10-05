@@ -45,6 +45,9 @@ from .incremental_monotone import analyze, contract_constraints, source_schema
 
 RULE = "R7 merge of a full re-run"
 
+# ``SELECT * EXCEPT/REPLACE/RENAME/ILIKE``: sqlglot 30 names the EXCEPT argument "except_", older releases "except".
+_STAR_MODIFIERS = ("except_", "except", "replace", "rename", "ilike")
+
 
 def _always_true(node: exp.Expression) -> bool:
     node = node.unnest() if isinstance(node, exp.Paren) else node
@@ -92,7 +95,7 @@ def canonical_query(sql: str, dialect: str = "bigquery") -> str | None:
 def _wrapped(tree: exp.Expression) -> exp.Expression | None:
     if not isinstance(tree, exp.Select) or len(tree.expressions) != 1 or not isinstance(tree.expressions[0], exp.Star):
         return None
-    if tree.expressions[0].args.get("except") or tree.expressions[0].args.get("replace"):
+    if any(tree.expressions[0].args.get(k) for k in _STAR_MODIFIERS):
         return None
     if any(tree.args.get(k) for k in tree.args if k not in ("expressions", "from_", "from")):
         return None
@@ -214,8 +217,8 @@ def _grouped_select(select: exp.Select, window: exp.Window, schema: dict[str, li
             if columns is None:
                 return None
             star = e if isinstance(e, exp.Star) else e.this
-            dropped = {c.name.lower() for c in (star.args.get("except") or [])}
-            if star.args.get("replace"):
+            dropped = {c.name.lower() for c in (star.args.get("except_") or star.args.get("except") or [])}
+            if any(star.args.get(k) for k in ("replace", "rename", "ilike")):
                 return None
             for column in columns:
                 if column.lower() not in dropped:

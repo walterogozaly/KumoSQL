@@ -366,9 +366,10 @@ class Analyzer:
         for e in select.expressions:
             star = e if isinstance(e, exp.Star) else (e.this if isinstance(e, exp.Column) and isinstance(e.this, exp.Star) else None)
             if star is not None:
-                if star.args.get("replace") or star.args.get("rename"):
+                if star.args.get("replace") or star.args.get("rename") or star.args.get("ilike"):
                     raise _Refuse("SELECT * REPLACE")
-                excluded = {c.name.lower() for c in star.args.get("except") or []}
+                # sqlglot 30 names the EXCEPT list "except_", older releases "except"
+                excluded = {c.name.lower() for c in star.args.get("except_") or star.args.get("except") or []}
                 qualifier = e.table.lower() if isinstance(e, exp.Column) and e.table else ""
                 for alias, rel in scope.items:
                     if qualifier and alias != qualifier:

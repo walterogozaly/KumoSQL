@@ -43,6 +43,8 @@ _ORDER_SENSITIVE_WINDOWS = tuple(
 )
 _ORDER_SENSITIVE_AGGREGATES = tuple(getattr(exp, name) for name in ("ArrayAgg", "GroupConcat", "AnyValue") if hasattr(exp, name))
 _RANDOM_NAMES = {"RAND", "GENERATE_UUID"}
+# sqlglot parses RAND() and GENERATE_UUID() as their own node types, not as anonymous functions
+_RANDOM_NODES = tuple(getattr(exp, name) for name in ("Rand", "Uuid") if hasattr(exp, name))
 
 
 def tie_reasons(
@@ -70,7 +72,7 @@ def tie_reasons(
         if node.args.get("limit") is not None or node.args.get("offset") is not None:
             reasons.append("LIMIT on a set operation")
     for node in tree.walk():
-        if isinstance(node, exp.Rand) or (isinstance(node, exp.Anonymous) and str(node.this).upper() in _RANDOM_NAMES):
+        if isinstance(node, _RANDOM_NODES) or (isinstance(node, exp.Anonymous) and str(node.this).upper() in _RANDOM_NAMES):
             reasons.append(f"{node.sql(dialect=dialect)} is random")
     return list(dict.fromkeys(reasons))
 
