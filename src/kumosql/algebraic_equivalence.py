@@ -720,9 +720,14 @@ def _plain_union(node: exp.Expression) -> bool:
 
 
 def _union_all_branches(node: exp.Expression) -> list[exp.Select] | None:
-    """The SELECTs of a (nested) UNION ALL, or ``None`` for any other shape."""
+    """The SELECTs of a (nested) UNION ALL, or ``None`` for any other shape.
+
+    A parenthesis that cuts its rows (``((...) ORDER BY x LIMIT 1)``, ``((...) LIMIT 2 OFFSET 1)``) is not read
+    through: that operand is not all of its SELECT. An ORDER BY alone keeps every row."""
 
     if isinstance(node, exp.Subquery):
+        if node.args.get("limit") or node.args.get("offset"):
+            return None
         return _union_all_branches(node.this)
     if isinstance(node, exp.Select):
         return [node]
