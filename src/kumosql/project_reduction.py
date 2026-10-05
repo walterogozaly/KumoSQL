@@ -58,6 +58,14 @@ from .table_minimizer import MinimizationError, _structural, minimize_tables, ve
 _QUERY_KINDS = {"table", "view", "sql"}
 _TOKEN = re.compile(r"__sqlx_token_(\d+)__")
 _GLOBAL = re.compile(r"__kumo_x_[0-9a-f]{12}__")
+#: A string literal that is exactly one token, in single or double quotes (not raw, bytes or triple-quoted).
+_VALUE_LITERAL = re.compile(r"""(["'])(__kumo_x_[0-9a-f]{12}__)\1""")
+#: What the prover reads instead of such a literal: an unknown constant, one per expression and quote style.
+_ATOM = re.compile(r"__kumo_v_[0-9a-f]{12}_[sd]\(\s*\)", re.IGNORECASE)
+_VALUE_ASSUMPTION = (
+    "a project variable or constant used as a value is one unknown plain string (no quote, backslash or SQL in it), "
+    "the same wherever it is written and not equal to any literal"
+)
 _CONTEXT = {"ctx", "self", "ref", "resolve", "name", "schema", "database", "when", "incremental", "dataform"}
 _VARS = re.compile(r"^\$\{\s*dataform\.projectConfig\.vars\.[A-Za-z_$][\w$]*\s*\}$")
 _PATH = re.compile(r"^\$\{\s*(?P<root>[A-Za-z_$][\w$]*)(?:\s*\.\s*[A-Za-z_$][\w$]*)+\s*\}$")
@@ -263,6 +271,47 @@ def _token(expression: str) -> str:
     return f"__kumo_x_{hashlib.sha1(normal.encode('utf-8')).hexdigest()[:12]}__"
 
 
+def _value_atoms(sql: str, tokens: Mapping[str, str]) -> tuple[str, dict[str, str]]:
+    """``sql`` with every string literal that is exactly one ``__kumo_x_`` token replaced by an unknown constant.
+
+    A variable used as a value (``status = "${vars.paid}"``) is a constant of the run that nobody knows: the
+    same wherever the same expression is written, and not equal to any literal. A string literal holding the
+    token reads as one more fixed string, so the prover could call ``status = <variable> AND status = 'paid'``
+    empty. The literal becomes the call ``__kumo_v_<hash>_<quote>()`` instead, which the prover treats as an
+    uninterpreted value that no rule can fold, compare or contradict as a literal. The quote style is part of the
+    name, so ``'${v}'`` and ``"${v}"`` are two unknowns and each is written back as it was written. Returns the SQL
+    and ``atom -> original literal text``. Any other string holding a token (inside a longer string, raw, bytes,
+    triple-quoted) is left as it is for :func:`_value_tokens` to refuse.
+    """
+
+    from sqlglot.dialects.dialect import Dialect
+
+    if "__kumo_x_" not in sql:
+        return sql, {}
+    try:
+        found = Dialect.get_or_raise("bigquery").tokenize(sql)
+    except Exception:  # noqa: BLE001 - unreadable text stays as it is and is not a single query
+        return sql, {}
+    atoms: dict[str, str] = {}
+    pieces: list[tuple[int, int, str]] = []
+    is_string = [("STRING" in token.token_type.name) for token in found]
+    for index, token in enumerate(found):
+        if not is_string[index]:
+            continue
+        match = _VALUE_LITERAL.fullmatch(sql[token.start:token.end + 1])
+        if match is None or match.group(2) not in tokens:
+            continue
+        if (index and is_string[index - 1]) or (index + 1 < len(found) and is_string[index + 1]):
+            continue  # adjacent literals are one string, not one value
+        quote, name = match.group(1), match.group(2)
+        atom = f"__kumo_v_{name[len('__kumo_x_'):-2]}_{'s' if quote == chr(39) else 'd'}()"
+        atoms[atom] = quote + tokens[name] + quote
+        pieces.append((token.start, token.end + 1, atom))
+    for start, end, atom in reversed(pieces):
+        sql = sql[:start] + atom + sql[end:]
+    return sql, atoms
+
+
 def _movable(expression: str, includes: set[str], local: set[str]) -> bool:
     """Whether a ``${...}`` means the same in every file: a project variable or an ``includes/`` constant."""
 
@@ -293,7 +342,7 @@ def _load(root: Path, pipeline: Pipeline | None) -> _Project:
             include_words |= {w.lower() for w in _WORD.findall(_read(path))}
         except (OSError, UnicodeError):
             continue
-    texts, sql, tokens, movable, reads = {}, {}, {}, {}, {}
+    texts, sql, tokens, movable, reads, values = {}, {}, {}, {}, {}, {}
     upstream = pipeline.upstream
     for key, model in pipeline.models.items():
         text = ""
@@ -315,8 +364,10 @@ def _load(root: Path, pipeline: Pipeline | None) -> _Project:
             tokens[token] = expression
             body = body.replace(placeholder, token)
             ok = ok and _movable(expression, includes, local)
-        if _TOKEN.search(body):
-            ok = False
+        if _TOKEN.search(body) or _ATOM.search(model.sql) or _GLOBAL.search(model.sql):
+            ok = False  # the file itself holds text this reduction uses for its own names
+        body, atoms = _value_atoms(body, tokens)
+        values.update(atoms)
         sql[key] = body
         movable[key] = ok
         reads[key] = {r for r in upstream.get(key, ()) if r in pipeline.models and r != key}
@@ -356,8 +407,8 @@ def _load(root: Path, pipeline: Pipeline | None) -> _Project:
         database = _config_value(config, "database") or pipeline.default_project
         key = ".".join(p for p in (database, schema, name) if p)
         declarations[key] = str(path.relative_to(root)).replace("\\", "/")
-    return _Project(root, pipeline, texts, sql, tokens, movable, reads, ref_text, includes, declarations, js_words,
-                    include_words)
+    return _Project(root, pipeline, texts, sql, {**tokens, **values}, movable, reads, ref_text, includes, declarations,
+                    js_words, include_words)
 
 
 def _resolve_keep(pipeline: Pipeline, names: Iterable[str]) -> list[str]:
@@ -394,18 +445,21 @@ def _parses(sql: str) -> bool:
 
 
 def _value_tokens(sql: str) -> bool:
-    """Whether a ``${...}`` expression stands for a value (in a string) rather than a name.
+    """Whether a string literal still holds a ``${...}`` token after :func:`_value_atoms`.
 
-    The prover would read the token as one more string constant, different from every other: then
-    ``status = "${vars.paid}" AND status = 'paid'`` looks contradictory, although it is not when the
-    variable is ``paid``. As a table name a token is sound: two names are proved for any two tables.
+    What is left is a variable inside a longer string (``"pre_${vars.x}"``, ``CONCAT``-style text, an
+    expansion that can carry its own quotes), a raw, bytes or triple-quoted string. Its value is not the text
+    the prover would read, and there is no one unknown constant to put in its place, so the model stays as
+    written. A token that is a table name is sound: two names are proved for any two tables.
     """
 
+    from sqlglot.dialects.dialect import Dialect
+
     try:
-        tree = sqlglot.parse_one(sql, read="bigquery")
-    except sqlglot.errors.SqlglotError:
+        found = Dialect.get_or_raise("bigquery").tokenize(sql)
+    except Exception:  # noqa: BLE001 - text the tokenizer cannot read is not rewritten
         return bool(_GLOBAL.search(sql))
-    return any(isinstance(node, exp.Literal) and _GLOBAL.search(str(node.this)) for node in tree.walk())
+    return any("STRING" in token.token_type.name and _GLOBAL.search(token.text) for token in found)
 
 
 def _fixed_reason(project: _Project, key: str) -> str:
@@ -421,9 +475,12 @@ def _fixed_reason(project: _Project, key: str) -> str:
     if not project.movable[key]:
         return "uses Dataform expressions that depend on the file they are written in"
     if not _parses(project.sql[key]):
+        if _ATOM.search(project.sql[key]):
+            return "uses a project variable or constant where the prover cannot read it as a value"
         return "not a single query"
     if _value_tokens(project.sql[key]):
-        return "uses a project variable or constant as a value, which the prover cannot read"
+        return ("uses a project variable or constant inside a longer string (or a raw, bytes or triple-quoted one), "
+                "which the prover cannot read")
     return ""
 
 
@@ -607,8 +664,22 @@ def _restore_tokens(text: str, tokens: Mapping[str, str]) -> str:
     def swap(match: re.Match[str]) -> str:
         return tokens.get(match.group(0), match.group(0))
 
+    def swap_value(match: re.Match[str]) -> str:
+        atom = re.sub(r"\s+", "", match.group(0)).lower()
+        if atom not in tokens:
+            raise _WriteBackError(f"the rewritten query holds an unknown value {match.group(0)}")
+        return tokens[atom]
+
     text = re.sub(r"`(__kumo_x_[0-9a-f]{12}__)`", lambda m: tokens.get(m.group(1), m.group(0)), text)
-    return _GLOBAL.sub(swap, text)
+    text = _ATOM.sub(swap_value, text)
+    text = _GLOBAL.sub(swap, text)
+    if _GLOBAL.search(text) or "__kumo_v_" in text:
+        raise _WriteBackError("a placeholder of the reduction is left in the query")
+    return text
+
+
+class _WriteBackError(Exception):
+    """A rewritten query cannot be written back as SQLX text exactly (a placeholder of the reduction is left)."""
 
 
 def _written_sql(project: _Project, sql: str, resolve: Callable[[exp.Table], str | None],
@@ -904,16 +975,35 @@ def reduce_project(
         except MinimizationError as error:
             notes.append(f"queries were not rewritten: {error}")
 
-    result = _build(project, kept, needed, protected, fixed_why, operation_why, dropped_assertions, minimized,
-                    new_table_type, notes)
+    try:
+        result = _build(project, kept, needed, protected, fixed_why, operation_why, dropped_assertions, minimized,
+                        new_table_type, notes)
+    except _WriteBackError as error:
+        if minimized is None:
+            raise
+        notes.append(f"the rewritten queries could not be written back: {error}; only unneeded actions were removed")
+        minimized = None
+        result = _build(project, kept, needed, protected, fixed_why, operation_why, dropped_assertions, None,
+                        new_table_type, notes)
     _verify(project, result, tables, protected, fixed, checked, sources, timeout_ms)
     if not result.verified and minimized is not None and minimized.moves:
         notes.append("the rewritten queries did not re-prove after writing them back; only unneeded actions were removed")
         result = _build(project, kept, needed, protected, fixed_why, operation_why, dropped_assertions, None,
                         new_table_type, notes)
         _verify(project, result, tables, protected, fixed, checked, sources, timeout_ms)
+    _note_values(result, [*tables.values(), *(minimized.tables.values() if minimized is not None else ())])
     result.seconds = time.time() - started
     return result
+
+
+def _note_values(result: ProjectReduction, queries: Iterable[str]) -> None:
+    """List the one assumption a project variable used as a value brings, on every proof that rests on it."""
+
+    if not any(_ATOM.search(sql) for sql in queries):
+        return
+    for proof in [*result.proofs.values(), *result.checks.values()]:
+        if proof.get("status") == "proved" and _VALUE_ASSUMPTION not in (proof.get("assumptions") or []):
+            proof["assumptions"] = [*(proof.get("assumptions") or []), _VALUE_ASSUMPTION]
 
 
 def _removal_reasons(moves: Sequence[str]) -> dict[str, str]:

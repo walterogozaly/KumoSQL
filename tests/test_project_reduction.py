@@ -6,6 +6,7 @@ import shutil
 import subprocess
 
 import pytest
+import sqlglot
 
 pytest.importorskip("z3")
 
@@ -252,7 +253,7 @@ def _compile(root, value):
         body = re.sub(r'\$\{\s*ref\(\s*"(\w+)"\s*\)\s*\}', r"\1", text.split("}\n", 1)[1])
         body = re.sub(r"\$\{\s*dataform\.projectConfig\.vars\.paid\s*\}", value, body)
         assert "${" not in body, body
-        out[path.stem] = body.strip()
+        out[path.stem] = sqlglot.transpile(body.strip(), read="bigquery", write="duckdb")[0]  # "x" is a string in BigQuery
     return out
 
 

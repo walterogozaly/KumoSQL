@@ -12,7 +12,10 @@ so the verifier asks for the compiled SQL instead (see ``rewrite._verify_sqlx``)
 An expression inside a string literal (``WHERE d = '${constants.START}'``) is dynamic too: it can close the
 quote and add operators (``x' = 'x' OR 'x``), so the same rule applies to it. Every prover also refuses text
 that still holds a masked string literal (``masked_template_problem``), as it refuses the loader's positional
-``__sqlx_token_N__`` names, which stand for different expressions in different models.
+``__sqlx_token_N__`` names, which stand for different expressions in different models. Project reduction's
+project-wide ``__kumo_x_<hash>__`` tokens are the same expression everywhere, but inside a string they too stand
+for a value nobody knows, so a string holding one is refused as well (reduction replaces such a string by an
+unknown-valued constant before it proves anything; see ``project_reduction``).
 """
 
 from __future__ import annotations
@@ -89,6 +92,8 @@ def holds_dynamic_fragment(statement: exp.Expression, sentinels: frozenset[str])
 
 
 _LOADER_TOKEN = re.compile(r"__sqlx_token_\d+__")
+#: The project-wide token project reduction gives a movable ``${...}`` (``project_reduction._token``).
+VALUE_TOKEN = re.compile(r"__kumo_x_[0-9a-f]{12}__")
 LOADER_TOKEN_REASON = (
     "unsupported: it holds a Dataform expression the loader masked by position (__sqlx_token_N__), which can "
     "expand to any SQL and stands for a different expression in each model; compile the SQLX to prove it"
@@ -99,13 +104,19 @@ STRING_REASON = (
 )
 
 
+VALUE_TOKEN_REASON = (
+    "unsupported: a string literal holds a project variable or constant token (__kumo_x_...__), so its value is "
+    "unknown and not the literal's text; project reduction hands the prover an unknown-valued constant instead"
+)
+
+
 def _masked_strings(sql: str, dialect: str) -> list[tuple[int, int, str]]:
     """``(start, end, text)`` of every string literal in ``sql`` that holds a masked expression."""
 
     return [
         (token.start, token.end, token.text)
         for token in Dialect.get_or_raise(dialect).tokenize(sql)
-        if "STRING" in token.token_type.name and "__sqlx_" in token.text
+        if "STRING" in token.token_type.name and ("__sqlx_" in token.text or "__kumo_x_" in token.text)
     ]
 
 
@@ -119,14 +130,17 @@ def masked_template_problem(*sqls: str, dialect: str = "bigquery") -> str | None
     """
 
     for sql in sqls:
-        if not isinstance(sql, str) or "__sqlx_" not in sql:
+        if not isinstance(sql, str) or ("__sqlx_" not in sql and "__kumo_x_" not in sql):
             continue
         if _LOADER_TOKEN.search(sql):
             return LOADER_TOKEN_REASON
         try:
-            if _masked_strings(sql, dialect):
-                return STRING_REASON
+            strings = _masked_strings(sql, dialect)
         except Exception:  # noqa: BLE001 - unreadable text is never proven over
+            return STRING_REASON
+        if any(VALUE_TOKEN.search(text) for _, _, text in strings):
+            return VALUE_TOKEN_REASON
+        if strings:
             return STRING_REASON
     return None
 
@@ -134,6 +148,8 @@ def masked_template_problem(*sqls: str, dialect: str = "bigquery") -> str | None
 __all__ = [
     "LOADER_TOKEN_REASON",
     "STRING_REASON",
+    "VALUE_TOKEN",
+    "VALUE_TOKEN_REASON",
     "dynamic_sentinels",
     "holds_dynamic_fragment",
     "is_relation_reference",
