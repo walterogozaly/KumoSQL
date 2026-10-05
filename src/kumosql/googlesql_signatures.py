@@ -231,6 +231,7 @@ CLASS_NAMES = {
     "JSONObject": "JSON_OBJECT", "MakeInterval": "MAKE_INTERVAL", "Collate": "COLLATE",
     "CurrentDate": "CURRENT_DATE", "CurrentDatetime": "CURRENT_DATETIME", "CurrentTime": "CURRENT_TIME",
     "CurrentTimestamp": "CURRENT_TIMESTAMP", "Trim": "TRIM",
+    "StrToDate": "PARSE_DATE",  # a nameless one is CAST(.. AS DATE FORMAT ..); PARSE_DATE keeps its written name
 }
 
 
