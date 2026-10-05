@@ -95,6 +95,6 @@ regression tests:
   `tools/rule_fuzz.py` does not trace it; it was found by reading.
 - `set_operation_to_exists` read the operands of `SELECT AS STRUCT x, y ... INTERSECT DISTINCT SELECT AS STRUCT k, w ...`
   as two columns each and returned two columns where the query returns one struct, so the prover called the struct
-  query equal to its fields as plain columns. It now declines an operand with `AS STRUCT` or `AS VALUE`
-  (`tests/test_set_operation_struct_kind.py`). DuckDB cannot run this rewrite, so the harness reports it as unchecked; found by
+  query equal to its fields as plain columns. `output_names` did the same for `X EXCEPT DISTINCT <empty>`, which became a `SELECT DISTINCT` of two columns. Both now decline an
+  operand with `AS STRUCT` or `AS VALUE` (`tests/test_set_operation_struct_kind.py`). DuckDB cannot run this rewrite, so the harness reports it as unchecked; found by
   asking whether each shape-changing rule keeps `SELECT AS STRUCT` (`kind`) in mind.
