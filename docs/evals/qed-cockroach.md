@@ -49,7 +49,7 @@ Measured on master f4206ff plus this change, QED commit `9e9c262`, DuckDB 1.5.6,
 | not converted (unsupported) | 467 | 36.3% |
 | **wrong** | **0** | |
 
-Score: **707/815 proved, 0 wrong** (815 = 820 converted pairs minus the 5 refuted). Compared with QED, which proves **939 of the same 1,287** when run from its repository (published: 1,086 of 1,400 in the paper's Table 1, 1,051 in its abstract; this repo's cases are fewer than the paper's 1,400 and the binary was rebuilt from the repository, so only the second number is a like-for-like comparison):
+Score: **707/815 proved, 0 wrong** (815 = 820 converted pairs minus the 5 refuted). Compared with QED, which proves **939 of the same 1,287** when run from its repository (published: 1,086 of 1,400 in the paper's Table 1, 1,051 in its abstract; this repo's cases are fewer than the paper's 1,400 and 939 comes from a rebuild of the repository at the pinned commit and is the like-for-like comparison):
 
 | QED \ KumoSQL | proved | unknown | refuted | not converted |
 | --- | ---: | ---: | ---: | ---: |
