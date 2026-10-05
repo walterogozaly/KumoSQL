@@ -188,13 +188,22 @@ def table_order(pair: Pair) -> list[str]:
     return order
 
 
-def random_rows(pair: Pair, table: str, domains: dict[str, list], rng: random.Random, made: dict[str, list[list]]) -> list[list]:
-    """Rows shaped like a real database: single-column keys count up, foreign keys point at existing rows."""
+def random_rows(
+    pair: Pair, table: str, domains: dict[str, list], rng: random.Random, made: dict[str, list[list]], null_rate: float | None = None,
+    unique: tuple[str, ...] = (),
+) -> list[list]:
+    """Rows shaped like a real database: single-column keys count up, foreign keys point at existing rows.
+
+    A column outside the key holds NULL with probability ``null_rate`` (``NULL_RATE`` by default). A row
+    that repeats a non-NULL value of a ``unique`` column (one a foreign key points at) is left out.
+    """
+
+    null_rate = NULL_RATE if null_rate is None else null_rate
 
     columns = list(pair.tables[table])
     key = pair.keys.get(table, ())
     references = {c: (p, pc) for ct, c, p, pc in pair.foreign if ct == table and p in made}
-    rows, seen = [], set()
+    rows, seen, taken = [], set(), set()
     for number in range(rng.choice([0, 1, 2, 3, 4, 5, 6, 8, 10])):
         row = []
         for name in columns:
@@ -207,7 +216,7 @@ def random_rows(pair: Pair, table: str, domains: dict[str, list], rng: random.Ra
                 value = number + 1
             else:
                 value = rng.choice(domains[_kind(declared)])
-            if name not in key and rng.random() < NULL_RATE:
+            if name not in key and rng.random() < null_rate:
                 value = None
             row.append(value)
         if key:
@@ -215,6 +224,11 @@ def random_rows(pair: Pair, table: str, domains: dict[str, list], rng: random.Ra
             if marker in seen:
                 continue
             seen.add(marker)
+        if unique:
+            values = [(name, row[columns.index(name)]) for name in unique if row[columns.index(name)] is not None]
+            if any(value in taken for value in values):
+                continue
+            taken.update(values)
         rows.append(row)
     return rows
 
