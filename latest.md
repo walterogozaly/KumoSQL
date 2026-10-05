@@ -4,6 +4,7 @@ Newest first. Details per run in `results/`.
 
 | finished (UTC) | job | leg | sha | verdict | passed/tests | time |
 |---|---|---|---|---|---|---|
+| 2026-10-05T03:43:21Z | master | compiled | `4b8481795b` | 1 failed, 0 errors | 11627/11736 | 39 min |
 | 2026-10-05T02:36:16Z | master | pure | `04af1a9edc` | crashed | 4093/4103 | 7 min |
 | 2026-10-05T02:27:48Z | master | compiled | `04af1a9edc` | crashed | 4113/4125 | 7 min |
 | 2026-10-05T02:23:09Z | setup-validation | pure | `04af1a9edc` | crashed | 4091/4100 | 4 min |
