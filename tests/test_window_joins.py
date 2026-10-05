@@ -129,7 +129,7 @@ DECLINED = [
     ("float_sum_argument", over("SUM(value)"), FLOAT_VALUE_TYPES),
     ("float_avg_argument", over("AVG(value)"), FLOAT_VALUE_TYPES),
     ("derived_table_with_a_limit", "SELECT id, SUM(value) OVER (PARTITION BY user_id) AS s FROM (SELECT * FROM events LIMIT 3) AS d", TYPES),
-    ("derived_table_with_a_window", "SELECT id, SUM(value) OVER (PARTITION BY user_id) AS s FROM (SELECT id, user_id, value, ROW_NUMBER() OVER (ORDER BY ts) AS n FROM events) AS d", TYPES),
+    ("derived_table_with_a_window", "SELECT id, n, SUM(value) OVER (PARTITION BY user_id) AS s FROM (SELECT id, user_id, value, ROW_NUMBER() OVER (ORDER BY ts) AS n FROM events) AS d", TYPES),
     ("subquery_in_where", over("SUM(value)").replace("FROM events", "FROM events WHERE value IN (SELECT value FROM events)"), TYPES),
 ]
 
@@ -317,3 +317,16 @@ def test_derived_table_source_without_a_limit_is_rewritten_and_agrees_on_duckdb(
     for rows in KEY_DATABASES:
         a, b = _bags(sql, rewritten, rows)
         assert a == b, rows
+
+
+def test_a_constant_derived_column_in_order_by_is_dropped_not_read_as_an_ordinal():
+    # found by the rule fuzzer on the grouped-aggregate join: ORDER BY g.a became ORDER BY 1, the first output column
+    from kumosql.algebraic_equivalence import _inline_constant_columns
+
+    sql = "SELECT e.id, g.a AS w FROM events AS e JOIN (SELECT id AS k, 1 AS a FROM events) AS g ON e.id = g.k ORDER BY g.a DESC, e.id LIMIT 3"
+    tree = sqlglot.parse_one(sql, read="bigquery")
+    step = _inline_constant_columns(tree)
+    assert step is not None and "ORDER BY 1" not in step.sql(dialect="bigquery")
+    rows = [(5, 1, 1, 1), (3, 1, 1, 1), (1, 1, 1, 1), (2, 1, 1, 1)]
+    a, b = _bags(sql, step.sql(dialect="bigquery"), rows)
+    assert a == b

@@ -164,7 +164,7 @@ def _rewrite(select: exp.Select, not_null: dict, types: dict) -> exp.Select | No
     where = select.args.get("where")
     if where is not None and not deterministic(where):
         return None
-    if isinstance(source, exp.Subquery) and not (deterministic(source) and _rereadable(source)):
+    if isinstance(source, exp.Subquery) and not (deterministic(source.this) and _rereadable(source)):
         return None
     for item in select.expressions:
         # a star would also read the grouped columns; an unnamed window has no name the join column could keep

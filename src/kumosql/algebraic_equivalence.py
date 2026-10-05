@@ -4105,6 +4105,13 @@ def _inline_constant_columns(select: exp.Select) -> exp.Expression | None:
                     column.pop()
                     if not group.expressions:
                         group.set("expressions", [exp.true()])
+                elif isinstance(column.parent, exp.Ordered) and isinstance(column.parent.parent, exp.Order):
+                    # A constant sort key orders nothing, and a numeric literal there would read as a column
+                    # ordinal: drop the key (and the clause when it was the only one).
+                    order = column.parent.parent
+                    column.parent.pop()
+                    if not order.expressions:
+                        select.set("order", None)
                 else:
                     column.replace(exp.alias_(value, column.name) if column.parent is select else value)
                 changed = True
