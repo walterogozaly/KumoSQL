@@ -198,6 +198,7 @@ EVAL_FILES = {
     "test_rbot_normalise.py",
     "test_reduction_bench.py",
     "test_soundness_fuzz.py",
+    "test_sample_db_adventureworks.py",
     "test_sample_db_bench.py",
     "test_sample_db_pagila.py",
     "test_sample_db_oracle.py",
