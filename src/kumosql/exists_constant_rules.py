@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from sqlglot import exp
 
-from .ast_utils import conjuncts, is_function_table, select_sources
+from .ast_utils import conjuncts, declared_key, is_function_table, select_sources
 from .fk_rules import _same_table
 
 _INTEGER_TYPES = {"INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "MEDIUMINT", "INT64", "INT32", "INT16", "INT8", "HUGEINT"}
@@ -68,6 +68,17 @@ def _drop_witnessed_exists(select: exp.Select, schema, not_null, foreign_keys) -
     return copy
 
 
+def _names_parent(parent: exp.Table, declared: str) -> bool:
+    """Whether the table read as ``parent`` is the one a foreign key declares as ``declared``.
+
+    The spelling read may leave out leading parts of the declared name (``t`` for ``ds.t``), but it may not
+    add any: ``other_ds.t`` is not the table declared as ``t``.
+    """
+
+    spelled, named = declared_key(parent).split("."), declared.lower().split(".")
+    return len(spelled) <= len(named) and _same_table(declared_key(parent), declared)
+
+
 def _witnesses(child: exp.Table, body: exp.Expression, schema, not_null, foreign_keys) -> bool:
     """Whether every row of ``child`` makes ``EXISTS (body)`` TRUE."""
 
@@ -82,7 +93,7 @@ def _witnesses(child: exp.Table, body: exp.Expression, schema, not_null, foreign
     parent = from_.this if from_ is not None else None
     if not isinstance(parent, exp.Table) or is_function_table(parent):
         return False
-    columns = {c.lower() for c in (schema.get(parent.name.lower()) or [])}
+    columns = {c.lower() for c in (schema.get(declared_key(parent)) or [])}
     alias = parent.alias_or_name.lower()
     if not columns:
         return False
@@ -91,15 +102,15 @@ def _witnesses(child: exp.Table, body: exp.Expression, schema, not_null, foreign
             continue
         if (column.table and column.table.lower() != alias) or column.name.lower() not in columns:
             return False  # an outer reference: the test may differ from row to row
-    child_not_null = {c.lower() for c in (not_null or {}).get(child.name.lower(), ())}
+    child_not_null = {c.lower() for c in (not_null or {}).get(declared_key(child), ())}
     referenced = set()
-    for cols, fk_parent, parent_cols in foreign_keys.get(child.name.lower()) or []:
-        if _same_table(parent.name, fk_parent) and cols and all(c.lower() in child_not_null for c in cols):
+    for cols, fk_parent, parent_cols in foreign_keys.get(declared_key(child)) or []:
+        if _names_parent(parent, fk_parent) and cols and all(c.lower() in child_not_null for c in cols):
             referenced = {c.lower() for c in parent_cols}
             break
     else:
         return False
-    passing = referenced | {c.lower() for c in (not_null or {}).get(parent.name.lower(), ())}
+    passing = referenced | {c.lower() for c in (not_null or {}).get(declared_key(parent), ())}
     where = body.args.get("where")
     for part in conjuncts(where.this) if where is not None else []:
         if isinstance(part, exp.EQ):
@@ -139,7 +150,7 @@ def _source_of(select: exp.Select, column: exp.Column, schema) -> exp.Expression
         return None
     source = found[0]
     if isinstance(source, exp.Table):
-        if is_function_table(source) or column.name.lower() not in {c.lower() for c in (schema or {}).get(source.name.lower()) or []}:
+        if is_function_table(source) or column.name.lower() not in {c.lower() for c in (schema or {}).get(declared_key(source)) or []}:
             return None
         return source
     if isinstance(source, exp.Subquery) and isinstance(source.this, exp.Select) and _projection(source) is not None:
@@ -167,7 +178,7 @@ def _base_type(select: exp.Select, column: exp.Column, schema, types, depth: int
     if source is None or depth > 8:
         return None
     if isinstance(source, exp.Table):
-        return (types.get(source.name.lower()) or {}).get(column.name.lower())
+        return (types.get(declared_key(source)) or {}).get(column.name.lower())
     value = _projection(source)[column.name.lower()]
     return _base_type(source.this, value, schema, types, depth + 1) if isinstance(value, exp.Column) else None
 

@@ -798,6 +798,17 @@ def table_parts(table: exp.Table) -> list[str]:
     return [p.name.lower() for p in (table.args.get("catalog"), table.args.get("db"), table.this) if p is not None and p.name]
 
 
+def declared_key(table: exp.Table) -> str:
+    """The key under which declared facts (schema, types, NOT NULL, keys, foreign keys) name ``table``.
+
+    Facts are declared per spelling (``t``, ``ds.t``, ``proj.ds.t``), as the SMT compiler looks them up, so
+    ``other_ds.t`` does not inherit what is declared for ``t``: a part one spelling leaves out may resolve
+    to anything. Looking facts up by the bare ``table.name`` instead applies them to a different relation.
+    """
+
+    return ".".join(table_parts(table))
+
+
 def same_table(a: exp.Table, b: exp.Table, dialect: str = "bigquery") -> bool:
     """Whether two table references certainly name one relation: every part (catalog, dataset, table) matches.
 

@@ -15,7 +15,7 @@ import itertools
 
 from sqlglot import exp
 
-from .ast_utils import FROM_KEY, extended_grouping, same_table
+from .ast_utils import FROM_KEY, declared_key, extended_grouping, same_table
 
 _counter = itertools.count()
 _CLAUSES = ("distinct", "group", "having", "order", "limit", "offset", "qualify", "windows", "with_", "with", "laterals", "into", "locks", "sample", "prewhere", "connect", "match")
@@ -624,7 +624,7 @@ def self_witnessed_exists(select: exp.Select, not_null: dict[str, frozenset[str]
             if other[0].table.lower() != outer:
                 ok = False
                 break
-            if isinstance(part, exp.EQ) and mine[0].name.lower() not in lowered.get(table.name.lower(), set()):
+            if isinstance(part, exp.EQ) and mine[0].name.lower() not in lowered.get(declared_key(table), set()):
                 ok = False
                 break
         source = real.get(outer or "")
@@ -652,7 +652,7 @@ def _closed(node: exp.Expression, schema: dict[str, list[str]] | None) -> bool:
                 continue
             if len(tables) != 1 or not isinstance(tables[0], exp.Table):
                 return False
-            known = {k.lower(): [c.lower() for c in v] for k, v in (schema or {}).items()}.get(tables[0].name.lower())
+            known = {k.lower(): [c.lower() for c in v] for k, v in (schema or {}).items()}.get(declared_key(tables[0]))
             if known is None or column.name.lower() not in known:
                 return False
     return True
@@ -922,7 +922,7 @@ def self_domain_join(select: exp.Select, not_null: dict[str, frozenset[str]] | N
             if other[0].table.lower() != outer:
                 ok = False
                 break
-            if isinstance(part, exp.EQ) and base[1] not in lowered.get(table.name.lower(), set()):
+            if isinstance(part, exp.EQ) and base[1] not in lowered.get(declared_key(table), set()):
                 ok = False
                 break
             pinned[mine[0].name.lower()] = other[0]
