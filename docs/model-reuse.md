@@ -30,11 +30,11 @@ Every runner takes `--baseline` (the existing prover alone, before these engines
 | | Reusable cases rewritten | Cannot-cases not rewritten | Unsupported | Wrong |
 | --- | --- | --- | --- | --- |
 | Baseline, development (existing prover alone) | 8/108 | 32/32 | 0 | 0 |
-| Development | 89/108 | 32/32 | 14 | 0 |
+| Development | 90/108 | 32/32 | 14 | 0 |
 | Held out | 28/39 | 9/9 | 3 | 0 |
 | All (196 cases, 8 disabled) | 115/147 (supported subset 115/139) | 41/41 | 17 | 0 |
 
-The development row was measured with the declared HR keys (it was 87/108 on the key-free schema; the keys gain `testJoinMaterializationUKFK1` and `UKFK4`, and the retry above recovers the four cases the keys had broken). The held-out and all-cases rows were measured before that change and are re-measured when the outer-join work lands.
+The development row was measured with the declared HR keys (it was 87/108 on the key-free schema; outer-join matching adds one more, 90/108; the keys gain `testJoinMaterializationUKFK1` and `UKFK4`, and the retry above recovers the four cases the keys had broken). The held-out and all-cases rows were measured before that change and are re-measured when the outer-join work lands.
 
 118 of 196 queries were changed; all 118 were verified on random databases (`FLOOR(x TO unit)` is run as `DATE_TRUNC`). Adapted cases: 20/20 reusable rewritten, 9/9 cannot-cases left alone, 0 wrong (baseline 1/12 on development).
 

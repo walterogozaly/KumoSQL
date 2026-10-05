@@ -73,23 +73,33 @@ def test_outer_union_floor():
     summary = _summary_of("outer-union", _development_cases("outer-union"))
     assert summary["wrong"] == 0 and summary["rewritten_beyond_label"] == 0
     assert summary["no_rewrite_of_none"] == summary["expect_none"]  # every trap stays unrewritten
-    assert summary["rewritten_of_expected"] >= 5
+    assert summary["rewritten_of_expected"] >= 13
 
 
 def test_doris_sample_floor():
-    """The Doris outer-join cases and every tenth case of the dimension matrices (the full set is the slow test)."""
+    """The Doris outer-join cases and every 25th case of the dimension matrices (the full set is the slow test)."""
 
-    cases = [c for i, c in enumerate(_development_cases("doris")) if c["origin"] == "outer_join" or i % 10 == 0]
+    cases = [c for i, c in enumerate(_development_cases("doris")) if c["origin"] == "outer_join" or i % 25 == 0]
     summary = _summary_of("doris", cases)
-    assert summary["wrong"] == 0 and summary["rewritten_beyond_label"] == 0
-    assert summary["rewritten_of_expected"] >= 8
+    assert summary["wrong"] == 0 and summary["verified"] == summary["rewritten_total"]
+    assert summary["rewritten_of_expected"] >= 19
+
+
+def test_doris_outer_join_traps_stay_unrewritten():
+    """mv1_2 and mv2_0 (the view preserves the other side) and mv2_2 (the view lacks the residual's column)."""
+
+    cases = {c["id"]: c for c in _development_cases("doris")}
+    for name in ("mv1_2", "mv2_0", "mv2_2"):
+        record = mv_bench.run_case(cases[f"doris.outer_join.{name}"], False, 5000, 150)
+        assert record["status"] != "rewritten", name
 
 
 @pytest.mark.slow
 def test_doris_materialized_view_floor():
     summary = _summary_of("doris", _development_cases("doris"))
-    assert summary["wrong"] == 0 and summary["rewritten_beyond_label"] == 0
-    assert summary["rewritten_of_expected"] >= 55
+    # Doris's ``fail`` is not a proof that no rewrite exists: a rewrite beyond the label counts when it is verified
+    assert summary["wrong"] == 0 and summary["verified"] == summary["rewritten_total"]
+    assert summary["rewritten_of_expected"] >= 155
 
 
 @pytest.mark.slow
