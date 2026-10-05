@@ -10,6 +10,7 @@ unoptimized plan agrees and neither query depends on row order.
     python tools/proof_recheck.py --list
     python tools/proof_recheck.py qed-calcite --jobs 4 --out proof-recheck
     python tools/proof_recheck.py qed-calcite --pairs testAggregateMerge --budget 20000
+    python tools/proof_recheck.py qed-calcite --since old-run --out new-run    # only what the old run did not settle
 
 Each eval writes ``<out>/<eval>.jsonl``, one record per pair (``verdict`` is ``survived``, ``differs``,
 ``not-proven``, ``unrunnable``, ``timeout`` or ``search-error``); a rerun skips the pairs already
@@ -109,6 +110,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--every", type=int, default=1, help="run every n-th pair")
     parser.add_argument("--fresh", action="store_true", help="ignore records already written")
+    parser.add_argument(
+        "--since",
+        default="",
+        help="folder of an earlier run: skip pairs it already re-checked (survived or differs) and run only the rest "
+        "(pairs it did not prove then, timeouts, unrunnable ones and new pairs)",
+    )
     args = parser.parse_args(argv)
 
     registry = adapters()
@@ -132,6 +139,14 @@ def main(argv: list[str] | None = None) -> int:
         done = set()
         if path.exists() and not args.fresh and not args.pairs:
             done = {json.loads(line)["pair"] for line in path.read_text(encoding="utf-8").splitlines() if line.strip()}
+        if args.since:
+            earlier = Path(args.since) / f"{name}.jsonl"
+            if earlier.exists():
+                done |= {
+                    record["pair"]
+                    for record in map(json.loads, filter(str.strip, earlier.read_text(encoding="utf-8").splitlines()))
+                    if record["verdict"] in ("survived", "differs")
+                }
         todo = [i for i in items if i["pair"] not in done]
         print(f"{name}: {len(items)} pairs, {len(todo)} to run", flush=True)
         counts: Counter = Counter()
