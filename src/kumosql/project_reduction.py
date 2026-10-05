@@ -39,7 +39,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import difflib
 import hashlib
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import posixpath
 import re
 import shutil
@@ -131,6 +131,8 @@ class ProjectReduction:
     actions_before: int = 0
     actions_after: int = 0
     verified: bool = False
+    validation: str = "incremental"
+    analysis: dict = field(default_factory=dict)
     stopped: str = ""
     seconds: float = 0.0
     notes: list[str] = field(default_factory=list)
@@ -179,6 +181,8 @@ class ProjectReduction:
         return {
             "keep": self.keep,
             "verified": self.verified,
+            "validation": self.validation,
+            "analysis": self.analysis,
             "verdict": self.verdict(),
             "checks": checks,
             "assumptions": assumptions,
@@ -200,7 +204,9 @@ class ProjectReduction:
             "stopped": self.stopped,
             "seconds": round(self.seconds, 2),
             "notes": self.notes,
-            "evidence": "proof: every kept output of the patched project is re-proved equal to the original",
+            "evidence": ("proof: every kept output of the candidate is re-proved equal to the original; "
+                         + ("the patched project was freshly loaded" if self.validation == "full" else
+                            "cached project analysis was used; request full validation before final handoff")),
         }
 
 
@@ -800,6 +806,7 @@ def reduce_project(
     timeout_ms: int = 5000,
     max_seconds: float = 300.0,
     progress: Callable[[str], None] | None = None,
+    full_validation: bool = False,
 ) -> ProjectReduction:
     """The smallest project found that still produces every kept output, as a proved patch.
 
@@ -808,12 +815,16 @@ def reduce_project(
     original on the columns it keeps. With ``rewrite=False`` only what the kept outputs do not need is
     deleted; no query is changed. ``source_columns`` adds columns (and keys) of declared sources, in the
     format :func:`kumosql.table_minimizer.minimize_tables` takes. Raises :class:`ReductionError` on a kept
-    output that is unknown, ambiguous or a declaration.
+    output that is unknown, ambiguous or a declaration. The normal path verifies candidate SQL against the cached
+    project analysis. Set ``full_validation=True`` to copy and freshly load the patched project as a final oracle.
     """
 
     started = time.time()
     root = Path(root)
+    analysis_was_cached = pipeline is not None and pipeline._analysis is not None
+    project_load_started = time.perf_counter()
     project = _load(root, pipeline)
+    project_load_seconds = time.perf_counter() - project_load_started
     models = project.pipeline.models
     kept = _resolve_keep(project.pipeline, keep)
     say = progress or (lambda _line: None)
@@ -842,7 +853,7 @@ def reduce_project(
             why = (f"reads {gone[0]}, which is no longer in the project" if gone
                    else f"reads {changing[0]}, which the reduction may rewrite" if changing
                    else "reads nothing the kept outputs need")
-            dropped_assertions.append({"model": key, "path": models[key].path, "why": why})
+            dropped_assertions.append({"model": key, "path": _file_path(models[key].path), "why": why})
             needed.discard(key)
     for key, how in assertions_kept.items():
         reason = _fixed_reason(project, key)
@@ -906,12 +917,34 @@ def reduce_project(
 
     result = _build(project, kept, needed, protected, fixed_why, operation_why, dropped_assertions, minimized,
                     new_table_type, notes)
-    _verify(project, result, tables, protected, fixed, checked, sources, timeout_ms)
+    candidate_tables = dict(minimized.tables) if minimized is not None else dict(tables)
+    result.validation = "full" if full_validation else "incremental"
+    analysis_report = {
+        "initial_loads": 1 if pipeline is None else 0,
+        "full_refresh_loads": 0,
+        "models_parsed": len(models) if pipeline is None else 0,
+        "models_resolved": len(models),
+        "models_analyzed": len(models) if not analysis_was_cached else 0,
+        "models_reanalyzed": 0,
+        "cache_hits": 1 if analysis_was_cached else 0,
+        "invalidation_reasons": [],
+        "project_load_seconds": round(project_load_seconds, 4),
+    }
+    result.analysis = dict(analysis_report)
+    if full_validation:
+        _verify(project, result, tables, protected, fixed, checked, sources, timeout_ms)
+    else:
+        _verify_incremental(project, result, tables, candidate_tables, protected, fixed, checked, sources, timeout_ms)
     if not result.verified and minimized is not None and minimized.moves:
         notes.append("the rewritten queries did not re-prove after writing them back; only unneeded actions were removed")
         result = _build(project, kept, needed, protected, fixed_why, operation_why, dropped_assertions, None,
                         new_table_type, notes)
-        _verify(project, result, tables, protected, fixed, checked, sources, timeout_ms)
+        result.validation = "full" if full_validation else "incremental"
+        result.analysis = dict(analysis_report)
+        if full_validation:
+            _verify(project, result, tables, protected, fixed, checked, sources, timeout_ms)
+        else:
+            _verify_incremental(project, result, tables, tables, protected, fixed, checked, sources, timeout_ms)
     result.seconds = time.time() - started
     return result
 
@@ -959,7 +992,7 @@ def _build(project: _Project, kept, needed, protected, fixed_why, operation_why,
             continue
         else:
             why = "not needed by any kept output"
-        removed.append({"model": key, "path": model.path, "kind": model.kind, "why": why})
+        removed.append({"model": key, "path": _file_path(model.path), "kind": model.kind, "why": why})
 
     resolve_keys = {**{k: k for k in models}, **{k: k for k in added}}
     names: dict[str, list[str]] = {}
@@ -987,7 +1020,7 @@ def _build(project: _Project, kept, needed, protected, fixed_why, operation_why,
         config = _config_block(new_text)
         if inherited and config:
             new_text = new_text.replace(config, _add_dependencies(config, inherited), 1)
-        files.append(FileChange(model.path, "modify", text, new_text))
+        files.append(FileChange(_file_path(model.path), "modify", text, new_text))
         changed.append(key)
     added_out: list[dict] = []
     for key, sql in added.items():
@@ -1004,7 +1037,7 @@ def _build(project: _Project, kept, needed, protected, fixed_why, operation_why,
                                   {"model": entry["model"], "path": None, "config": True, "why": f"config assertions: {why}"}]
     for entry in removed + dropped_assertions:
         if entry.get("path"):
-            files.append(FileChange(entry["path"], "delete", project.texts.get(entry["model"], ""), ""))
+            files.append(FileChange(_file_path(entry["path"]), "delete", project.texts.get(entry["model"], ""), ""))
     # a declaration stays while anything that stays may name it: its SQL, its file as written (with the
     # ${...} expressions), or JavaScript
     surviving_text = " ".join([*final.values(), *added.values(), *(project.texts.get(k, "") for k in final)]).lower()
@@ -1046,6 +1079,12 @@ def _copy_project(source: Path, target: Path) -> None:
             shutil.copy2(item, target / item.name)
 
 
+def _file_path(path: str | None) -> str | None:
+    """Project paths in JSON and unified diffs always use Git's slash-separated spelling."""
+
+    return path.replace("\\", "/") if path else path
+
+
 def _verify(project: _Project, result: ProjectReduction, tables, protected, fixed, checked, sources, timeout_ms) -> None:
     """Apply the patch to a copy, load it again and re-prove every kept output against the original."""
 
@@ -1054,12 +1093,14 @@ def _verify(project: _Project, result: ProjectReduction, tables, protected, fixe
         copy.mkdir()
         _copy_project(project.root, copy)
         _apply(copy, result.files)
+        result.analysis["full_refresh_loads"] = result.analysis.get("full_refresh_loads", 0) + 1
         try:
             reloaded = _load(copy, None)
         except Exception as error:  # noqa: BLE001 - a patched project that does not load is not verified
             result.notes.append(f"the patched project does not load: {type(error).__name__}: {error}")
             result.verified = False
             return
+    result.analysis["models_reanalyzed"] = len(reloaded.pipeline.models)
     before_codes = {(d.code, d.model) for d in project.pipeline.diagnostics}
     new_codes = [d for d in reloaded.pipeline.diagnostics
                  if (d.code, d.model) not in before_codes and d.code not in {"duplicate_model"}]
@@ -1111,6 +1152,58 @@ def _verify(project: _Project, result: ProjectReduction, tables, protected, fixe
     result.verified = ok
 
 
+def _verify_incremental(project: _Project, result: ProjectReduction, tables, candidate, protected, fixed, checked, sources,
+                        timeout_ms) -> None:
+    """Re-prove the in-memory candidate without copying or reloading the project.
+
+    The reducer's SQL minimizer has already parsed each accepted query and checked that the candidate graph is closed.
+    This pass independently proves the final candidate against the original tables, using the loaded project facts for
+    source schemas, fixed actions, and protected outputs. Full SQLX/project diagnostics remain available through
+    ``full_validation=True``.
+    """
+
+    missing = [key for key in result.keep if key not in candidate]
+    if missing:
+        result.notes.append(f"kept outputs missing from the candidate: {missing}")
+        result.verified = False
+        return
+    try:
+        verdicts = verify_tables(tables, candidate, protected, sources=sources, timeout_ms=timeout_ms, fixed=fixed,
+                                 checked=[c for c in checked if c in candidate])
+    except MinimizationError as error:
+        result.notes.append(f"the candidate could not be checked: {error}")
+        result.verified = False
+        return
+    ok = True
+    for name in result.keep:
+        verdict = verdicts.get(name)
+        if verdict is None:
+            if name in fixed and candidate.get(name) == tables.get(name):
+                continue
+            ok = False
+            continue
+        if verdict.status not in ("unchanged", "proved"):
+            ok = False
+            result.notes.append(f"{name} did not re-prove: {verdict.reason}"[:300])
+        else:
+            result.proofs[name] = verdict.to_json()
+    for name in checked:
+        if name in candidate and name in tables and name not in protected:
+            verdict = verdicts.get(name)
+            if verdict is None or verdict.status not in ("unchanged", "proved"):
+                ok = False
+                result.notes.append(f"{name} has assertions and did not re-prove")
+            else:
+                result.checks[name] = verdict.to_json()
+    for name, verdict in verdicts.items():
+        if name not in result.keep and name not in checked and verdict.status not in ("unchanged", "proved"):
+            ok = False
+            result.notes.append(f"{name}, which an action kept as written reads, did not re-prove: {verdict.reason}"[:300])
+    result.verified = ok
+    result.score_after = round(sum(_structural(sql) for sql in candidate.values()) + len(candidate), 2)
+    result.actions_after = len(candidate)
+
+
 # ------------------------------------------------------------------ CLI
 
 
@@ -1133,6 +1226,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--table-type", default="view", choices=("view", "table"), help="type of a new shared table")
     parser.add_argument("--max-seconds", type=float, default=300.0)
     parser.add_argument("--timeout-ms", type=int, default=5000)
+    parser.add_argument("--full-verify", action="store_true",
+                        help="copy and freshly load the patched project as a final validation oracle (slower)")
     parser.add_argument("--patch", help="write the unified diff here (- for stdout)")
     parser.add_argument("--write", action="store_true", help="the only option that edits the project folder: apply the patch (without it, nothing is written)")
     args = parser.parse_args(argv)
@@ -1141,7 +1236,7 @@ def main(argv: list[str] | None = None) -> int:
             args.project, args.keep, keep_assertions=args.keep_assertions, strict=args.strict, rewrite=not args.drop_only,
             factor=not args.no_factor,
             new_table_type=args.table_type, max_seconds=args.max_seconds, timeout_ms=args.timeout_ms,
-            progress=lambda line: print(line, file=sys.stderr),
+            progress=lambda line: print(line, file=sys.stderr), full_validation=args.full_verify,
         )
     except (OSError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)

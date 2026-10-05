@@ -256,9 +256,41 @@ def test_cli(tmp_path, capsys):
     assert main([str(root), "--keep", "rpt_revenue", "--patch", str(patch_file)]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["verified"] and "diff" not in data and patch_file.read_text(encoding="utf-8").startswith("diff --git")
+    assert main([str(root), "--keep", "rpt_revenue", "--full-verify"]) == 0
+    assert json.loads(capsys.readouterr().out)["validation"] == "full"
     assert main([str(root), "--keep", "rpt_revenue", "--write"]) == 0
     assert not (root / "definitions/staging/paid_orders.sqlx").exists()
     assert "paid_orders" not in (root / "definitions/reports/rpt_revenue.sqlx").read_text(encoding="utf-8")
+
+
+def test_incremental_validation_avoids_patched_project_reload_and_full_mode_is_oracle(tmp_path, monkeypatch):
+    import kumosql.project_reduction as reduction
+
+    root = _write(tmp_path / "shop", SHOP)
+    real_load = reduction.load_sqlx_project
+    loaded = []
+
+    def counted_load(path, **kwargs):
+        loaded.append(path)
+        return real_load(path, **kwargs)
+
+    monkeypatch.setattr(reduction, "load_sqlx_project", counted_load)
+    incremental = reduce_project(root, ["rpt_revenue"])
+    assert incremental.verified and incremental.validation == "incremental"
+    assert len(loaded) == 1
+    assert incremental.analysis["initial_loads"] == 1
+    assert incremental.analysis["full_refresh_loads"] == 0
+    assert incremental.analysis["models_parsed"] == len(SHOP) - 4  # settings and declarations are not actions
+
+    loaded.clear()
+    full = reduce_project(root, ["rpt_revenue"], full_validation=True)
+    assert full.verified and full.validation == "full"
+    assert len(loaded) == 2  # original project plus the patched-project oracle
+    assert full.analysis["full_refresh_loads"] == 1
+    assert full.analysis["models_reanalyzed"] == full.actions_after
+    assert full.files == incremental.files
+    assert full.score_after == incremental.score_after
+    assert full.actions_after == incremental.actions_after
 
 
 def test_declarations_stay_while_something_names_them(tmp_path):
