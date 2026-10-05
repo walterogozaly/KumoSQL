@@ -44,12 +44,39 @@ INSIGHTS = {
     "/api/cost": _cost,
     "/api/changes": lambda scope=None, query=None: live_insights.changes_payload(scope),
 }
+
+
+def _dead_columns(scope: str | None = None, query: dict | None = None) -> dict:
+    """Return the loaded pipeline's existing dead-column analysis."""
+
+    current = live_graph.loaded()
+    if current is None:
+        return {"empty": True, "source": None, "models": [], "complete": False}
+    pipeline = current["pipeline"]
+    with live_graph.activity("Finding dead columns"):
+        models = [
+            {"model": key, "columns": list(columns)}
+            for key, columns in sorted(pipeline.dead_columns().items())
+            if columns
+        ]
+        completeness = pipeline.completeness()
+    return {
+        "empty": False,
+        "source": current["label"],
+        "models": models,
+        "complete": completeness["views"].get("dead_columns", False),
+    }
+
+
 ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/browse": ("browse.html", "text/html; charset=utf-8"),
     "/browse/": ("browse.html", "text/html; charset=utf-8"),
     "/refactor": ("refactor.html", "text/html; charset=utf-8"),
     "/shared-models": ("shared-models.html", "text/html; charset=utf-8"),
+    "/dead-columns": ("dead-columns.html", "text/html; charset=utf-8"),
+    "/assets/dead-columns.js": ("dead-columns.js", "text/javascript; charset=utf-8"),
+    "/assets/dead-columns.css": ("dead-columns.css", "text/css; charset=utf-8"),
     "/assets/shared-models.js": ("shared-models.js", "text/javascript; charset=utf-8"),
     "/assets/shared-models.css": ("shared-models.css", "text/css; charset=utf-8"),
     "/reduce": ("reduce.html", "text/html; charset=utf-8"),
@@ -370,6 +397,9 @@ class UIHandler(BaseHTTPRequestHandler):
                 self._json(200, INSIGHTS[route](scope, query))
             except ValueError as exc:
                 self._json(400, {"error": str(exc)})
+            return
+        if route == "/api/dead-columns":
+            self._json(200, _dead_columns())
             return
         if self.path.startswith("/api/catalog/"):
             self._catalog()
