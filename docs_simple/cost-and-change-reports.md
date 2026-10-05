@@ -37,6 +37,10 @@ When you give a price per TiB, the result repeats the price, currency, billing m
 
 A repeated query is an opportunity to investigate. Sharing it can have storage or refresh costs, and it might not reduce the jobs that actually run. Inspect the proposal's validation and cost rationale.
 
+## A matching table can be stale
+
+The graph's “Already elsewhere” view keeps its same-meaning result and adds a separate freshness note for stored tables. When available, it shows the table's BigQuery last-modified time, the latest matching write in loaded job history, and active Dataform schedules. “May be stale” means no active Dataform schedule was found; another scheduler may still refresh it. If the write history or schedule data is missing, freshness is unknown. A catalog modification time can reflect metadata changes, and the job history only covers the export you loaded, so these facts do not prove that two tables are current. The feature does not inspect query text or change the equivalence result. See the [full reference](../docs/cost-and-change-reports.md).
+
 ## Compare two project versions
 
 ```sh

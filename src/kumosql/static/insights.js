@@ -378,13 +378,22 @@ function overlapList(section, name) {
       ? h("p", { class: "callout callout-warn", text: "The comparison could not be completed, so this is not a “no match”. The rest of the page is unaffected." }) : null,
     matches.length ? h("ol", { class: "plain-list overlap-list" }, matches.map((match) => {
       const [label, tone, title] = MATCH_KINDS[match.kind] || [match.kind, "idle", ""];
+      const freshness = match.freshness;
+      const freshnessLabel = freshness?.status === "may_be_stale" ? "May be stale"
+        : freshness?.status === "scheduled" ? "Refresh scheduled"
+          : freshness ? "Freshness unknown" : null;
+      const freshnessTone = freshness?.status === "may_be_stale" ? "warn"
+        : freshness?.status === "scheduled" ? "info" : "idle";
       return h("li", { class: "reader overlap-item" },
         h("div", { class: "overlap-head" }, h("span", { class: "muted small", text: `#${match.rank}` }), name(match.table, match.key),
           tag(label, tone, title), tag(`${match.confidence} confidence`, CONFIDENCE_TONE[match.confidence] || "idle"),
+          freshnessLabel ? tag(freshnessLabel, freshnessTone, freshness.summary) : null,
           match.retiring ? tag("Retired in this change", "info", "This table is removed by the same change, so a replacement is expected") : null,
           match.in_this_change ? tag("Also in this change", "info", "This table is new or edited in the same change; neither side is settled") : null),
         h("div", { class: "ev-checks" }, (match.checks || []).map((check) =>
           h("span", { class: "overlap-check", title: check.detail || "" }, tag(`${check.kind.replace("_", " ")}: ${check.outcome}`, CHECK_TONE[check.outcome] || "idle")))),
+        freshness ? h("p", { class: "muted small", "data-testid": "overlap-freshness", text: freshness.relations
+          .map((item) => `${item.side === "selected" ? "Selected model" : "Matching model"}: ${item.summary}`).join(" ") }) : null,
         match.reason ? h("p", { class: "muted small", text: match.reason }) : null,
         match.role ? h("p", { class: "muted small", text: `Role: ${match.role.role} (${match.role.confidence} confidence)` +
           (match.role.evidence?.length ? `. Evidence: ${match.role.evidence.map((e) => e.detail).join("; ")}` : "") }) : null);

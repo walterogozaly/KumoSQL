@@ -877,5 +877,8 @@ def overlaps_payload(node: str, scope: str | None = None) -> dict:
     if node not in pipeline.models:
         raise ValueError("node is not a model in the loaded project")
     section = OverlapChecker(pipeline, scope=chosen).section(node)
+    from .overlap_freshness import annotate as annotate_freshness
+
+    annotate_freshness(section, pipeline, node, current.get("observed_reads", ()), current.get("remote"))
     return {**section, "node": node, "scope": scope or None, "scope_plan": plan.to_json() if plan else None,
             "source": source_info()}

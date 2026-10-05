@@ -506,6 +506,10 @@ def tables_key(project: str, dataset: str) -> str:
     return f"tables\x1f{project}\x1f{dataset}"
 
 
+def table_last_modified_key(project: str, dataset: str, table: str) -> str:
+    return "\x1f".join(("table_last_modified", project, dataset, table))
+
+
 #: BigQuery's routine types, as shown in the explorer and used by tag rules (``type``).
 ROUTINE_TYPES = {
     "SCALAR_FUNCTION": "UDF", "TABLE_VALUED_FUNCTION": "TABLE_FUNCTION",
@@ -555,3 +559,14 @@ def get_table(project: str, dataset: str, table: str) -> dict:
         "schema": payload.get("schema", {}).get("fields", []),
         "constraints": payload.get("tableConstraints"),
     }
+
+
+def get_table_last_modified(project: str, dataset: str, table: str) -> str | None:
+    """Return BigQuery's table last-modified timestamp, without fetching its schema."""
+
+    payload = _get(
+        f"projects/{quote(project, safe='')}/datasets/{quote(dataset, safe='')}/tables/{quote(table, safe='')}",
+        {"fields": "lastModifiedTime"},
+    )
+    value = payload.get("lastModifiedTime")
+    return str(value) if value not in (None, "") else None
