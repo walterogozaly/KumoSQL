@@ -61,6 +61,12 @@ PROVEN = [
         True,
     ),
     (
+        "distinct over at most one row",
+        "SELECT SUM(DISTINCT a) FROM (SELECT a FROM t LIMIT 1) s GROUP BY a",
+        "SELECT SUM(a) FROM (SELECT a FROM t LIMIT 1) s GROUP BY a",
+        True,
+    ),
+    (
         "limit under a projection of its keys",
         "SELECT a, a AS b FROM t ORDER BY a LIMIT 5",
         "SELECT a, a AS b FROM (SELECT * FROM t ORDER BY a LIMIT 5) s ORDER BY a",
@@ -133,6 +139,11 @@ NOT_PROVEN = [
         "SELECT a FROM (SELECT a FROM t LIMIT 2) s GROUP BY a",
         "SELECT a FROM (SELECT a FROM t LIMIT 2) s",
     ),
+    (
+        "distinct over two rows",
+        "SELECT SUM(DISTINCT a) FROM (SELECT a FROM t LIMIT 2) s",
+        "SELECT SUM(a) FROM (SELECT a FROM t LIMIT 2) s",
+    ),
     ("a limit under a projection of a non-key", "SELECT c FROM t ORDER BY a LIMIT 5", "SELECT c FROM (SELECT * FROM t ORDER BY a LIMIT 5) s"),
     (
         "a left lateral keeps unmatched rows",
@@ -180,13 +191,17 @@ def test_not_proved(name, left, right):
     assert not prove(left, right).proven
 
 
+def _pair(name: str):
+    return next(p[1:3] for p in PROVEN if p[0] == name)
+
+
 def test_limit_sources_are_an_assumption():
-    result = prove(*PROVEN[8][1:3])
+    result = prove(*_pair("limit source, aliases renamed"))
     assert any("LIMIT subquery" in a for a in result.assumptions)
 
 
 def test_window_sources_are_an_assumption():
-    result = prove(*PROVEN[14][1:3])
+    result = prove(*_pair("window source, aliases renamed"))
     assert any("window functions" in a for a in result.assumptions)
 
 

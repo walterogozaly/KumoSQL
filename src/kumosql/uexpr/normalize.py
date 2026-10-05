@@ -705,9 +705,15 @@ def _canonical_agg(v: Agg, ctx: Ctx):
         w = SVar(fresh_id(), None)
         body = nmul(v.body, NInd(Same(Ref(w), v.arg)))
         terms = normalize(NSum(tuple(v.vars), body) if v.vars else body, ctx)
-        result = _empty_aggregate(v) if not terms else Agg(v.func, v.distinct, (w,), rebuild(terms), Ref(w))
+        result = _empty_aggregate(v) if not terms else Agg(v.func, v.distinct and not _at_most_once(terms, w), (w,), rebuild(terms), Ref(w))
     ctx.cache[key] = result
     return result
+
+
+def _at_most_once(terms, w) -> bool:
+    """Every value ``w`` has multiplicity 0 or 1: one term of indicators over ``w`` alone, so DISTINCT drops nothing."""
+
+    return len(terms) == 1 and terms[0].coef == 1 and set(terms[0].vars) <= {w} and all(isinstance(f, NInd) for f in terms[0].factors)
 
 
 def _mul(a, b):
