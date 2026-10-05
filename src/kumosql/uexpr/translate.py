@@ -697,6 +697,8 @@ class Translator:
             return nmul(rows.body, ind(cond), ind(conj(*[Same(Ref(g), k) for g, k in zip(gvars, keys)])))
 
         def make_agg(call) -> object:
+            if _is_single_value(call):
+                return single_value(call)
             func = _AGG_TYPES[type(call)]
             rows, scope, cond, keys = copy_rows()
             arg = call.this
@@ -727,6 +729,18 @@ class Translator:
             if func in ("LOGICAL_AND", "LOGICAL_OR") and value_kind(value) not in ("bool", None):
                 raise Unsupported("LOGICAL_AND over a non-boolean")
             return Agg(func, distinct, rows.vars, member(rows, cond, keys), value)
+
+        def single_value(call) -> object:
+            """Calcite's ``SINGLE_VALUE(x)``: the one value of ``x`` in the group, NULL for no row (more than one row is an error)."""
+
+            if len(call.expressions) != 1:
+                raise Unsupported("SINGLE_VALUE arguments")
+            rows, scope, cond, keys = copy_rows()
+            if _has_aggregate(call.expressions[0]):
+                raise Unsupported("nested aggregate")
+            out = SVar(fresh_id(), None)
+            value = self.value(call.expressions[0], scope)
+            return Scalar(out, nsum(rows.vars, nmul(member(rows, cond, keys), ind(Same(Ref(out), value)))))
 
         gscope = Scope(scope0.sources, outer, scope0.using, ctes)
         gscope.aliases = aliases
@@ -863,7 +877,7 @@ class Translator:
             if isinstance(inner, Lit) and isinstance(inner.value, Fraction):
                 return Lit(-inner.value, inner.kind)
             return self._arith("-", Lit(Fraction(0), "int"), inner)
-        if isinstance(e, tuple(_AGG_TYPES)):
+        if isinstance(e, tuple(_AGG_TYPES)) or _is_single_value(e):
             if scope.group is None:
                 raise Unsupported("aggregate outside a grouped select")
             return scope.group.make_agg(e)
@@ -1254,6 +1268,10 @@ class Translator:
         return t, f
 
 
+def _is_single_value(e) -> bool:
+    return isinstance(e, exp.Anonymous) and (e.name or "").upper() == "SINGLE_VALUE"
+
+
 def _has_aggregate(e) -> bool:
     """An aggregate call in ``e`` that belongs to this select (not inside a subquery)."""
 
@@ -1262,7 +1280,7 @@ def _has_aggregate(e) -> bool:
     stack = [e]
     while stack:
         cur = stack.pop()
-        if isinstance(cur, tuple(_AGG_TYPES)):
+        if isinstance(cur, tuple(_AGG_TYPES)) or _is_single_value(cur):
             return True
         if isinstance(cur, (exp.Subquery, exp.Select)) and cur is not e:
             continue
