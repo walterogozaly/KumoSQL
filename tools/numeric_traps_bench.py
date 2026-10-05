@@ -4,7 +4,7 @@ Each case in ``tests/fixtures/numeric_traps/cases.jsonl`` is a query pair writte
 dialect, one fixed schema with declared INT64, FLOAT64, NUMERIC, STRING and BOOL columns) around a trap:
 integers past 2**53, INT64 overflow in a pushed-down expression, NaN grouping and ordering, ``-0.0``,
 NUMERIC rounding, INT64 to FLOAT64 conversion in CASE and UNION, ``DIV`` against ``/``, a division moved
-ahead of a filter, ``SAFE_CAST`` and ``SAFE_DIVIDE``, and the literals of the October 2 audit.
+ahead of a filter, a ``SUM`` over a group that ``HAVING`` or ``WHERE`` keeps or drops, ``SAFE_CAST`` and ``SAFE_DIVIDE``, and the literals of the October 2 audit.
 
 Labels follow BigQuery's documented rules (``source`` names the GoogleSQL page; ``unverified`` says what
 the author could not confirm), not DuckDB's. A case that DuckDB can run faithfully
@@ -27,12 +27,14 @@ The prover decides each pair without the label:
 * **proven**: ``prove_equivalent_smt`` proves the pair (with the error verdict it reports, if any); a rewrite that
   can fail where the original succeeds is not proven: the verdict ``introduces`` withholds the proof;
 * **refuted**: it finds a database on which the rows differ;
-* **assumed**: proven, but only under an assumption the case violates and the result still lists;
+* **assumed**: proven, but only under an assumption the case violates (or says does not apply, field ``discharged``) and the result still lists;
 * **unknown**: neither.
 
 ``wrong`` is a proof or refutation that contradicts the label (an ``equivalent`` case refuted, a
 ``not_equivalent`` one proven with no disclosure of the violated assumption, an error case whose verdict
-claims the opposite). A quarter of the cases (every fourth, from the fourth) is held out: develop on ``dev``.
+claims the opposite). A quarter of the cases is held out: develop on ``dev``. Held out is, by default, every fourth case from the fourth (by position in the file);
+a case that carries a boolean ``held_out`` field is held out or not as the field says, whatever its position (the cases added after the
+position rule was in use set it, so that appending cases never moves an earlier case between the splits).
 
     python tools/numeric_traps_bench.py                 # every case
     python tools/numeric_traps_bench.py --split dev
@@ -55,8 +57,8 @@ logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
 FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "numeric_traps"
 TIMEOUT_MS = 5000
 
-SCHEMA = {"t": ["x", "y", "f", "g", "n", "s", "c"]}
-TYPES = {"t": {"x": "INT64", "y": "INT64", "f": "FLOAT64", "g": "FLOAT64", "n": "NUMERIC", "s": "STRING", "c": "BOOL"}}
+SCHEMA = {"t": ["x", "y", "f", "g", "n", "m", "s", "c"]}
+TYPES = {"t": {"x": "INT64", "y": "INT64", "f": "FLOAT64", "g": "FLOAT64", "n": "NUMERIC", "m": "NUMERIC", "s": "STRING", "c": "BOOL"}}
 DUCKDB_TYPES = {"INT64": "BIGINT", "FLOAT64": "DOUBLE", "NUMERIC": "DECIMAL(38,9)", "STRING": "VARCHAR", "BOOL": "BOOLEAN"}
 
 LABELS = ("equivalent", "not_equivalent", "refines", "introduces_error")
@@ -77,16 +79,17 @@ class Case:
     witness: dict | None = None
     violates: list = field(default_factory=list)  # assumption labels the case breaks: a proof that lists one is disclosed
     unverified: str | None = None  # what the label rests on that the author could not confirm in the documentation
+    discharged: list = field(default_factory=list)  # assumption labels that do not apply here: a proof that still lists one is not clean
+    held_out: bool | None = None  # explicit split designation; None means the position rule (every fourth case from the fourth)
 
 
 def load_cases(split: str = "all") -> list[Case]:
     lines = (FIXTURES / "cases.jsonl").read_text(encoding="utf-8").splitlines()
     cases = [Case(**json.loads(line)) for line in lines]
-    if split == "dev":
-        return [c for i, c in enumerate(cases) if i % 4 != 3]
-    if split == "held-out":
-        return [c for i, c in enumerate(cases) if i % 4 == 3]
-    return cases
+    if split == "all":
+        return cases
+    held = [c.held_out if c.held_out is not None else i % 4 == 3 for i, c in enumerate(cases)]
+    return [c for c, h in zip(cases, held) if h == (split == "held-out")]
 
 
 # -- the witness databases, replayed on DuckDB with BigQuery's guards ---------------------------
@@ -144,7 +147,7 @@ def decide(case: Case) -> dict:
     result = prove_equivalent_smt(case.left, case.right, schema=SCHEMA, types=TYPES, timeout_ms=TIMEOUT_MS)
     report = getattr(result, "errors", None)
     verdict = report.verdict if report is not None else None
-    listed = [a for a in result.assumptions if any(a.startswith(v) for v in case.violates)]
+    listed = [a for a in result.assumptions if any(a.startswith(v) for v in case.violates + case.discharged)]
     if result.status is SmtStatus.NOT_EQUIVALENT:
         outcome = "refuted"
     elif result.status in (SmtStatus.PROVEN_EQUIVALENT, SmtStatus.PROVEN_CONDITIONALLY):
@@ -197,7 +200,7 @@ def results_row(results: list[dict], held_out: list[dict]) -> dict:
         "order": 39,
         "size": len(results),
         "score": score(results),
-        "metric": "Hand-written pairs around BigQuery's number and error rules (2**53, INT64 overflow, NaN, -0.0, NUMERIC, INT64 to FLOAT64, DIV against /, a division ahead of a filter, SAFE_ functions): sound ones proved, trap pairs never proved, and whether a rewrite can raise an error the original cannot.",
+        "metric": "Hand-written pairs around BigQuery's number and error rules (2**53, INT64 overflow, NaN, -0.0, NUMERIC, INT64 to FLOAT64, DIV against /, a division ahead of a filter, SAFE_ functions, the order a FLOAT64 SUM adds in, NUMERIC scale and rounding, a SUM over a group that a HAVING or a WHERE keeps or drops): sound ones proved, trap pairs never proved, and whether a rewrite can raise an error the original cannot.",
         "evidence": "proof",
         "correctness": "Labels follow the GoogleSQL documentation (the case file names the page; the ones it could not confirm say so); the cases DuckDB can run faithfully are replayed on a witness database by the test suite. Wrong is a proof or refutation that contradicts the label, or an error verdict that claims safety where the label says the rewrite can fail.",
         "coverage": {k: counts[k] for k in ("proven", "refuted", "unknown") if counts[k]},
@@ -205,7 +208,7 @@ def results_row(results: list[dict], held_out: list[dict]) -> dict:
         "docs": "docs/evals/numeric-traps.md",
         "command": "python tools/numeric_traps_bench.py --write-results",
         "date": today(),
-        "caveats": "Written by the author of the numeric value layer from the issue's trap list; the cases were fixed before the prover changed and a quarter held out, but only the cases were, not the prover's rules, so this is a regression and honesty check, not an independent benchmark. Labels the author could not confirm in the documentation are marked in the case file. NaN is modelled for declared FLOAT64 columns (the three original NaN pairs are now refuted by a database holding a NaN; twelve more NaN cases were added, three of them held out and labelled before the prover answered). Tuned on test: the two original held-out NaN cases (nan-distinct-group, nan-not-equal-split) were the stated target of the NaN work and were run during it, so the held-out score is not independent for them. Rules of BigQuery the author could not confirm (NaN <> NaN is TRUE, IS_NAN(NULL), how MIN, MAX and set operations treat a NaN) are marked unverified in the case file and the prover.",
+        "caveats": "Written by the author of the numeric value layer from the issue's trap list; the cases were fixed before the prover changed and a quarter held out, but only the cases were, not the prover's rules, so this is a regression and honesty check, not an independent benchmark. Labels the author could not confirm in the documentation are marked in the case file. NaN is modelled for declared FLOAT64 columns: the three original NaN pairs are now refuted by a database holding a NaN, and twelve more NaN cases were added in a later pass (three held out by an explicit held_out field, labelled before the prover answered). Tuned on test: the two original held-out NaN cases (nan-distinct-group, nan-not-equal-split) were the stated target of the NaN work and were run during it, so the held-out score is not independent for them. Rules of BigQuery the author could not confirm (NaN <> NaN is TRUE, IS_NAN(NULL), how MIN, MAX and set operations treat a NaN) are marked unverified in the case file and the prover. Twenty float-sum-order cases were added in a later pass (15 development, 5 held out, fixed before the rule was run); their labels rest on the repo's own note that a FLOAT64 sum has no fixed order, which is unverified against the GoogleSQL aggregate page, and the INT64 ones on the unverified rule that a partial INT64 sum cannot overflow when the total fits. A proof that still lists the row-order assumption on a case that says it does not apply, or on one that violates it, counts as unknown, not as a proof. The 16 numeric-* cases (NUMERIC scale and rounding) came with the rounding model: four are held out, but their answers were seen during development (tuned on test), and several rest on the unverified rule that NUMERIC * and / round to nine decimal digits, half away from zero. A refutation that needs a nonlinear NUMERIC product can hit the solver's time limit on a loaded machine, so the refuted count can move by one or two between runs; it never produces a wrong answer. The 17 group-SUM cases (12 development, 5 held out) were written, with their labels, before the prover compared sums group by group; the held-out five were run only after it was written and nothing was changed in response. Two of them are window pairs the prover does not prove equal, so they stay unknown. Their labels rest on BigQuery adding up a group that HAVING then drops (unverified: an optimizer may push a key filter below the aggregation) and on SUM(DISTINCT) and window sums failing on INT64 overflow as SUM does (unverified); a regrouped or pre-aggregated sum has no case because BigQuery's rule for partial sums that overflow while the total does not is unverified.",
     }
 
 

@@ -30,6 +30,11 @@ def test_a_legacy_rule_names_its_basis():
         assert classification(rule) == "legacy"
 
 
+def test_format_sql_has_an_independent_checker_and_is_not_legacy():
+    assert classification("format_sql") == "independent"
+    assert "format_sql" not in LEGACY_BASIS and RULE_FAMILIES["format_sql"] in FAMILIES
+
+
 def test_an_unclassified_rule_is_an_error():
     with pytest.raises(KeyError):
         classification("not_a_rule")
@@ -37,7 +42,7 @@ def test_an_unclassified_rule_is_an_error():
 
 def test_every_rule_family_is_registered_and_used():
     assert set(RULE_FAMILIES.values()) <= set(FAMILIES)
-    assert set(FAMILIES) <= set(RULE_FAMILIES.values()) | {"predicate_cleanup"}  # the prover also checks its own steps
+    assert set(FAMILIES) <= set(RULE_FAMILIES.values()) | {"predicate_cleanup", "prover_column_resolution"}  # the provers also check their own steps
 
 
 @pytest.mark.parametrize("name", sorted(FAMILIES))

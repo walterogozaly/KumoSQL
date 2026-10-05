@@ -36,13 +36,45 @@ def test_a_trap_pair_is_never_proven_without_disclosing_the_violated_assumption(
 def test_an_assumed_proof_lists_the_assumption_its_case_violates(results):
     for case, result in results.values():
         if result["outcome"] == "assumed":
-            assert case.violates and any(a.startswith(v) for a in result["assumptions"] for v in case.violates)
+            named = case.violates + case.discharged
+            assert named and any(a.startswith(v) for a in result["assumptions"] for v in named)
 
 
 def test_sound_pairs_are_still_proved(results):
     equivalent = [r for c, r in results.values() if c.label == "equivalent"]
-    assert sum(r["outcome"] == "proven" for r in equivalent) >= 27
+    assert sum(r["outcome"] == "proven" for r in equivalent) >= 50
     assert not any(r["outcome"] == "refuted" for r in equivalent)
+
+
+def test_the_nan_pairs_are_refuted_by_a_database_not_assumed_away(results):
+    for case_id in ("nan-self-equal", "nan-negated-less", "nan-not-equal-split", "nan-excluded-middle", "nan-case-branch", "nan-order-complement"):
+        assert results[case_id][1]["outcome"] == "refuted", case_id
+    for case_id in ("nan-is-nan-filter", "nan-join-self", "nan-ieee-divide-literal", "nan-not-in-list"):
+        assert results[case_id][1]["outcome"] == "proven", case_id
+    assert not any(r["outcome"] == "assumed" for c, r in results.values() if c.label == "not_equivalent")
+
+
+def test_an_explicit_held_out_field_overrides_the_position_and_other_cases_keep_the_rule():
+    cases = bench.load_cases("all")
+    held = {c.id for c in bench.load_cases("held-out")}
+    for i, c in enumerate(cases):
+        assert (c.id in held) == (c.held_out if c.held_out is not None else i % 4 == 3), c.id
+    explicit = [c for c in cases if c.held_out is not None]
+    assert explicit and all(cases.index(c) >= 112 for c in explicit)  # only the cases added after the position rule was in use
+    assert {c.id for c in explicit if c.held_out} == {"nan-is-nan-filter", "nan-ieee-divide-column", "nan-order-complement"}
+    # every case of the first 112 is held out exactly as the position rule says, whatever is appended after it
+    assert {c.id for c in cases[:112] if c.id in held} == {c.id for i, c in enumerate(cases[:112]) if i % 4 == 3}
+
+
+def test_a_float_sum_is_proved_clean_only_over_an_identical_plan_or_an_exact_type(results):
+    for case_id in ("float-sum-same-text", "float-sum-grouped-same-text", "float-avg-same-text", "int-sum-with-float-filter-elsewhere"):
+        assert results[case_id][1]["outcome"] == "proven", case_id
+    for case_id, (case, result) in results.items():
+        if case_id.startswith("float-") and "-sum-" in case_id and case.label == "equivalent" and case.violates:
+            # another plan over the same rows: any proof lists the order assumption
+            assert result["outcome"] in ("assumed", "unknown"), case_id
+    for case_id in ("float-sum-pre-aggregated", "float-sum-split", "float-sum-extra-filter"):
+        assert results[case_id][1]["outcome"] in ("unknown", "refuted"), case_id
 
 
 def test_the_literals_of_the_october_audit_are_exact(results):
@@ -53,8 +85,9 @@ def test_the_literals_of_the_october_audit_are_exact(results):
 
 def test_every_error_case_is_classified_by_its_verdict(results):
     errors = [(i, r) for i, (c, r) in results.items() if c.label in bench.EXPECTED_VERDICT]
-    assert len(errors) >= 10
-    assert [i for i, r in errors if not r["classified"]] == []
+    assert len(errors) >= 21
+    # the two window pairs are not proven equal (a filter moved across a window is not modelled): unknown, not wrong
+    assert sorted(i for i, r in errors if not r["classified"]) == ["window-sum-filter-below", "window-sum-where-to-outer"]
 
 
 def test_a_rewrite_that_moves_an_operation_ahead_of_its_guard_is_reported(results):
@@ -62,6 +95,27 @@ def test_a_rewrite_that_moves_an_operation_ahead_of_its_guard_is_reported(result
         assert results[case_id][1]["errors"] == "introduces", case_id
     for case_id in ("slash-to-safe-divide", "slash-to-nullif", "cast-to-safe-cast", "div-if-guard-removed"):
         assert results[case_id][1]["errors"] == "refines", case_id
+
+
+def test_numeric_scale_and_rounding_pairs_are_decided(results):
+    proved = ("numeric-literal-zeros", "numeric-literal-rounding", "numeric-times-int-keeps-scale", "numeric-cast-same-type", "numeric-round-idempotent",
+              "numeric-round-nine-noop", "numeric-add-product-twice", "numeric-round-negative-idempotent", "numeric-division-nine-digits", "numeric-bignumeric-roundtrip")
+    for case_id in proved:
+        assert results[case_id][1]["outcome"] == "proven", case_id
+    for case_id in ("numeric-double-round", "numeric-product-casts-wider", "numeric-literal-below-half", "numeric-division-roundtrip", "numeric-mul-distributes"):
+        assert results[case_id][1]["outcome"] in ("refuted", "unknown"), case_id
+    for case_id in ("numeric-overflow-guard", "numeric-div-guard-dropped"):
+        assert results[case_id][1]["errors"] == "introduces", case_id
+
+
+def test_a_sum_over_a_group_is_compared_group_by_group(results):
+    for case_id in ("group-sum-having-to-where", "group-sum-distinct-having-to-where", "group-sum-key-and-aggregate-having", "group-sum-join-having-to-where"):
+        assert results[case_id][1]["errors"] == "refines", case_id
+    for case_id in ("group-sum-where-to-having", "group-sum-two-keys-where-to-having", "distinct-sum-where-to-having"):
+        assert results[case_id][1]["errors"] == "introduces", case_id
+        assert results[case_id][1]["outcome"] == "unknown", case_id  # the proof is withheld
+    for case_id in ("group-sum-filter-respelled", "sum-commuted-argument", "group-sum-key-order", "global-sum-same-exposure", "group-sum-join-commuted"):
+        assert results[case_id][1]["errors"] == "same", case_id
 
 
 def test_the_held_out_quarter_scores_like_the_rest():

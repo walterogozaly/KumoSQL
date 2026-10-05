@@ -46,6 +46,7 @@ from .ast_utils import MAX_EXPANDED_READS, UnmodeledConstruct, distinct_on, drop
 from .duckdb_load import small_database
 from .set_operations import positional_sql_pair
 from .solver_lock import bounded_solver, serialized
+from .type_names import invalid_type_name
 
 try:  # pragma: no cover - exercised through the tests
     import z3
@@ -126,6 +127,13 @@ def _real_domain(sql_type: str) -> tuple[int | None, int] | None:
         precision, scale = declared
         return scale, 10 ** max(precision - scale, 0)
     return _REAL_DOMAINS.get(_base_type(sql_type))
+
+
+# the legal encoded values of a DATE (proleptic ordinal) and a DATETIME / TIMESTAMP (seconds from ordinal 0): years 1..9999
+_TEMPORAL_DOMAINS = {
+    "date": (1, _dt.date.max.toordinal()),
+    "datetime": (86400, _dt.date.max.toordinal() * 86400 + 86399),
+}
 
 
 def kind_of(sql_type: str) -> str | None:
@@ -613,6 +621,10 @@ class SymbolicDatabase:
                         self.constraints.append(z3.InRe(value, z3.Star(z3.Range(" ", "~"))))
                     if "decimal" in self.restrict and kind == "real":
                         self.constraints.append(z3.IsInt(value * 4))
+                    span = _TEMPORAL_DOMAINS.get(kind)
+                    if span is not None:  # keep models inside the range a decoded value can show (no clamping)
+                        low, high = span
+                        self.constraints.append(z3.Or(z3.Not(present), null, z3.And(value >= low, value <= high)))
                     domain = _real_domain(column.type) if kind == "real" else None
                     if domain is not None:
                         digits, bound = domain
@@ -1943,14 +1955,13 @@ def _model_value(model, v: V, kind: str):
     if kind in ("int",):
         return value.as_long()
     if kind == "date":
-        return _dt.date.fromordinal(max(1, min(value.as_long(), _dt.date.max.toordinal())))
+        return _dt.date.fromordinal(value.as_long())  # the domain constraints keep it in range
     if kind == "time":
         seconds = value.as_long() % 86400
         return _dt.time(seconds // 3600, seconds % 3600 // 60, seconds % 60)
     if kind == "datetime":
-        total = max(86400, value.as_long())
-        day, seconds = divmod(total, 86400)
-        return _dt.datetime.combine(_dt.date.fromordinal(min(day, _dt.date.max.toordinal())), _dt.time(seconds // 3600, seconds % 3600 // 60, seconds % 60))
+        day, seconds = divmod(value.as_long(), 86400)
+        return _dt.datetime.combine(_dt.date.fromordinal(day), _dt.time(seconds // 3600, seconds % 3600 // 60, seconds % 60))
     if kind == "bool":
         return z3.is_true(value)
     if kind == "real":
@@ -2318,6 +2329,12 @@ def check_bounded(left_sql: str, right_sql: str, schema: BoundedSchema, **kwargs
     """See :func:`_check_bounded`. For SQLite only a counterexample is offered: the encoding's LIKE (case-sensitive)
     and ``/`` (exact) differ from SQLite's, so "no counterexample" would not carry over."""
 
+    if kwargs.get("dialect", "bigquery") == "bigquery":
+        unknown_type = invalid_type_name(left_sql) or invalid_type_name(right_sql)
+        if unknown_type:
+            # The compiler reads FLOAT, INT32 and VARCHAR as FLOAT64, INT64 and STRING, so a bound "checked" for
+            # such a query would be a claim about a query BigQuery rejects.
+            return BoundedResult(BoundedStatus.UNKNOWN, f"unsupported: BigQuery would reject the query: {unknown_type}")
     result = _check_bounded(left_sql, right_sql, schema, **kwargs)
     if kwargs.get("dialect") == "sqlite" and result.bounded_equivalent:
         return BoundedResult(BoundedStatus.UNKNOWN, "SQLite: no equivalence claim (its LIKE and integer division differ from the encoding)", result.bound, None, result.seconds)

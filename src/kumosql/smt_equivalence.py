@@ -29,7 +29,7 @@ Values use three-valued logic with explicit NULL flags over an untyped domain
 (an exact rational, a string or a boolean), so no schema types are needed.
 Every proof assumes ``BASE_ASSUMPTIONS``: no NaN where a value's type is not declared (BigQuery: a NaN is modeled
 in declared FLOAT64 columns and what is computed from them, see ``_Compiler.may_nan``), runtime errors not modeled,
-SUM/AVG independent of row order, result column types not compared; with
+SUM/AVG independent of row order (dropped or narrowed by ``float_sum_order``), result column types not compared; with
 ``exact_arithmetic`` also that ``+``, ``-`` and ``*`` never round or overflow.
 Numeric conversions that the query text makes visible are kept: a CASE, IF,
 COALESCE, NULLIF or set operation with a FLOAT64 branch (a FLOAT64 literal or
@@ -76,13 +76,15 @@ import sqlglot
 from sqlglot import exp
 from .ast_utils import UnmodeledConstruct, canonical_negation, check_modeled, drop_case_conflicts, expand_alias_columns, extended_grouping, faithful_sql, merge_wrapper_tails, plain_distinct, star_modified
 from .parse_check import refuse_misread_proofs
+from . import proof_columns
 from .set_operations import positional_sql_pair
 from .smt_args import check_args
 from .solver_lock import bound, bounded_solver, serialized
 from .string_literals import canonical_literals
 from .type_names import invalid_type_name
 from .sqlx_fragments import masked_template_problem
-from . import smt_errors, smt_values, string_number_compare, string_number_literals
+from . import numeric_column_reading, smt_errors, smt_group_sums, smt_numeric, smt_values, string_number_compare, string_number_literals
+from .float_sum_order import Ledger
 
 try:  # pragma: no cover - exercised by the import itself
     import z3
@@ -270,11 +272,12 @@ def _names_output_alias(column: exp.Column, select: exp.Select) -> bool:
     return False
 
 
-def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None = None) -> exp.Expression:
+def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None = None, reader=None) -> exp.Expression:
     """A copy of ``body`` whose tables and derived tables carry positional aliases (``kq0``, ``kq1``..),
     so two spellings of the same relation get the same identity. A column is renamed through the
     nearest enclosing SELECT that declares its qualifier, so an alias reused in a nested scope is fine.
-    With a schema, a bare column of a select over one known table is qualified first."""
+    With a schema, a bare column of a select over one known table is qualified first; given the independent
+    ``reader`` of the statement (``proof_columns``), each such qualifier must name the owner it finds."""
 
     body = body.copy()
     ctes = {c.alias_or_name.lower() for c in body.find_all(exp.CTE)}
@@ -309,6 +312,10 @@ def _canonical_aliases(body: exp.Expression, schema: dict[str, list[str]] | None
                 key = ".".join(p.name for p in sources[0].parts).lower()
                 known = schema.get(key)
                 if known is not None and column.name.lower() in [c.lower() for c in known]:
+                    if reader is not None:
+                        verdict = reader.judge_tagged(column, proof_columns.Claim(source=proof_columns.source_tag(sources[0])), "smt_schema_qualification")
+                        if verdict.refused:
+                            raise Unsupported(f"independent check of column resolution: {verdict.reason}")
                     qualifier = (sources[0].alias_or_name or "").lower()
                     column.set("table", exp.to_identifier(sources[0].alias_or_name))
         if not qualifier:
@@ -764,6 +771,22 @@ _SIGN_OBSERVERS = ("IEEE_DIVIDE", "Atan2", "Sign")
 _NOT_FLOAT = ("INT64", "NUMERIC", "BIGNUMERIC", "STRING", "BOOL", "NULL", "OTHER")
 # Text that can make a NaN without a declared FLOAT64 column: a cast to FLOAT64 (of the string 'NaN'), IEEE_DIVIDE(0, 0).
 _NAN_SOURCES = re.compile(r"FLOAT|DOUBLE|IEEE_DIVIDE|IS_NAN|\bNAN\b", re.IGNORECASE)
+
+
+def _nan_text(left_sql: str, right_sql: str, float_columns) -> bool:
+    """Whether the queries can make or read a NaN: text that makes one (``_NAN_SOURCES``), a declared FLOAT64 column named
+    in them (a word of the text; a ``*`` may read any column), so a declared FLOAT64 column the queries never read does not
+    put NaN facts into a proof about other columns."""
+
+    names = {name.lower() for _, name in float_columns}
+    for sql in (left_sql, right_sql):
+        if _NAN_SOURCES.search(sql):
+            return True
+        if names and ("*" in sql or names & set(re.findall(r"\w+", sql.lower()))):
+            return True
+    return False
+
+
 # Functions whose result is text or a Boolean, so never a NaN whatever the arguments.
 _NAN_FREE_RESULT = frozenset((
     "Upper", "Lower", "Length", "Trim", "Concat", "DPipe", "Like", "ILike", "StartsWith", "EndsWith", "Contains", "Is", "Not", "IsNan", "IsInf",
@@ -1031,8 +1054,13 @@ class _Compiler:
         # Without that and without a declared FLOAT64 column no value can be one, so no fact about NaN is stated and
         # the proof is the one made without the model (NaN is then just another value, which a proof holds for too).
         self.nan_text = False
+        self.sums = Ledger()  # SUM and AVG calls, for the row-order assumption (float_sum_order.py)
         self.string_literals: set[str] = set()
         self.timestamp_literals: set[str] = set()
+        # The independent reader of the statement being compiled (``proof_columns``) and the FROM-item number of each
+        # source it has seen, to compare a bare column's owner with the one the text names.
+        self.column_reader = None
+        self.source_tags: dict[int, tuple] = {}
 
     def fresh(self, prefix: str) -> str:
         return f"{prefix}{next(self.counter)}"
@@ -1041,13 +1069,17 @@ class _Compiler:
 
     def compile(self, sql: str) -> _Union:
         try:
-            statements = [expand_alias_columns(check_args(check_modeled(canonical_negation(s))), self.schema) for s in sqlglot.parse(sql, read=self.dialect) if s is not None]
+            self.column_reader = proof_columns.reader_for(sql, self.schema, self.dialect)
+            statements = [expand_alias_columns(check_args(check_modeled(canonical_negation(s))), self.schema) for s in proof_columns.parse_tagged(sql, self.dialect, self.column_reader)]
         except UnmodeledConstruct as error:
             raise Unsupported(str(error)) from error
+        except proof_columns.ColumnResolutionRefused as refusal:
+            raise Unsupported(f"independent check of column resolution: {refusal}") from None
         if len(statements) != 1:
             raise Unsupported(f"expected one statement, found {len(statements)}")
         statement = statements[0]
         self.float_capable = self.float_capable or smt_values.float_capable(statement)
+        self.sums.statement(statement)
         if any(statement.find_all(exp.Pivot)):
             # PIVOT / UNPIVOT reshape columns and rows; they are not modeled, so never claim equivalence.
             raise Unsupported("PIVOT and UNPIVOT are not modeled")
@@ -1262,6 +1294,7 @@ class _Compiler:
                 if offset:
                     cols[offset] = occ.col("offset")
                 source = _Source(cols=cols, order=list(cols), value_table=alias == element)
+                self._tag_source(source, source_node)
                 new_states = []
                 for st in states:
                     if alias in st.env:
@@ -1287,6 +1320,7 @@ class _Compiler:
                 alias, source = self._source(source_node, ctes, b_occs, b_conds)
             finally:
                 self.collector = saved
+            self._tag_source(source, source_node)
             on = join.args.get("on") if join is not None else None
             new_states: list[_State] = []
             for st in states:
@@ -1337,7 +1371,22 @@ class _Compiler:
                     self.collector = saved
         return states
 
+    def _tag_source(self, source: "_Source", node: exp.Expression, of: "_Source | None" = None) -> None:
+        """Remember which FROM item of the statement ``source`` stands for (``proof_columns.source_tag``)."""
+
+        if self.column_reader is None:
+            return
+        number = proof_columns.source_tag(node) if of is None else self.source_tags.get(id(of), (None, None))[1]
+        previous = self.source_tags.get(id(source))
+        self.source_tags[id(source)] = (source, number if previous is None or previous[1] == number else None)
+
     def _null_source(self, source: "_Source") -> "_Source":
+        result = self._null_source_of(source)
+        if result is not source:
+            self._tag_source(result, None, of=source)
+        return result
+
+    def _null_source_of(self, source: "_Source") -> "_Source":
         V = _value_sort()
         null = _Val(z3.BoolVal(True), V.Num(0))
         if source.all_null is not None:
@@ -1346,6 +1395,19 @@ class _Compiler:
             return _Source(all_null=null)
         names = [name for name, _ in source.star()]
         return _Source(cols={name: null for name in names}, order=list(names))
+
+    def _judge_column(self, col: exp.Column, claim: "proof_columns.Claim") -> None:
+        """Have the independent reader confirm the owner the compiler chose for a bare column."""
+
+        if self.column_reader is None:
+            return
+        verdict = self.column_reader.judge_tagged(col, claim, "smt")
+        if verdict.refused:
+            raise Unsupported(f"independent check of column resolution: {verdict.reason}")
+
+    def _chosen(self, source: "_Source") -> "proof_columns.Claim":
+        entry = self.source_tags.get(id(source))
+        return proof_columns.Claim(source=entry[1] if entry is not None and entry[0] is source else None)
 
     def _null_env(self, env: "_Env") -> "_Env":
         """The scope with every source's columns replaced by NULL (the unmatched side of an outer join)."""
@@ -1386,6 +1448,7 @@ class _Compiler:
         group = node.args.get("group")
         having = node.args.get("having")
         agg_ctx = _AggCtx(self)
+        sites_start = len(self.sites)
         names: list[str] = []
         outputs: list[_Val] = []
         aliases: dict[str, exp.Expression] = {}
@@ -1438,7 +1501,7 @@ class _Compiler:
                 else:
                     keys.append(self._val(key_expr, env, None, aliases))
         having_pred = self._pred(having.this, env, agg_ctx, aliases) if having is not None else None
-        return _Agg(
+        block = _Agg(
             occs,
             cond,
             keys,
@@ -1451,6 +1514,8 @@ class _Compiler:
             facts=self.facts[facts_start:],
             subs=state.subs,
         )
+        smt_group_sums.attach(self, sites_start, block)
+        return block
 
     def _source(self, node, ctes, occs, conds) -> tuple[str, _Source]:
         if isinstance(node, exp.Table):
@@ -1481,14 +1546,16 @@ class _Compiler:
         return ".".join(parts)
 
     def _derived(self, body, ctes, occs, conds) -> _Source:
-        saved = len(self.facts)
+        saved, saved_sites = len(self.facts), len(self.sites)
         try:
             sub = self._query(body, ctes)
         except _Exhausted:
             raise
         except Unsupported:
             del self.facts[saved:]
-            return self._opaque(body, ctes, occs)
+            dropped = len(self.sites) > saved_sites
+            del self.sites[saved_sites:]  # what the failed read recorded is not scoped: the relation kept whole stands for it
+            return self._opaque(body, ctes, occs, read=False, dropped=dropped)
         one_row = self._one_row_source(sub, body, ctes)
         if one_row is not None:
             return one_row
@@ -1532,7 +1599,7 @@ class _Compiler:
         expanded = self._expand_ctes(body.copy(), ctes)
         self._check_nondeterminism(expanded)
         self.uses_uf = True  # the values are free: a model is not a database, so no counterexample
-        key = _canonical_aliases(expanded, self.schema).sql(dialect="bigquery", normalize_functions="upper")
+        key = _canonical_aliases(expanded, self.schema, self.column_reader).sql(dialect="bigquery", normalize_functions="upper")
         tag = hashlib.sha1(key.encode()).hexdigest()[:16]
         V = _value_sort()
         counts = {id(call.var): call for call in block.aggs if call.func in ("COUNT", "COUNTIF")}
@@ -1571,7 +1638,7 @@ class _Compiler:
         self.used_setsrc = True
         return _Source(cols=dict(zip(names, columns)), order=list(names))
 
-    def _opaque(self, body, ctes, occs) -> _Source:
+    def _opaque(self, body, ctes, occs, read: bool = True, dropped: bool = False) -> _Source:
         """A derived relation kept whole: identified by its CTE-expanded SQL."""
 
         body = self._expand_ctes(body.copy(), ctes)
@@ -1607,7 +1674,7 @@ class _Compiler:
             names.append(item.alias_or_name.lower())
         if "" in names or len(set(names)) != len(names):
             raise Unsupported("derived relation with unnamed or duplicate columns")
-        canonical = _canonical_aliases(body, self.schema)
+        canonical = _canonical_aliases(body, self.schema, self.column_reader)
         position = {i: i for i in range(len(names))}
         root = canonical
         while isinstance(root, exp.Subquery):
@@ -1633,6 +1700,8 @@ class _Compiler:
         occ = _Occ(key, self.fresh("d"), names, opaque=True)
         self.untyped_sources = True
         occs.append(occ)
+        if not read and (dropped or any(body.find_all(exp.Sum))):
+            smt_group_sums.opaque_site(self, occ, any(body.find_all(exp.Sum)))  # what the compiler did not read can still fail
         if not lost:  # a body whose text lost a NULLS placement is matched by its key alone, never re-proved
             self.opaque_bodies[key] = (key[1:-1], len(names))
         if isinstance(inner, exp.Select) and _selects_a_set(inner):
@@ -1687,10 +1756,13 @@ class _Compiler:
             if not same_column:
                 if definite or maybe:
                     raise Unsupported(f"{name} is both a SELECT alias and a possible column")
+                self._judge_column(col, proof_columns.Claim(alias=True))
                 return alias_expr
         if len(definite) == 1 and not maybe:
+            self._judge_column(col, self._chosen(definite[0]))
             return definite[0].lookup(name)
         if not definite and len(maybe) == 1 and len(env) == 1:
+            self._judge_column(col, self._chosen(maybe[0]))
             return maybe[0].lookup(name)
         raise Unsupported(f"cannot resolve column {name} without a schema")
 
@@ -1983,6 +2055,8 @@ class _Compiler:
                 if typed[0] == "int":
                     self._note_integer(typed[1])
                 return _Val(z3.BoolVal(False), V.Num(z3.RealVal(f"{typed[1].numerator}/{typed[1].denominator}")))
+        if self.dialect == "bigquery" and (scaled := smt_numeric.compile_node(self, e, env, agg, aliases)) is not None:
+            return _Val(*scaled)  # NUMERIC and BIGNUMERIC values of known scale: the rounded result (smt_numeric)
         if isinstance(e, (exp.Add, exp.Sub, exp.Mul)) and not self.exact:
             folded = _literal_arithmetic(e, self.dialect)
             if folded is not None:
@@ -2278,7 +2352,7 @@ class _Compiler:
 
     @property
     def nan_in_play(self) -> bool:
-        return self.model_nan and (self.nan_text or bool(self.float_columns()))
+        return self.model_nan and self.nan_text
 
     def float_columns(self) -> frozenset:
         """``(table, column)`` of every declared FLOAT64 column: the only base-table values that can be a NaN."""
@@ -2530,13 +2604,10 @@ class _Compiler:
                 x = V.num(v.val)
                 if cls == S.INT64:
                     typed = z3.And(V.is_Num(v.val), z3.IsInt(x), x >= S.INT64_MIN, x <= S.INT64_MAX)
-                elif cls == S.NUMERIC:
-                    limit = 10 ** (S.NUMERIC_DIGITS - S.NUMERIC_SCALE)
-                    typed = z3.And(V.is_Num(v.val), z3.IsInt(x * 10**S.NUMERIC_SCALE), x < limit, x > -limit)
+                elif cls in (S.NUMERIC, S.BIGNUMERIC):
+                    typed = smt_numeric.typed_fact(cls, V, v)
                 elif cls == S.FLOAT64:
                     typed = z3.Or(V.is_Num(v.val), V.is_Nan(v.val))
-                elif cls == S.BIGNUMERIC:
-                    typed = V.is_Num(v.val)
                 elif cls == S.STRING:
                     typed = V.is_Str(v.val)
                 elif cls == S.BOOL:
@@ -2655,12 +2726,12 @@ class _Compiler:
         known = self._class_of(e, env, agg, aliases) if isinstance(e, exp.Expression) else None
         return self._tag(term, False, assumed=known is None or known == smt_values.FLOAT64)
 
-    def _aggregate(self, func: str, e, env, agg: _AggCtx | None) -> _Val:
+    def _aggregate(self, func: str, e, env, agg: _AggCtx | None, from_avg: bool = False) -> _Val:
         if agg is None:
             raise Unsupported(f"aggregate in a non-aggregate position: {e.sql(dialect='bigquery')}")
         if func == "AVG" and e.this is not None and not any(e.args.get(k) for k in ("having_max", "ignore_nulls", "order", "limit", "separator")):
             # AVG(x) is SUM(x) / COUNT(x): NULL when no value is present, and shared with a spelled-out quotient.
-            total = self._aggregate("SUM", exp.Sum(this=e.this.copy()), env, agg)
+            total = self._aggregate("SUM", exp.Sum(this=e.this.copy()), env, agg, from_avg=True)
             count = self._aggregate("COUNT", exp.Count(this=e.this.copy()), env, agg)
             null_fn, val_fn = self._function("Div", 2)
             args = self._uf_args([total, count])
@@ -2700,6 +2771,11 @@ class _Compiler:
             arg = _box(self._pred(target, env, None, None))
         else:
             arg = self._val(target, env, None, None)
+        if func == "SUM" and self.dialect == "bigquery":
+            try:
+                self.sums.observe_sum(e, self._class_of(target, env, None, None))
+            except Unsupported:
+                self.sums.observe_sum(e, None)
         all_null = arg is not None and func in ("COUNT", "SUM", "MIN", "MAX", "AVG") and z3.is_true(z3.simplify(arg.null))
         if all_null:
             # An aggregate of values that are all NULL: COUNT is 0, the others are NULL. The call is still
@@ -2722,14 +2798,18 @@ class _Compiler:
         self._tag(var.val, arg is not None and not never_null and self.may_nan(arg.val))
         agg.calls.append(_AggCall(func, distinct, arg, var))
         if func == "SUM" and self.dialect == "bigquery":
-            # A sum can overflow (INT64, NUMERIC) whichever order the rows are added in; which groups do is not modeled,
-            # so the failing condition is one unknown fact per call (the same for equal arguments).
-            before = self.uses_uf
-            fails = self._may_fail("SUMD" if distinct else "SUM", [arg])  # equal arguments overflow alike
+            # A sum can overflow (INT64, NUMERIC) whichever order the rows are added in: a site per call, completed with
+            # the rows of its group when its select is (``smt_group_sums``). A counterexample database must not hold a
+            # sum that can overflow: a plain column of small values cannot, anything else is not known.
+            try:
+                cls = self._class_of(target, env, None, None)
+            except Unsupported:
+                cls = None
+            smt_group_sums.note(self, e, arg, distinct, cls, maybe=from_avg)
             if isinstance(target, exp.Column):
-                self.uses_uf = before
-                self.bounded_sums = True  # a small counterexample cannot overflow a sum of column values
-            self._site("overflow in SUM", e, fails)
+                self.bounded_sums = True
+            else:
+                self.uses_uf = True
         return var
 
 
@@ -4614,7 +4694,7 @@ def _prove_core(
 
     def attempt(semijoin: bool, blind: bool = False) -> SmtEquivalenceResult:
         compiler = _Compiler(schema, exact_arithmetic, dialect, types)
-        compiler.nan_text = bool(_NAN_SOURCES.search(left_sql) or _NAN_SOURCES.search(right_sql))
+        compiler.nan_text = _nan_text(left_sql, right_sql, compiler.float_columns())
         compiler.semijoin = semijoin
         compiler.blind_sets = blind
         try:
@@ -4655,10 +4735,12 @@ def _prove_core(
             # Every column is declared INT64, NUMERIC, STRING, BOOL or another non-floating type and no expression can produce a
             # FLOAT64: there is no NaN, a SUM is exact in any order, and + - * are exact (an overflow is an error, reported below).
             assumed = tuple(a for a in assumed if a not in (BASE_ASSUMPTIONS[0], BASE_ASSUMPTIONS[2], EXACT_ARITHMETIC_ASSUMPTION))
-        elif dialect == "bigquery" and not compiler.nan_assumed and not compiler.columns_untyped():
-            # Every column has a declared type and every value of unknown type was avoided: each value that can be a
-            # NaN (a declared FLOAT64 column, what is computed from one) is modeled as one, so nothing is assumed away.
-            assumed = tuple(a for a in assumed if a != BASE_ASSUMPTIONS[0])
+        elif dialect == "bigquery":
+            if not compiler.nan_assumed and not compiler.columns_untyped():
+                # Every column has a declared type and every value of unknown type was avoided: each value that can be a
+                # NaN (a declared FLOAT64 column, what is computed from one) is modeled as one, so nothing is assumed away.
+                assumed = tuple(a for a in assumed if a != BASE_ASSUMPTIONS[0])
+            assumed = compiler.sums.settle(assumed, BASE_ASSUMPTIONS[2])  # an exact SUM, or the same plan on both sides
         order = compiler.order_facts()
         for union in (left, right):
             for block in union.branches:
@@ -4945,6 +5027,19 @@ def _check_options(kwargs: dict) -> None:
 @refuse_misread_proofs
 @serialized
 def prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
+    """Prove two BigQuery queries return the same result bag, or refute them.
+
+    On MySQL a proof that needs different strings compared with an untyped column to differ must also hold with the strings
+    read as the numbers they convert to (``kumosql.numeric_column_reading``).
+    See ``_prove_equivalent_smt`` for the rest.
+    """
+
+    return numeric_column_reading.checked(
+        _prove_equivalent_smt, left_sql, right_sql, kwargs, lambda reason: SmtEquivalenceResult(SmtStatus.NOT_PROVEN, reason)
+    )
+
+
+def _prove_equivalent_smt(left_sql: str, right_sql: str, **kwargs) -> SmtEquivalenceResult:
     """Prove two BigQuery queries return the same result bag, or refute them.
 
     Input the prover cannot read (untokenizable text, nesting too deep for the compiler) is

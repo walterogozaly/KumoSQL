@@ -41,6 +41,7 @@ from sqlglot import exp
 from .algebraic_equivalence import prove_equivalent_algebraic
 from .parse_check import refuse_misread_proofs
 from .sqlx_fragments import masked_template_problem
+from .type_names import invalid_type_name
 from .ast_utils import star_modified
 from .smt_equivalence import (
     SmtEquivalenceResult,
@@ -305,6 +306,11 @@ def prove_equivalent_sqlsolver(
     counterexample, so it is reported as ``NOT_PROVEN``.
     """
 
+    unknown_type = invalid_type_name(left_sql) or invalid_type_name(right_sql)
+    if unknown_type:
+        # SQLSolver reads the schema's column types, not the queries' casts, so it would not notice a type name
+        # BigQuery rejects, and the translation prints FLOAT, INT32 and VARCHAR as FLOAT64, INT64 and STRING.
+        return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: BigQuery would reject the query: {unknown_type}")
     masked = masked_template_problem(left_sql, right_sql)
     if masked:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, masked)

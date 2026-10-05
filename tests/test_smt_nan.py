@@ -291,6 +291,17 @@ def test_the_prover_agrees_with_a_reference_evaluator_on_random_nan_pairs():
     assert proven >= 10 and refuted >= 5 and differing >= 10  # the sample has all three kinds
 
 
+def test_a_declared_float_column_the_queries_never_read_puts_no_nan_fact_into_the_proof():
+    from kumosql.smt_equivalence import _nan_text
+
+    floats = frozenset({("t", "f")})
+    assert not _nan_text("SELECT n FROM t WHERE n > 1", "SELECT n FROM t WHERE 1 < n", floats)
+    assert _nan_text("SELECT f FROM t", "SELECT f FROM t", floats)
+    assert _nan_text("SELECT * FROM t", "SELECT * FROM t", floats)  # a star may read it
+    assert _nan_text("SELECT n FROM t", "SELECT IEEE_DIVIDE(n, n) FROM t", frozenset())  # NaN from the text
+    assert not _nan_text("SELECT n FROM t", "SELECT n FROM t", frozenset())
+
+
 def test_a_nan_counterexample_reaches_the_json_endpoint_as_text():
     import json
 
