@@ -153,6 +153,9 @@ HEAVY_FILES = [
 # ``pytest -m eval`` runs just the floors and ``pytest -m "not eval"`` everything else.
 EVAL_FILES = {
     "test_eval_execution_cache.py",
+    "test_googlesql_conformance_parser.py",
+    "test_gsql_eval_regress_b.py",
+    "test_uexpr_tpch.py",
     "test_proof_format_sqlfluff.py",
     "test_proof_recheck_dialect.py",
     "test_proof_recheck_fuzz_reuse.py",
