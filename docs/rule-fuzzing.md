@@ -32,6 +32,9 @@ runs, each rewrite that fires is checked on its own, on the exact query it saw.
 
 Because the firing is checked on the tree the rule saw, a difference is a bug in that rule and nowhere else.
 
+`target:exists_membership` adds focused cases for implied and FK-witnessed `EXISTS`, projected `IN` and `NOT IN`,
+and FK-backed joins. Nullable membership operands and nullable FK joins are included as near misses.
+
 ## Using it
 
 ```shell
