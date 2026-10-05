@@ -214,6 +214,8 @@ _UNMODELED_ARGS = (
     (exp.Table, "only"),
     (exp.Table, "pattern"),
     (exp.Table, "ordinality"),
+    (exp.Table, "pivots"),  # PIVOT/UNPIVOT change a relation's rows or columns
+    (exp.Subquery, "pivots"),
 )
 
 

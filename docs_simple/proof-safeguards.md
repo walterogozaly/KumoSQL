@@ -16,6 +16,10 @@ On its first run the checker caught a real mistake: `inline_single_use_ctes` rep
 
 Two more cleanups are checked the same way. Removing parentheses is accepted only if the query still groups every operator exactly as before, so `(a OR b) AND c` can never quietly become `a OR b AND c`. Removing `DISTINCT` is accepted only if the query already has a plain `GROUP BY` and every grouping column is in the output, so every row is already unique.
 
+## PIVOT and UNPIVOT
+
+These clauses change a table's rows or columns. Some rewrites can look through a derived table and accidentally drop the modifier, so both provers now leave queries with PIVOT or UNPIVOT unproven. A pivot written with ordinary `CASE` expressions and aggregation is still supported.
+
 ## Qualifying columns
 
 `qualify_columns` writes `o.id` in place of a bare `id` when `id` belongs to the table `o`. Picking the owner is easy to get wrong: a name can be a column of two tables, a nickname the query gave to a column (`SELECT x AS y ... GROUP BY y` means the nickname, not some table's `y`), a field inside a struct, or a column of the outer query. If the rule and the prover made the same wrong pick, both would agree on a query that reads a different column.
