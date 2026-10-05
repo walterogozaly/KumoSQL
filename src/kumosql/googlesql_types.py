@@ -830,10 +830,26 @@ class _Typer:
         return scope
 
     def add_item(self, item: exp.Expression, scope: _Scope, outer, ctes, join: exp.Join | None) -> None:
+        if isinstance(item, exp.Subquery) and isinstance(item.this, exp.Table) and not item.args.get("alias") \
+                and not item.args.get("pivots"):
+            item = item.this  # (S JOIN T ON ..): a parenthesized join
+        if isinstance(item, exp.Table) and item.args.get("joins") and not item.args.get("pivots") and \
+                isinstance(item.this, exp.Identifier) and not any(j.args.get("using") for j in item.args["joins"]) and \
+                not (join is not None and join.args.get("using")):
+            # R JOIN (S JOIN T ON ..) ON ..: the nested tables take part in the join like the others. The nested ON
+            # conditions are not typed.
+            self.add_item_range(item, scope, outer, ctes, join, nested=True)
+            for nested in item.args["joins"]:
+                self.add_item(nested.this, scope, outer, ctes, nested)
+            return
+        self.add_item_range(item, scope, outer, ctes, join)
+
+    def add_item_range(self, item: exp.Expression, scope: _Scope, outer, ctes, join: exp.Join | None,
+                       nested: bool = False) -> None:
         before = list(scope.star) if scope.star is not None else None
         new = self.range_of(item, scope, outer, ctes)
-        if isinstance(item, (exp.Table, exp.Subquery)) and item.args.get("joins"):
-            new = [_Range(None, None, node=item)]  # a parenthesized join
+        if isinstance(item, (exp.Table, exp.Subquery)) and item.args.get("joins") and not nested:
+            new = [_Range(None, None, node=item)]  # a parenthesized join this typer does not model
         if item.args.get("pivots"):
             new = [self.pivoted(new, item.args["pivots"], outer, ctes, item)]
         for r in new:
