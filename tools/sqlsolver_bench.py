@@ -3,7 +3,7 @@
 Each benchmark file holds pairs of queries on consecutive lines (SQLSolver's
 authors state each pair is equivalent). For every pair this reports whether the
 prover proved it, and re-checks every proof by running both queries on random
-SQLite databases that respect the schema's NOT NULL and key constraints.
+DuckDB databases that respect the schema's NOT NULL and key constraints.
 
     python tools/sqlsolver_bench.py            # all suites
     python tools/sqlsolver_bench.py calcite    # one suite
@@ -15,9 +15,13 @@ The data in tests/fixtures/sqlsolver comes from https://github.com/SJTU-IPADS/SQ
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from decimal import Decimal
 import json
+import hashlib
+import os
+import platform
+import tempfile
 from pathlib import Path
 import random
 import re
@@ -243,7 +247,70 @@ def calcite_operators(sql: str) -> str:
         return sql
 
 
-def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60, seed: int = 11, constants: bool = False, strings: list | None = None, clock: str | None = None):
+def _random_check_cache(left_sql, right_sql, used, samples, db):
+    """Optional local evidence for the sample executions only, never for a proof.
+
+    Callers opt in only for a fresh connection from new_database(). Missing,
+    corrupt or unwritable evidence falls back to executing the checks.
+    """
+    import duckdb
+    from kumosql import duckdb_load
+
+    folder = os.environ.get("KUMOSQL_EVAL_CACHE", "").strip()
+    if folder.lower() in ("", "off", "0", "false"):
+        return None, False
+    if any(None in sample for sample in samples):
+        return None, False  # A row without a literal representation has no reusable key.
+    try:
+        root = Path(__file__).resolve().parent
+        sources = [Path(__file__), Path(duckdb_load.__file__), root / "bench_sql_repairs.py"]
+        context = {
+            "format": 1,
+            "queries": [left_sql, right_sql],
+            "tables": [asdict(t) for t in used],
+            "samples": samples,
+            "sources": [hashlib.sha256(p.read_bytes()).hexdigest() for p in sources],
+            "sqlglot": sqlglot.__version__,
+            "compiled": any(Path(sqlglot.__file__).parent.rglob("*.so")) or any(Path(sqlglot.__file__).parent.rglob("*.pyd")),
+            "duckdb": duckdb.__version__,
+            "python": platform.python_version(),
+            "platform": [platform.system(), platform.machine()],
+            "settings": db.execute("SELECT name, value FROM duckdb_settings() ORDER BY name").fetchall(),
+            "ddl": db.execute("SELECT schema_name, table_name, sql FROM duckdb_tables() ORDER BY schema_name, table_name").fetchall(),
+        }
+        key = hashlib.sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()
+        path = Path(folder) / f"{key}.json"
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+            hit = record == {"key": key, "random_agreement": True} and 0 <= time.time() - path.stat().st_mtime < 7 * 86400
+        except (OSError, ValueError):
+            hit = False
+        return path, hit
+    except (OSError, duckdb.Error):
+        return None, False
+
+
+def _save_random_agreement(path):
+    if path is None:
+        return
+    temporary = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+            json.dump({"key": path.stem, "random_agreement": True}, handle)
+        os.replace(temporary, path)
+    except OSError:
+        pass  # An unavailable cache cannot change an eval verdict.
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60, seed: int = 11, constants: bool = False, strings: list | None = None, clock: str | None = None, *, cache_random: bool = False):
     """A database on which the queries differ as bags, else ``None``; ``False`` if DuckDB rejects them."""
 
     import duckdb
@@ -267,14 +334,21 @@ def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60
     for literal in [lit for sql in (left, right) for lit in sqlglot.parse_one(sql, read="mysql").find_all(exp.Literal)]:
         if not literal.is_string and re.fullmatch(r"-?\d+", literal.this) and abs(int(literal.this)) < 10**6:
             numbers.update({int(literal.this) - 1, int(literal.this), int(literal.this) + 1})
-    loader = TableLoader(db)
-    agreed: set[tuple] = set()  # databases the queries were already run on without a difference
+    samples = []
     # Plain databases first, then skewed ones whose numbers sit next to the queries' literals
     for trial in range(2 * trials):
         # every table of a skewed database draws its numbers from the same few, so join keys meet
         shared = rng.sample(sorted(numbers), min(len(numbers), rng.choice([2, 3, 4]))) if trial >= trials else None
         database = {f'"{table.name}"': random_rows(table, rng, shared if trial >= trials else None, strings) for table in used}
         key = rows_key(database)
+        samples.append((database, key))
+    cache_path, hit = _random_check_cache(left_sql, right_sql, used, [key for _, key in samples], db) if cache_random else (None, False)
+    if hit:
+        logging.getLogger(__name__).info("Reusing sample execution evidence: %s", cache_path.stem)
+        return targeted_differ(left_sql, right_sql, used)
+    loader = TableLoader(db)
+    agreed: set[tuple] = set()  # databases the queries were already run on without a difference
+    for database, key in samples:
         if key in agreed:
             continue  # small random databases repeat (empty tables, one-row tables); the answer would too
         try:
@@ -286,12 +360,13 @@ def differ(left: str, right: str, tables: dict[str, Table], db, trials: int = 60
         except duckdb.Error as error:
             if strings is None and "Conversion Error" in str(error):
                 # a query that casts text to a number rejects "a"; replay it on digit strings instead
-                return differ(left, right, tables, db, trials, seed, constants, ["1", "2", "3"], clock)
+                return differ(left, right, tables, db, trials, seed, constants, ["1", "2", "3"], clock, cache_random=cache_random)
             return False
         if found:
             return (left_sql, right_sql, a, b)
         if None not in key:
             agreed.add(key)
+    _save_random_agreement(cache_path)
     return targeted_differ(left_sql, right_sql, used)
 
 
@@ -374,7 +449,7 @@ def run_suite(name: str, prove, limit: int | None = None, trials: int = 60) -> S
             result.wrong.append((index, "proved, but the pair must stay unproven"))
             continue
         result.proved += 1
-        counter = differ(left, right, tables, db, trials, constants=name in CONSTANT_GROUPING)
+        counter = differ(left, right, tables, db, trials, constants=name in CONSTANT_GROUPING, cache_random=True)
         if counter is False:
             result.unchecked += 1
         elif counter is not None:

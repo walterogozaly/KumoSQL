@@ -122,6 +122,14 @@ A database that compares a whole number with a decimal column first converts the
 
 A query that removes duplicates inside a subquery, then joins it to a table on whole-number key columns, can have its duplicate removal moved to the outside when the join already makes every output row unique. KumoSQL's prover applies that move only when the columns are declared whole numbers and the joined tables' keys are fully pinned down; any grouping, limit, outer join or other twist makes it decline and leave the pair unproven. The evidence is a handful of textbook query pairs, so treat it as a narrow rule. The reference page has the exact conditions and the recorded scores: [Full reference](../docs/provers.md).
 
+## Avoiding repeated work
+
+When a proof tries several fallback rules, it keeps the earlier normalization result for that same proof. It also keeps the assumptions attached to it. A different proof, such as one with different declared keys, starts fresh.
+
+If a query returns two columns and a view returns twenty, returning the entire view cannot answer that query. KumoSQL skips that impossible candidate and still proves any proposed two-column projection. Stars whose width is not settled keep the existing checks. These changes reduce work; they do not relax proof acceptance.
+
+Python can clean up old objects on a different thread from the one using the solver. KumoSQL now keeps that automatic cleanup inside the solver lock as well, and restores the caller's cleanup setting afterwards. This addresses concurrent proof hangs without changing proof acceptance or increasing test timeouts.
+
 ## The current time inside one comparison
 
 `CURRENT_TIMESTAMP` is refused by default, because two queries run at different moments return different answers. A comparison can instead be told that both queries run at the same instant (`statement_clock=True`, the reading QED and Calcite's optimizer tests use). Then `SELECT hired FROM emp WHERE hired = CURRENT_TIMESTAMP` and `SELECT CURRENT_TIMESTAMP FROM emp WHERE hired = CURRENT_TIMESTAMP` are the same query: a column the filter pins to the clock holds the clock's value in every row that survives it. Only timestamp columns are pinned to `CURRENT_TIMESTAMP` and date columns to `CURRENT_DATE`, so a string compared with the clock is left alone. The limit: the evidence is one Calcite test pair and the unit tests; a pair meant to be compared across runs at different times must not use the option. The exact conditions are in the [full reference](../docs/provers.md).

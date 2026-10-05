@@ -39,6 +39,7 @@ from concurrent.futures import ProcessPoolExecutor
 import hashlib
 import json
 import logging
+import multiprocessing
 import os
 from pathlib import Path
 import re
@@ -309,6 +310,18 @@ def summarize(records: list[dict]) -> dict:
     return out
 
 
+def run_tasks(tasks: list[dict], jobs: int = 1) -> list[dict]:
+    """Score the unchanged query tasks independently, preserving input/result order.
+
+    Spawn gives each process its own solver state; one-query chunks prevent a
+    difficult query from trapping three more queries in the same worker queue.
+    """
+    if jobs <= 1:
+        return [try_rewrite(task) for task in tasks]
+    with ProcessPoolExecutor(max_workers=jobs, mp_context=multiprocessing.get_context("spawn")) as pool:
+        return list(pool.map(try_rewrite, tasks, chunksize=1))
+
+
 def run_workload(name: str, data: Path | None, sample: int | None, budget: int, jobs: int, use_baseline: bool, tracks: list[str]) -> dict:
     queries, schema = load_workload(name, data, sample)
     dev = {q: r["sql"] for q, r in queries.items() if not r["held_out"]}
@@ -335,11 +348,7 @@ def run_workload(name: str, data: Path | None, sample: int | None, budget: int, 
         plans["given"] = [g for g in (given_record(n, s, schema) for n, s in load_given(data).items()) if g]
     for track, track_views in plans.items():
         tasks = [{"id": q, "sql": r["sql"], "held_out": r["held_out"], "schema": schema, "views": track_views, "track": track, "baseline": use_baseline} for q, r in queries.items()]
-        if jobs > 1:
-            with ProcessPoolExecutor(max_workers=jobs) as pool:
-                records = list(pool.map(try_rewrite, tasks, chunksize=4))
-        else:
-            records = [try_rewrite(t) for t in tasks]
+        records = run_tasks(tasks, jobs)
         result["tracks"][track] = summarize(records)
         result["records"][track] = records
     return result

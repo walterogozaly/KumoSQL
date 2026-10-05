@@ -18,6 +18,16 @@ python tools/run_tests.py --label "simple documentation" --target tests/test_doc
 
 `--target` records the intended test file in history. The final positional path chooses which tests actually run. Use `-j 2` to choose two workers or `-j 1` for a serial run.
 
+## What to run before merging
+
+Walter approved running broad expensive coverage intermittently so changes get feedback faster. For each code candidate, run the tests and benchmarks affected by the change, then `python tools/run_tests.py --routine`. That checks the fast non-eval regressions. It does not mean every benchmark floor passed.
+
+Changes to shared prover or parser logic still need comparisons across the affected cases and checks that prevent wrong proofs. A gain elsewhere cannot hide a loss. Investigate failures before merging.
+
+Run the full default suite nightly and before releases. The GitHub workflow schedules that coverage if Actions is enabled; the Dell can run the same full command. Record the exact commit and investigate periodic failures promptly, blocking merges that touch the failing area. Run affected tests marked `slow` explicitly.
+
+One measured Dell candidate took about 10.6 minutes for routine pytest checks versus 65 minutes for full pytest coverage: 83.7% less time. This saves time by changing how often expensive coverage runs. Actual prover improvements need separate before/after measurements. The full run had one subprocess-exit timeout that passed isolated rechecking; it was not a green full result. See the [full procedure](../docs/test-history.md#merge-testing-procedure).
+
 ## Other useful runs
 
 | Command option | What runs |
