@@ -12,8 +12,11 @@ against the changed schema, in dependency order, and compared with how it resolv
   named by an unresolved template) and so is anything that reads it. An unknown is never reported as safe.
 
 A model that breaks is assumed to be fixed with the same output it has today, so models after it are judged on their
-own. Types come from ``source_schema`` and sqlglot's type inference; a type change is reported where it reaches an
-output column, and is not reported as breaking (an incompatible operation on the new type is not detected).
+own. Types come from ``source_schema`` and sqlglot's type inference, corrected by the GoogleSQL type checker
+(:mod:`kumosql.googlesql_types`) where sqlglot leaves an output column ``UNKNOWN`` or gives it a different type: the
+checker's answer is used only when it is known and complete, and sqlglot's text is kept wherever the two agree. A type
+change is reported where it reaches an output column, and is not reported as breaking (an incompatible operation on the
+new type is not detected).
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ from sqlglot.optimizer.qualify import qualify
 from sqlglot.schema import MappingSchema
 
 from .ast_utils import binding_cte, star_modifier
+from .googlesql_types import Catalog, infer, parse_type
 
 if TYPE_CHECKING:
     from .pipeline import Pipeline
@@ -138,6 +142,7 @@ def _resolve(pipeline: "Pipeline", key: str, tables: dict[str, Columns | None]) 
         if scope_select is not None and available and any(n not in available for n in named):
             raise exp.errors.OptimizeError("column in EXCEPT or REPLACE could not be resolved")
     sqlglot_schema = MappingSchema(schema, dialect="bigquery")
+    before_qualify = query.copy()  # qualify rewrites the tree (it expands stars); the checker reads the query as written
     qualified = qualify(
         query, schema=sqlglot_schema, dialect="bigquery", validate_qualify_columns=True, quote_identifiers=False
     )
@@ -152,10 +157,39 @@ def _resolve(pipeline: "Pipeline", key: str, tables: dict[str, Columns | None]) 
         typed = annotate_types(qualified, schema=sqlglot_schema, dialect="bigquery")
     except Exception:  # noqa: BLE001 - types are best effort; names are what break
         typed = qualified
-    return tuple(
+    columns = [
         (select.alias_or_name, select.type.sql("bigquery") if getattr(select, "type", None) else "UNKNOWN")
         for select in typed.selects
-    )
+    ]
+    return _checked_types(before_qualify, tables, columns)
+
+
+def _checked_types(query: exp.Expression, tables: dict[str, Columns | None], columns: list[tuple[str, str]]) -> Columns:
+    """``columns`` (sqlglot's names and types) with the type checker's answer where it is known and complete.
+
+    The checker's type replaces sqlglot's only where sqlglot said ``UNKNOWN`` or named a different type; where the two
+    name the same type sqlglot's text stays, so an answer that was right is not respelled. The checker's columns must
+    match sqlglot's in number and name, else sqlglot's answer is kept whole. Any failure of the checker keeps it too.
+    """
+
+    try:
+        catalog = Catalog.from_types({name: list(cols) for name, cols in tables.items() if cols is not None})
+        result = infer(query, catalog)
+    except Exception:  # noqa: BLE001 - the checker is an improvement on sqlglot's types, never a requirement
+        return tuple(columns)
+    found = result.columns
+    if result.error or found is None or len(found) != len(columns):
+        return tuple(columns)
+    if any(c.name is None or c.name.lower() != name.lower() for c, (name, _) in zip(found, columns)):
+        return tuple(columns)
+    merged = []
+    for typed_column, (name, sqlglot_type) in zip(found, columns):
+        gtype = typed_column.type
+        if gtype is not None and gtype.complete and parse_type(sqlglot_type) != gtype:
+            merged.append((name, gtype.sql()))
+        else:
+            merged.append((name, sqlglot_type))
+    return tuple(merged)
 
 
 def _diff(old: Columns, new: Columns) -> ModelEffect | None:

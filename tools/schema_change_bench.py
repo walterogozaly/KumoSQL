@@ -71,6 +71,15 @@ def _num_type(t: str) -> str:
     return t  # x + 1 and SUM(x) keep the numeric type of x for INT64, FLOAT64 and NUMERIC
 
 
+def _common(left: str, right: str) -> str:
+    """The type of a UNION ALL output from its two arms: equal types stay, INT64 < NUMERIC < FLOAT64 among the numeric
+    ones (GoogleSQL's supertypes); arms with no common type are invalid SQL, and the key keeps the left arm's type."""
+
+    if left in NUMERIC and right in NUMERIC:
+        return max(left, right, key=("INT64", "NUMERIC", "FLOAT64").index)
+    return left
+
+
 @dataclass
 class Spec:
     name: str
@@ -265,7 +274,7 @@ class Generator:
             ca, cb = get(a), get(b)
             if len(ca) != len(cb):
                 raise Break("union arms differ in width")
-            return list(ca)
+            return [(name, _common(ta, tb)) for (name, ta), (_, tb) in zip(ca, cb)]
 
         sql = f"SELECT * FROM {ref_key(a)} UNION ALL SELECT * FROM {ref_key(b)}"
         return Spec(name, "union_star", sql, [a, b], resolve)
@@ -346,7 +355,6 @@ def scenarios(gen: Generator, rng: random.Random, count: int):
                 column, old = rng.choice(numeric)
                 new_type = rng.choice([t for t in NUMERIC if t != old])
                 new_cols = [(c, new_type if c == column else t) for c, t in cols]
-                # Set operations pick a supertype, which this key does not model: left out of retype scenarios.
                 yield table, kind, column, {"new_type": new_type}, new_cols
                 continue
         if kind == "add_column":
@@ -363,19 +371,6 @@ def scenarios(gen: Generator, rng: random.Random, count: int):
             yield table, kind, column, {"new_name": new_name}, [(new_name if c == column else c, t) for c, t in cols]
 
 
-def reaches_union(gen: Generator, table: str) -> bool:
-    seen, stack = set(), [table]
-    while stack:
-        item = stack.pop()
-        for key, spec in gen.specs.items():
-            if item in spec.inputs and key not in seen:
-                if spec.family == "union_star":
-                    return True
-                seen.add(key)
-                stack.append(key)
-    return False
-
-
 def run_one(size: int, seed: int, families: tuple[str, ...], count: int = 40) -> dict:
     pipeline, gen = make_pipeline(size, seed, families)
     rng = random.Random(seed)
@@ -384,8 +379,6 @@ def run_one(size: int, seed: int, families: tuple[str, ...], count: int = 40) ->
     opaque = {k for k, s in gen.specs.items() if s.opaque}
     start = time.perf_counter()
     for table, kind, column, extra, new_cols in scenarios(gen, rng, count):
-        if kind == "retype_column" and reaches_union(gen, table):
-            continue
         truth = simulate(gen, table, new_cols)
         got = pipeline.assess_schema_change(kind, table, column, **extra)
         out["scenarios"] += 1
@@ -484,7 +477,7 @@ def write_results(dev: dict, held: dict) -> None:
         "docs": "docs/evals/schema-change-bench.md",
         "command": "python tools/schema_change_bench.py --write-results",
         "date": today(),
-        "caveats": "Retypes are checked only where the type reaches an output column; an operation that is invalid on the new type is not detected. Retypes feeding a UNION are not scored (the supertype is not modelled). Answers come from the generator, whose families are ones the tool's author could think of.",
+        "caveats": "Retypes are checked only where the type reaches an output column; an operation that is invalid on the new type is not detected. A retype feeding a UNION ALL of two SELECT * arms is scored against the numeric supertypes (INT64 < NUMERIC < FLOAT64) but no other set operation or supertype is generated, and those scenarios were added after the GoogleSQL type checker was hooked in, so they are not held out from it. Answers come from the generator, whose families are ones the tool's author could think of.",
         "analysis": f"Breaks: precision {min(dev['breaks_precision'], held['breaks_precision']):.3f}, recall {min(dev['breaks_recall'], held['breaks_recall']):.3f}. Output changes: precision {min(dev['changes_precision'], held['changes_precision']):.3f}, recall {min(dev['changes_recall'], held['changes_recall']):.3f}. Exact columns added/removed/retyped: {dev['details_exact'] + held['details_exact']}/{dev['details_total'] + held['details_total']}. Unparsed models are reported unknown ({unknown_models} model answers).",
         "performance": f"{(dev['seconds'] + held['seconds']) / total * 1000:.0f} ms per scenario on pipelines of 8 to 120 models",
     }

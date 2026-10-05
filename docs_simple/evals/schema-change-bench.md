@@ -12,6 +12,8 @@ If `customer_totals` reads `daily_sales.total`, dropping `daily_sales.total` bre
 
 A query that never reads the changed column should not be reported as a definite direct break. Unsupported tracing should be marked unknown rather than silently treated as unaffected.
 
+Column types are part of the answer: if `daily_sales.total` goes from `INT64` to `FLOAT64`, a model that stacks `daily_sales` on top of another table with `UNION ALL` now outputs `FLOAT64` for that column, and the report should say so. KumoSQL reads output types with sqlglot and checks them with its own GoogleSQL type checker, which is only used when it is sure; when it is not sure, the older answer stays. The generated projects include this union case, and the full reference records how the score moved. The evidence covers numeric types only; other type combinations are covered by unit tests, not by this evaluation.
+
 ## Run it
 
 From a development checkout:

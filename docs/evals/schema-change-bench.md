@@ -16,6 +16,16 @@ changed schema and compares with how the model resolves today.
 
 A model that breaks is assumed fixed with its current output, so models after it are judged on their own.
 
+## Output types
+
+A model's output types come from sqlglot's `qualify` and `annotate_types`, corrected by the GoogleSQL type checker
+(`kumosql.googlesql_types`) run on the query as written. The checker's type replaces sqlglot's only where sqlglot said
+`UNKNOWN` or named a different type, and only when the checker's type is known and complete, its output columns match
+sqlglot's in number and name, and it did not fail; where the two agree sqlglot's own text is kept, and where the checker
+says unknown the old answer stands. This matters most for set operations (sqlglot types a `UNION` by its first arm, so a
+retype of the second arm's column went unseen), `d1 - d2` over dates (an `INTERVAL`, not a `DATE`) and functions such
+as `TRUNC` that sqlglot leaves unknown. `tests/test_googlesql_type_hooks.py` has one case of each.
+
 ## The suite
 
 `python tools/schema_change_bench.py [--write-results]` generates pipelines of 8, 30 and 120 models (3 seeds each).
@@ -35,6 +45,12 @@ Overlap: `assess_change` (docs/lineage-bench.md) covers drop/rename/expression c
 add/retype, `SELECT *` propagation and output-schema prediction. Original and adapted cases are not involved: the
 suite is generated, nothing is imported.
 
+Retypes that feed a `UNION ALL` of two `SELECT *` arms are scored too: the key gives each output the numeric supertype of
+its arms (`INT64` < `NUMERIC` < `FLOAT64`). Without the type checker those 360 held-out scenarios give 351 exact, 5 models
+reported unaffected whose output type changed, and output-change precision 0.976; with it, 360 exact, 0 wrong
+(`union_star` is a held-out family, but these scenarios were added after the checker was hooked in, so they are not
+held out from it). Totals are 681/720 (360 dev, 360 held out; 662/701 before).
+
 Held-out first run: 2 misses (a `* EXCEPT (col)` over a dropped column, which BigQuery rejects and sqlglot ignores),
 fixed afterwards; those families no longer count as held out. Limits: retypes are checked only where the type reaches
-an output column, and retypes feeding a `UNION` are not scored.
+an output column, and no set operation other than that `UNION ALL` of stars is generated.
