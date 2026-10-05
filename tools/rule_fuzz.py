@@ -245,32 +245,38 @@ def build_databases(case: dict, seed: int = 0, randoms: int = 6) -> list[dict]:
                         kept.append(row)
                 rows = kept
             tables[table] = rows
-        # MATCH SIMPLE foreign keys: a child row with every column non-NULL points at an existing parent
-        for table, columns in schema.items():
-            rules = rules_by.get(table.lower(), {})
-            names = [c[0].lower() for c in columns]
-            for child, parent, parent_cols in rules.get("foreign_keys", []):
-                ptable = next((t for t in schema if t.lower() == parent.lower()), None)
-                if ptable is None:
-                    continue
-                pnames = [c[0].lower() for c in schema[ptable]]
-                parents = [tuple(r[pnames.index(c.lower())] for c in parent_cols) for r in tables[ptable]]
-                required = _required(rules)
-                kept = []
-                for row in tables[table]:
-                    values = [row[names.index(c.lower())] for c in child]
-                    if any(v is None for v in values):
-                        kept.append(row)
-                    elif parents:
-                        for c, v in zip(child, rng.choice(parents)):
-                            row[names.index(c.lower())] = v
-                        kept.append(row)
-                    elif not any(c.lower() in required for c in child):
-                        for c in child:
-                            row[names.index(c.lower())] = None
-                        kept.append(row)
-                    # else: no parent to point at and the child columns are NOT NULL: drop the row
-                tables[table] = kept
+        # MATCH SIMPLE foreign keys: a child row with every column non-NULL points at an existing parent. Dropping a
+        # row can orphan the rows of a table that references it (child -> parent -> grandparent), so repeat until
+        # the number of rows is stable.
+        for _ in range(len(schema) + 1):
+            before = sum(len(rows) for rows in tables.values())
+            for table, columns in schema.items():
+                rules = rules_by.get(table.lower(), {})
+                names = [c[0].lower() for c in columns]
+                for child, parent, parent_cols in rules.get("foreign_keys", []):
+                    ptable = next((t for t in schema if t.lower() == parent.lower()), None)
+                    if ptable is None:
+                        continue
+                    pnames = [c[0].lower() for c in schema[ptable]]
+                    parents = [tuple(r[pnames.index(c.lower())] for c in parent_cols) for r in tables[ptable]]
+                    required = _required(rules)
+                    kept = []
+                    for row in tables[table]:
+                        values = [row[names.index(c.lower())] for c in child]
+                        if any(v is None for v in values):
+                            kept.append(row)
+                        elif parents:
+                            for c, v in zip(child, rng.choice(parents)):
+                                row[names.index(c.lower())] = v
+                            kept.append(row)
+                        elif not any(c.lower() in required for c in child):
+                            for c in child:
+                                row[names.index(c.lower())] = None
+                            kept.append(row)
+                        # else: no parent to point at and the child columns are NOT NULL: drop the row
+                    tables[table] = kept
+            if sum(len(rows) for rows in tables.values()) == before:
+                break
         out.append({"name": mode, "tables": tables})
     return out
 

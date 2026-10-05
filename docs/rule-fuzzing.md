@@ -48,12 +48,29 @@ false proofs: shadowed aliases and scopes, global aggregates, ROLLUP/CUBE/GROUPI
 windows and QUALIFY, set operations with ORDER/LIMIT tails, correlated subqueries, CTEs that shadow tables, USING
 joins), `fuzz` (both sides of `tools/soundness_fuzz.py` template pairs), `evals` (the non-held-out queries of the
 SQLSolver, QED, mined Calcite, R-Bot, TPC-H and TPC-C evals; held-out pairs are never read) and `target:<module>`
-(`tools/rule_fuzz_targets/<module>.py`, template generators that expose `cases(seed, count)`; `count` is per module). The modules are `aggregates` (aggregate, eager-aggregation, regrouping and keyed rules), `distinct_sets` (DISTINCT, dedup joins, set operations and set splits), `outer_joins`, `grouping_windows` (grouping sets, windows, QUALIFY, LIMIT rules, empty relations) and `scalars` (casts, integer division, dates, LIKE, quantified comparisons, scalar subqueries, UNNEST, constant folding). A template is SQL with `{a|b|c}` choice groups (`tools/rule_fuzz_targets/_base.py`). A query
+(`tools/rule_fuzz_targets/<module>.py`, template generators that expose `cases(seed, count)`; `count` is per module). The modules are `aggregates` (aggregate, eager-aggregation, regrouping and keyed rules), `distinct_sets` (DISTINCT, dedup joins, set operations and set splits), `outer_joins`, `grouping_windows` (grouping sets, windows, QUALIFY, LIMIT rules, empty relations), `scalars` (casts, integer division, dates, LIKE, quantified comparisons, scalar subqueries, UNNEST, constant folding), `distinct_variants`, `eager_variants` and `aggregate_variants` (the variants and guards inside the big rule modules that report as one rule: see below). A template is SQL with `{a|b|c}` choice groups (`tools/rule_fuzz_targets/_base.py`). A query
 that `normalize` cannot print faithfully (`LossySql`) still has its earlier firings checked.
 
 `tests/fixtures/rule_fuzz/known_rule_bugs.json` lists open bugs the run should not fail on; a thread that fixes one
 deletes its entry. `tests/test_rule_fuzz.py` checks that the harness sees an unsound rewrite, ignores a `LIMIT` cut
 among ties, and finds nothing on a small seeded generated run.
+
+## Variants inside one rule
+
+The report counts a rule once however many shapes it recognizes, so `distinct_rules` (nine rewrites), `rewrite_aggregates`
+(fourteen), `join_rewrites` (four), `split_distinct_select` and the eager-aggregation rules can show "fired 200" while a
+branch never ran. The `distinct_variants`, `eager_variants` and `aggregate_variants` modules write a template for each
+shape such a rule recognizes and a near miss for each guard that must decline it (a LIMIT that sees duplicates, a
+`COUNT(*)` that counts repeats, a global `SUM` of a `COUNT`, a hidden grouping key, an outer join, an unqualified column
+that resolves outward, ...). Each module also lists `FIRES`, one concrete query per rewrite it aims at, and
+`tests/test_rule_fuzz_big_rules.py` traces them without DuckDB: the whole-rule names come from the tracer and the
+`module.function` names (`distinct_rules.drop_membership_dedup`, `aggregate_rules._lift_aggregate_expressions`, ...) from
+wrapping the dispatch functions, so a template edit that stops a variant from firing fails a test. Some rewrites cannot fire on
+`master` because an earlier rule in `normalize` takes their shape first (`_distribute` before
+`_distribute_over_aggregating_branches`, `_roll_up_aggregate`); the module comments say which.
+
+Foreign keys that chain (`p.tid -> t.id -> u.k`) are enforced to a fixed point when the databases are built, so emptying a
+parent table also empties the children that reference it.
 
 ## Limits
 
