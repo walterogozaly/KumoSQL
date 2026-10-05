@@ -35,13 +35,14 @@ What the proposer reads beyond select-project-join and rollups:
 
 * a filter over a grouped derived table is merged into one grouped query (the outer filter becomes `HAVING`);
 * a model it cannot read (a set operation, a join of grouped derived tables) is still tried as the whole answer and as a column subset matched by where each output comes from;
+* a model that is a set operation (`UNION ALL`, `INTERSECT ALL`, `EXCEPT ALL`, `UNION`, or a select that only lists its columns) is read branch by branch (`src/kumosql/setop_views.py`): every branch of the query (or the query itself, when it is one select) is paired with every branch of the model, and `SELECT <outputs> FROM model WHERE <that query branch's whole filter>` is proposed, with `DISTINCT` added when the query removes duplicates (`UNION` from a `UNION ALL` view). The model branch's own filter is not assumed to hold; the prover must see the other branches drop out. `INTERSECT ALL` and `EXCEPT ALL` are not modelled by the SMT prover, so `_prove` falls back to a branchwise congruence step (`src/kumosql/setop_congruence.py`, [provers](provers.md#set-operation-congruence)) when the prover says not proven. Operand order is kept for `EXCEPT ALL`; `INTERSECT ALL` and `UNION ALL` may swap. On the outer-union set's `setop` group (development split) the proposer went from 0/4 to 4/4 reusable cases rewritten, with both traps left alone and 0 wrong (every rewrite re-run on random databases; the held-out case of that group was not run). A trap (`SELECT name FROM emps` from a `emps EXCEPT ALL deps` view, `UNION ALL` from a `UNION` view, a filter on the subtracted operand only) stays unrewritten;
 * at the model's own grain a distinct aggregate is read from the model's column, or computed again over the model grouped by its keys; a model key the query fixes to a constant (`WHERE name = 'hello'`) does not count as a finer grain;
 * a `COUNT` rolled up as `SUM` of counts gets `COALESCE(.., 0)` whenever the grouping has an empty set (`CUBE`, `ROLLUP`, `GROUPING SETS (.., ())`), since that group exists even over no rows;
 * literal `IN` lists.
 
 The `COALESCE` fix matters for correctness: the prover currently proves `COUNT(*)` equal to a `SUM` of grouped counts even over an empty table, so before it five CUBE/ROLLUP rewrites were accepted and failed the random-database check (reported to the prover's soundness owners).
 
-Not read yet: unique/foreign-key joins, outer-join models, `INTERSECT ALL` and branchwise set-operation compensation, union compensation from base tables, correlated subqueries, injective group keys.
+Not read yet: unique/foreign-key joins, outer-join models, branchwise set-operation compensation from base tables (a projection that is not a column reordering is not pushed through `INTERSECT ALL`, as `salary * 2` could merge two values), union compensation from base tables, correlated subqueries, injective group keys.
 
 ## Query containment
 

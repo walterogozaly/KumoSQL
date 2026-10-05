@@ -8,6 +8,8 @@ Before building a new table, ask whether an existing table can supply the result
 
 The helper `rewrite_over_model` proposes a query reading the model and checks it against the original with the model's SQL expanded. It returns a replacement only when the prover establishes equivalence.
 
+A model can also be a union, or an `INTERSECT ALL` or `EXCEPT ALL` of two queries. KumoSQL then compares the query with each part of the model and proposes reading the model with the query's filter. Because these operations count duplicates, a query such as "all names" is not answered from a model that is "names minus the names dependents also have". An operation that removes duplicates (`UNION`) is answered from a duplicate-keeping model (`UNION ALL`) by adding `DISTINCT`. The evidence is the prover plus the random-database check, so a pair it cannot read is left alone. Details: [full reference](../docs/model-reuse.md).
+
 For example, a model containing all orders with customer IDs might supply a query filtering those orders to one customer. A model that discarded a needed column cannot supply it.
 
 ## 2. Is one result contained in another?

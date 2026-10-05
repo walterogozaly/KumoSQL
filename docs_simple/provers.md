@@ -42,6 +42,10 @@ result = prove_equivalent(
 print(result.status.value)  # proven_equivalent
 ```
 
+## Set operations that keep duplicates
+
+`INTERSECT ALL` keeps the smaller number of copies of each row and `EXCEPT ALL` subtracts copies. The main prover does not model them. When both queries are the same such operation, KumoSQL proves the two sides equal by proving each side's parts equal, in the same order (for `EXCEPT ALL`, order matters: `A minus B` is not `B minus A`). A filter on the whole result can move into each part first. For example, "names of employees called Bill, minus all dependents' names" matches "the Bill rows of (employee names minus dependents' names)". The limit: a pair whose parts the prover cannot prove stays unproven. Full reference: [provers](../docs/provers.md#set-operation-congruence).
+
 ## Comments
 
 A comment such as `-- note` does not change what a query returns, so it does not stop two queries from being proven the same. The one exception is a comment holding a Dataform `${...}` expression: Dataform fills those in even inside comments, and the result can turn into real SQL, so such a comment is compared like code. For example `SELECT 1 AS a -- note` and `SELECT 1 AS a` are proven the same. See the [full reference](../docs/provers.md) for details.

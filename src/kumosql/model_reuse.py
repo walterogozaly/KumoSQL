@@ -987,6 +987,13 @@ def rewrite_over_model(
             candidates.extend(_projection_by_lineage(_prepare(query_sql, schema, dialect), model_tree, names, model_name))
         except (_Unsupported, sqlglot.errors.SqlglotError):
             pass
+        if isinstance(model_tree, (exp.SetOperation, exp.Select)):
+            from .setop_views import candidates as setop_candidates
+
+            try:
+                candidates.extend(setop_candidates(_prepare(query_sql, schema, dialect), model_tree, names, model_name, nn))
+            except (_Unsupported, sqlglot.errors.SqlglotError):
+                pass
     else:
         try:
             candidates.extend(whole())
@@ -1048,11 +1055,11 @@ def _prove(query_sql, replacement_sql, schema, constraints, types, timeout_ms, d
 
     from .algebraic_equivalence import prove_equivalent_algebraic
 
-    def attempt(declared):
+    def attempt(declared, left=query_sql, right=replacement_sql):
         try:
             return prove_equivalent_algebraic(
-                query_sql,
-                replacement_sql,
+                left,
+                right,
                 schema=schema,
                 constraints=declared,
                 types={t: dict(c) for t, c in types.items()} if types else None,
@@ -1065,12 +1072,24 @@ def _prove(query_sql, replacement_sql, schema, constraints, types, timeout_ms, d
             return None
 
     declared = dict(constraints) if constraints else None
-    result = attempt(declared)
     keyed = declared and any(c.keys or c.foreign_keys for c in declared.values())
-    if keyed and result is not None and result.status is SmtStatus.NOT_PROVEN and result.reason in _SHAPE_MISMATCH:
-        plain = attempt({t: TableConstraints(not_null=c.not_null) for t, c in declared.items()})
-        if plain is not None and plain.status is SmtStatus.PROVEN_EQUIVALENT:
-            return plain
+
+    def pair(left, right):
+        result = attempt(declared, left, right)
+        if keyed and result is not None and result.status is SmtStatus.NOT_PROVEN and result.reason in _SHAPE_MISMATCH:
+            plain = attempt({t: TableConstraints(not_null=c.not_null) for t, c in declared.items()}, left, right)
+            if plain is not None and plain.status is SmtStatus.PROVEN_EQUIVALENT:
+                return plain
+        return result
+
+    result = pair(query_sql, replacement_sql)
+    if result is None or result.status is not SmtStatus.PROVEN_EQUIVALENT:
+        # INTERSECT ALL and EXCEPT ALL are not modelled: equal operands make equal set operations
+        from .setop_congruence import prove_by_congruence
+
+        congruent = prove_by_congruence(query_sql, replacement_sql, pair, types=types, dialect=dialect)
+        if congruent is not None:
+            return congruent
     return result
 
 
