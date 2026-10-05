@@ -503,7 +503,9 @@ def check_solver_counterexample(left_sql: str, right_sql: str, result, **kwargs)
     reading) leaves the result as it was.
     """
 
-    from .refutation_replay import positional
+    import dataclasses
+
+    from .refutation_replay import completed, positional
     from .smt_equivalence import SmtEquivalenceResult, SmtStatus
 
     counterexample = result.counterexample
@@ -518,15 +520,17 @@ def check_solver_counterexample(left_sql: str, right_sql: str, result, **kwargs)
     if not typed:
         return result
     by_lower = {k.lower(): v for k, v in (kwargs.get("constraints") or {}).items()}
+    keys = {t: [list(k) for k in by_lower[t.lower()].keys] for t in typed if t.lower() in by_lower}
+    not_null = {t: sorted(by_lower[t.lower()].not_null) for t in typed if t.lower() in by_lower}
+    # the model lists only the columns the queries read: complete the NOT NULL and key columns it leaves out
+    database = completed(counterexample.tables, typed, dialect=dialect, keys=keys, not_null=not_null)
     try:
-        with Judge(
-            left_sql, right_sql, typed, dialect=dialect,
-            keys={t: [list(k) for k in by_lower[t.lower()].keys] for t in typed if t.lower() in by_lower},
-            not_null={t: sorted(by_lower[t.lower()].not_null) for t in typed if t.lower() in by_lower},
-        ) as judge:
-            verdict = judge.verdict(positional(counterexample.tables, typed))
+        with Judge(left_sql, right_sql, typed, dialect=dialect, keys=keys, not_null=not_null) as judge:
+            verdict = judge.verdict(positional(database, typed))
     except Exception:  # noqa: BLE001 - no replay leaves the solver's answer alone
         return result
+    if verdict is Verdict.DIFFERS and database != counterexample.tables:
+        return dataclasses.replace(result, counterexample=dataclasses.replace(counterexample, tables=database))
     if verdict is not Verdict.SAME:
         return result
     return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "the solver's counterexample returns the same rows for both queries when run")
