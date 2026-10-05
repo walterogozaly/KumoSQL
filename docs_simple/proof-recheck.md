@@ -21,4 +21,5 @@ The tool also covers the fuzzing, rewrite, view-reuse, containment, dialect, pip
 - Surviving the search is evidence, not a proof. A database the search never builds can still hide a bug.
 - A difference can also come from the checking engine rather than the proof, for example a different rounding, so each one is reviewed by hand before it is called a bug.
 - Some proofs cannot be run on the checking engine (a function DuckDB lacks, a subquery shape it cannot execute); those are listed as not runnable, not as passed.
+- A pair that crashes or hangs the checking engine is stopped on its own and listed as a timeout or an error, never as passed.
 - It is a tool for developers. It changes no scores and no rules; the full reference covers the commands and the output.

@@ -24,7 +24,6 @@ from collections import Counter
 import importlib
 import json
 import logging
-import multiprocessing
 import os
 from pathlib import Path
 import signal
@@ -33,6 +32,8 @@ import time
 
 TOOLS = Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOLS))
+
+from recheck import supervise  # noqa: E402
 
 
 def adapters() -> dict:
@@ -69,6 +70,8 @@ def _work(job: tuple) -> dict:
         _ADAPTERS = adapters()
     from recheck.engine import recheck
 
+    if options.get("reconnect"):
+        supervise.reconnect_every(options["reconnect"])
     adapter = _ADAPTERS[name]
     start = time.time()
     signal.signal(signal.SIGALRM, _alarm)
@@ -93,6 +96,17 @@ def _work(job: tuple) -> dict:
         return {"eval": name, "pair": item["pair"], "verdict": "search-error", "error": f"{type(error).__name__}: {error}"[:400]}
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
+
+
+def _describe(job: tuple) -> dict:
+    return {"eval": job[0], "pair": job[1]["pair"]}
+
+
+def _reseed(job: tuple, attempt: int) -> tuple:
+    """The job for a retry after a native crash: a younger DuckDB connection (reconnect every 25 databases) and another seed."""
+
+    name, item, options = job
+    return name, item, {**options, "seed": options["seed"] + 1000 * attempt, "reconnect": 25}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -152,8 +166,13 @@ def main(argv: list[str] | None = None) -> int:
         counts: Counter = Counter()
         start = time.time()
         mode = "w" if (args.fresh and not args.pairs) else "a"
-        with path.open(mode, encoding="utf-8") as sink, multiprocessing.get_context("fork").Pool(args.jobs, maxtasksperchild=40) as pool:
-            for number, record in enumerate(pool.imap_unordered(_work, [(name, item, options) for item in todo]), 1):
+        # one child process per pair that the parent can kill: a native crash or hang (DuckDB, z3) ends that pair only
+        hard = options["seconds"] * 2 + options["prove_seconds"] + 90
+        jobs = [(name, item, options) for item in todo]
+        with path.open(mode, encoding="utf-8") as sink:
+            for number, record in enumerate(
+                supervise.imap_unordered(_work, jobs, args.jobs, hard, reseed=_reseed, describe=_describe), 1
+            ):
                 sink.write(json.dumps(record, default=str) + "\n")
                 sink.flush()
                 counts[record["verdict"]] += 1

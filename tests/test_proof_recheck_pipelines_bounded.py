@@ -154,7 +154,9 @@ def test_minimization_items_and_pair_of_a_reference_and_a_trap():
 
     adapter = pr.ADAPTERS["table-minimization"]
     items = adapter.items()
-    assert len(items) == len(mc.load_cases()) and any(i["held_out"] for i in items)
+    # one item for the tables the harness proved and one (``@agreed``) for the ones it only checked
+    assert len(items) == 2 * len(mc.load_cases()) and any(i["held_out"] for i in items)
+    assert {i["pair"] for i in items if i["kind"] == "agreed"} == {f"{i['pair']}@agreed" for i in items if i["kind"] == "proved"}
     case = next(c for c in mc.load_cases() if c["traps"] and not all(mc.unchanged(c["tables"], c["reference"]["tables"], p) for p in c["protected"]))
     changed = [p for p in case["protected"] if not mc.unchanged(case["tables"], case["reference"]["tables"], p)]
     left, right, tables = pr.minimization_pair(case, {k.lower(): v for k, v in case["reference"]["tables"].items()}, changed)

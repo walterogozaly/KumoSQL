@@ -170,9 +170,31 @@ class SqlfluffSemantic(Adapter):
 
         out = []
         for case in sf.semantic_cases(sf.load_cases()):
-            out.append({"pair": case.id, "id": case.id, "rule": case.rule, "dialect": case.dialect, "fail": case.fail,
-                        "fix": case.fix, "configs": case.configs, "held_out": case.held_out})
+            item = {"pair": case.id, "id": case.id, "rule": case.rule, "dialect": case.dialect, "fail": case.fail,
+                    "fix": case.fix, "configs": case.configs, "held_out": case.held_out}
+            out.append(item)
+            # the eval also compares a case it cannot read as one query in an adapted form (outside its score)
+            for number, (fail, fix) in enumerate(self._adapted(case), 1):
+                out.append({**item, "pair": f"{case.id}#adapted{number}", "fail": fail, "fix": fix})
         return out
+
+    @staticmethod
+    def _adapted(case) -> list[tuple[str, str]]:
+        """The query pairs ``sqlfluff_fixtures_bench.decide_adapted`` proves one by one: the template-masked pair of a
+        Jinja case, or each changed statement's query of a script, ``INSERT ... SELECT`` or ``CREATE TABLE ... AS``."""
+
+        import sqlfluff_fixtures_bench as sf
+
+        if "{{" in case.fail or "{%" in case.fail:
+            return [(sf.mask_templates(case.fail), sf.mask_templates(case.fix))]
+        try:
+            left, right = sf.parse_all(case.fail, case.dialect), sf.parse_all(case.fix, case.dialect)
+        except sf.Unsupported:
+            return []
+        if len(left) == 1 and len(right) == 1 and isinstance(left[0], sf.exp.Query) and isinstance(right[0], sf.exp.Query):
+            return []
+        pairs = sf.adapted_pairs(case)
+        return [] if isinstance(pairs, str) else list(pairs)
 
     def case(self, item: dict) -> Case | None:
         import sqlfluff_fixtures_bench as sf
@@ -705,18 +727,16 @@ def _minimization_cases() -> dict:
     return {c["id"]: c for c in mc.load_cases()}
 
 
-def _minimized(case: dict) -> dict:
-    """The minimizer's output and the harness's verdict on it (``minimization_bench.check_output``, 100 databases,
-    proofs on), computed once per case and cached on disk under ``$RECHECK_SCRATCH``."""
+MINIMIZER_SECONDS, MINIMIZER_GB = 300.0, 5.0  # tools/minimization_isolated.py's limits for the real-pipeline cases
+
+
+def _minimize_in_child(case: dict) -> dict:
+    """The minimizer's output for ``case`` and the harness's verdict on it (``minimization_bench.check_output``,
+    100 databases, proofs on)."""
 
     import minimization_bench as mb
     import minimization_cases as mc
 
-    folder = SCRATCH / "minimizer"
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"{case['id']}.json"
-    if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
     record: dict = {"id": case["id"], "split": case["split"]}
     try:
         with silenced():
@@ -725,6 +745,36 @@ def _minimized(case: dict) -> dict:
         record.update(out=out, status=status, reason=reason, proofs=proofs)
     except Exception as error:  # an error is its own outcome, never a pass
         record.update(status="error", reason=f"{type(error).__name__}: {error}"[:300])
+    return record
+
+
+def _minimized(case: dict) -> dict:
+    """The minimizer's output and the harness's verdict on it, computed once per case and cached on disk under
+    ``$RECHECK_SCRATCH``. The case runs in its own process with the 5 GB memory cap and 300 s limit of
+    ``tools/minimization_isolated.py`` (the eval counts a case over either as not improved)."""
+
+    import resource
+    import subprocess
+
+    folder = SCRATCH / "minimizer"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{case['id']}.json"
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    cap = int(MINIMIZER_GB * 2**30)
+    command = [sys.executable, __file__, "--minimize", case["id"], str(path) + ".part"]
+    record: dict = {"id": case["id"], "split": case["split"]}
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, timeout=MINIMIZER_SECONDS,
+                              preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_AS, (cap, cap)))
+        part = Path(str(path) + ".part")
+        if proc.returncode == 0 and part.exists():
+            record = json.loads(part.read_text(encoding="utf-8"))
+        else:
+            tail = (proc.stderr or "").strip().splitlines()[-1:] or ["no output"]
+            record.update(status="error", reason=("memory: " if "MemoryError" in (proc.stderr or "") else "crashed: ") + tail[0][:200])
+    except subprocess.TimeoutExpired:
+        record.update(status="error", reason=f"time: over {MINIMIZER_SECONDS:.0f} s")
     path.write_text(json.dumps(record, default=str), encoding="utf-8")
     return record
 
@@ -788,27 +838,38 @@ def minimization_pair(case: dict, out: dict[str, str], names: list[str]):
 
 
 class TableMinimization(Adapter):
-    """One item per case; the pair compares every protected table the harness proved (not merely checked) equal."""
+    """Two items per case. ``<id>`` compares every protected table the harness proved (not merely checked) equal;
+    ``<id>@agreed`` the protected tables the minimizer changed but the harness could not prove (the eval counts the
+    case as simplified on the 100-database check alone)."""
 
     name = "table-minimization"
 
     def items(self) -> list[dict]:
-        return [{"pair": c["id"], "held_out": c["split"] == "held_out"} for c in _minimization_cases().values()]
+        out = []
+        for c in _minimization_cases().values():
+            held = c["split"] == "held_out"
+            out.append({"pair": c["id"], "held_out": held, "kind": "proved"})
+            out.append({"pair": f"{c['id']}@agreed", "held_out": held, "kind": "agreed", "case": c["id"]})
+        return out
 
     def case(self, item: dict) -> Case | None:
-        case = _minimization_cases()[item["pair"]]
+        case = _minimization_cases()[item.get("case", item["pair"])]
         record = _minimized(case)
-        if record.get("status") != "proved":
-            return None  # same (nothing changed), agreed (not proved by the harness), wrong or error: not a counted proof
+        if record.get("status") not in ("proved", "agreed"):
+            return None  # same (nothing changed), wrong or error: not a counted simplification
         out = {k.lower(): v for k, v in record["out"].items()}
-        proved = [p for p in case["protected"] if (record["proofs"].get(p) or {}).get("status") == "proved"]
-        if not proved:
-            return None
-        left, right, tables = minimization_pair(case, out, proved)
-        meta = {"changed": proved, "proofs": {k: v.get("status") for k, v in record["proofs"].items()}}
+        proofs = record["proofs"]
         original = case["tables"]
+        if item["kind"] == "proved":
+            names = [p for p in case["protected"] if (proofs.get(p) or {}).get("status") == "proved"]
+        else:
+            names = [p for p in case["protected"] if (proofs.get(p) or {}).get("status") == "unknown"]
+        if not names:
+            return None
+        left, right, tables = minimization_pair(case, out, names)
+        meta = {"changed": names, "proofs": {k: v.get("status") for k, v in proofs.items()}, "harness": record["status"]}
         return Case(self.name, item["pair"], left, right, tables, setup=(), held_out=item["held_out"],
-                    source=(json.dumps({p: original.get(p) for p in proved}), json.dumps({p: out.get(p) for p in proved})),
+                    source=(json.dumps({p: original.get(p) for p in names}), json.dumps({p: out.get(p) for p in names})),
                     dialect="bigquery", meta=meta)
 
 
@@ -990,6 +1051,11 @@ class OutputPropertiesAdapted(Adapter):
         return Case(self.name, item["pair"], left, right, engine_tables, source=(sql, ""), dialect="mysql",
                     meta={"claims": made, "suite": suite})
 
+
+if __name__ == "__main__" and len(sys.argv) == 4 and sys.argv[1] == "--minimize":  # the child of ``_minimized``
+    _case = _minimization_cases()[sys.argv[2]]
+    Path(sys.argv[3]).write_text(json.dumps(_minimize_in_child(_case), default=str), encoding="utf-8")
+    raise SystemExit(0)
 
 ADAPTERS = {
     a.name: a
