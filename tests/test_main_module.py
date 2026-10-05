@@ -71,7 +71,7 @@ def test_top_level_usage_says_which_commands_can_write():
 
     text = usage()
     assert "--help only prints text" in text
-    assert "reduce-project" in text and "--write is the only option that edits a project folder" in text
+    assert "reduce-project --write" in text and "refactor-project --write" in text
 
 
 def test_commands_that_can_edit_or_write_files_say_so_in_their_help():

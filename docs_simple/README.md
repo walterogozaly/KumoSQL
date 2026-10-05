@@ -31,6 +31,7 @@ This folder is the plain-language companion to [the full documentation](../docs/
 | Simplify an explicit set of table definitions | [Table minimization](table-minimization.md) |
 | Extract a copied WITH query into one model | [Shared models](shared-models.md) |
 | Shrink a Dataform project to the outputs you need | [Project reduction](project-reduction.md) |
+| Move readers to a preferred declared relation | [Contract-driven relation refactoring](relation-refactoring.md) |
 | Learn what a query guarantees about its rows | [Output properties](output-properties.md) |
 | Find results that change when rows tie | [Ties](ties.md) |
 | Use keys and other data guarantees in a proof | [Constraint-dependent rewrites](constraint-rewrites.md) |

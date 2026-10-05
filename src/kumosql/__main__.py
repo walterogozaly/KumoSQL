@@ -26,6 +26,7 @@ COMMANDS = {
     "kumosql-refactor": "kumosql.refactor:main",
     "minimize-tables": "kumosql.table_minimizer:main",
     "reduce-project": "kumosql.project_reduction:main",
+    "refactor-project": "kumosql.relation_refactor:main",
     "kumosql-shared-model": "kumosql.shared_models:main",
     "kumosql-compare-outputs": "kumosql.cli:compare_outputs_main",
     "kumosql-ui": "kumosql.ui:main",
@@ -52,8 +53,8 @@ def usage() -> str:
     lines += [f"  {name}" for name in COMMANDS]
     lines += ["", "Run `python -m kumosql COMMAND --help` for a command's options. --help only prints text; it never does any work.",
               "Most commands only read and print (consolidate-tables, refactor, minimize-tables, prove-*). A command writes",
-              "a file only for an option you give it: -o/--output/--patch/--csv write the file you name; reduce-project",
-              "--write is the only option that edits a project folder.",
+              "a file only for an option you give it: -o/--output/--patch/--csv write the file you name; project edits",
+              "require reduce-project --write or refactor-project --write.",
               "The kumosql- prefix is optional: `python -m kumosql ui` runs kumosql-ui."]
     return "\n".join(lines)
 
