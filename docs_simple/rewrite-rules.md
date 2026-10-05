@@ -26,6 +26,18 @@ KumoSQL checks each changed result against its input. Read the evidence label be
 
 These rules have exceptions. For example, combining duplicate queries containing random calls can change results. A rule may leave such SQL alone.
 
+## Window numbering functions in the prover
+
+[Full reference](../docs/rewrite-rules.md#row_number-rank-and-dense_rank-in-the-prover)
+
+`ROW_NUMBER`, `RANK` and `DENSE_RANK` number the rows of a group. They give the same number to a row exactly when no other row of its group ties with it on the sort order. The equivalence prover uses that in two ways, and only where it is exactly true.
+
+Example. With `events(user_id, ts, value)` where `(user_id, ts)` is a declared key, no two events of one user share a `ts`, so `RANK() OVER (PARTITION BY user_id ORDER BY ts)` and `ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts)` give every row the same number, and a query using one is proved equal to the same query using the other. Without the key two events can tie: `ROW_NUMBER` then numbers them 1 and 2 while `RANK` gives both 1, so the prover does not treat them as the same.
+
+Where a query only keeps "the first row" (`= 1`, `<= 1` or `< 2`), `RANK` and `DENSE_RANK` are the same without any key, because each gives 1 to exactly the first row and the rows tied with it. `ROW_NUMBER = 1` is different: it keeps just one of the tied rows.
+
+Limits of the evidence: every rewrite is checked by running the query before and after on DuckDB over random small databases with ties, NULLs and empty tables, and for each refusal there is a database where the refused rewrite would give different rows. That is testing, not a proof of the rule.
+
 ## Qualify columns
 
 `qualify_columns` is for queries that join tables. `SELECT id, name FROM orders o JOIN customers c ON o.cid = c.cid` becomes `SELECT o.id, c.name ...`, so a reader sees where each column comes from. It does not run in the default pipeline; ask for it with `-r qualify_columns`. Every qualification is also re-checked by a separate checker that confirms only table names were added and that each one names the only table the column can come from ([how](proof-safeguards.md#qualifying-columns)). The rule leaves a column alone when it is a nickname in `GROUP BY` or `ORDER BY`, or is used before its table is read.

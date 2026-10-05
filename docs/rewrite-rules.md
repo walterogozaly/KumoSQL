@@ -84,6 +84,20 @@ python -m kumosql rewrite-sql input.sqlx --rule inline_single_use_ctes --output 
 
 `python -m kumosql rewrite-sql` exits 2 when a rule fails, 4 when `--check-idempotence` finds the rules change their own output, and 3 when the output is not proven equivalent (pass `--allow-unproven` to accept it). A rule failure prints a diagnostic and does not write its result.
 
+## `ROW_NUMBER`, `RANK` and `DENSE_RANK` in the prover
+
+The equivalence prover (`prove_equivalent_algebraic`) normalizes both queries before comparing them, and its window computations are compared by their text. `src/kumosql/rank_interchange.py` gives the three numbering functions one spelling where they cannot differ. It is not a user-facing rewrite rule (no `apply_rule` name): it runs inside `normalize`, one entry. It is exact only under the preconditions below; when one cannot be shown it leaves the query alone, which at worst leaves a pair unproven.
+
+| Rewrite | Precondition | Without it |
+| --- | --- | --- |
+| `RANK` and `DENSE_RANK` become `ROW_NUMBER`, wherever the value is read (filter, select list, another expression) | the order is **total**: no two rows of one partition have equal `PARTITION BY` and `ORDER BY` values, because the window's input (FROM, JOINs, WHERE of a select that is not grouped) is unique over those expressions, by a declared key (`keys=` with `not_null=` in `normalize`) or what [output properties](output-properties.md) can show unique | with ties `ROW_NUMBER` numbers the peers 1, 2, 3, `RANK` gives them all 1 and `DENSE_RANK` gives the next group 2: left as written |
+| `DENSE_RANK` becomes `RANK` where only "is it 1" is asked: a `QUALIFY` condition, or a `WHERE` condition on a derived table's window column (`d.rn = 1`) | none: both are 1 on exactly the first row and the rows tied with it, and everything else the select reads of the window is its value on a kept row, 1 for both | not applicable |
+| `x <= 1`, `x < 2` (and `1 >= x`, `2 > x`) on a numbering window read `x = 1` | none: a numbering window is an integer of at least 1 | not applicable |
+
+`ROW_NUMBER = 1` is never read as `RANK = 1` without a total order (it keeps one of the tied rows, `RANK` keeps them all), and `RANK <= 2`, `DENSE_RANK = 2` and the values in a select list are never interchanged without one. Windows over a grouped select, with a frame, or whose partition and order cannot be read are left alone.
+
+`tests/test_rank_interchange.py` runs every rewrite on DuckDB (one thread, optimizer off) over random databases with ties, NULLs and empty tables that respect the declared keys, shows for each refusal a database on which the refused rewrite changes the result, and checks which pairs the prover proves (`RANK = 1` against `DENSE_RANK <= 1` with no key; `ROW_NUMBER = 1` against `RANK = 1` only under a key) and which it must not. `tools/rule_fuzz.py run --corpus target:latest_rows` fuzzes the rule at the rule level.
+
 ## Subquery lifting
 
 `kumosql.lift_subqueries()` promotes every relational subquery used in a `FROM` or `JOIN` clause into a uniquely named top-level CTE. It accepts BigQuery SQL and Dataform SQLX. For SQLX, `config`, `js`, `pre_operations`, and `post_operations` blocks are preserved, while `${...}` interpolations are masked during parsing and restored afterward byte for byte (a backslash in one, as in `r'\d'` or `\1`, is kept as written).
