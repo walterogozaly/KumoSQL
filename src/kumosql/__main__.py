@@ -36,6 +36,7 @@ COMMANDS = {
     "kumosql-workflow-configs": "kumosql.workflow_configs:main",
     "kumosql-smoke": "kumosql.smoke:main",
     "kumosql-incremental-report": "kumosql.incremental_scan:main",
+    "kumosql-ties": "kumosql.tie_lint:main",
 }
 
 

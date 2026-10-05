@@ -245,6 +245,11 @@ class UIHandler(BaseHTTPRequestHandler):
 
             self._json(200, refactor.classes_view())
             return
+        if self.path == "/api/ties":
+            from . import tie_lint
+
+            self._json(200, tie_lint.job_status())
+            return
         if self.path == "/api/shared-models":
             from . import shared_models
 
@@ -644,7 +649,7 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate", "/api/repositories/clear",
             "/api/storage", "/api/workflow-configs/refresh", "/api/workflow-configs/settings",
             "/api/tag-rules/preview", "/api/catalogs/preview", "/api/catalogs/active", "/api/data-sources/populate", "/api/equivalences", "/api/equivalences/remove", "/api/prove-tables", "/api/prove-queries", "/api/consolidate-tables",
-            "/api/refactor/run", "/api/refactor/cancel", "/api/shared-models/patch",
+            "/api/refactor/run", "/api/refactor/cancel", "/api/ties/run", "/api/ties/cancel", "/api/shared-models/patch",
         ):
             self._json(404, {"error": "not found"})
             return
@@ -691,6 +696,10 @@ class UIHandler(BaseHTTPRequestHandler):
                 from . import refactor
 
                 result = refactor.cancel_job()
+            elif self.path in ("/api/ties/run", "/api/ties/cancel"):
+                from . import tie_lint
+
+                result = tie_lint.run_loaded(payload) if self.path == "/api/ties/run" else tie_lint.cancel_job()
             elif self.path == "/api/shared-models/patch":
                 from . import shared_models
 

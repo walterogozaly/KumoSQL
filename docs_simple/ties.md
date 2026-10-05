@@ -38,6 +38,18 @@ The database always obeys the keys and NOT NULL columns you declared, so the sur
 
 Limits: finding nothing does not mean the query is safe, because only a few dozen small databases are tried. A witness is about the whole query, not one window inside it.
 
+## Checking a whole project
+
+```shell
+python -m kumosql ties path/to/project
+```
+
+This reads every model of a Dataform project and lists the ones whose result can change when tied rows are stored in a different order. Each one comes with the tiny database that shows it, so you can see the problem instead of taking the warning on trust. A model whose warning has no such database is counted separately and is not reported as a problem. Incremental models are skipped, because their stored rows are not just their query's output.
+
+The lint knows what your project declares (unique keys, columns that are never empty) and what an input model's own query guarantees, for example that a model that groups by `id` has one row per `id`. So a "latest row per id" over such a model is not flagged.
+
+Limits: the database is built for the model's direct inputs, with column types guessed from names when the project does not say; a model with several risky spots lists them all without saying which one the database used. The same check is available for the project loaded in the app as a background job (no page yet). The measured counts on the synthetic test project are in [Ties and nondeterministic results](../docs/ties.md#measured-on-the-fixture).
+
 ## What the check does and does not show
 
 - It reads the query text and any declared keys; it runs no query and uses no data.

@@ -890,6 +890,7 @@ Every command prints `--help`.
 | `python -m kumosql minimize-tables CASE.json` | Return the simplest set of tables (sqlfluff complexity) that keeps every protected table proved unchanged |
 | `python -m kumosql reduce-project DIR --keep NAME` | Return the smallest Dataform project that keeps the named outputs proved unchanged, as a patch (`--patch -`, `--write`) |
 | `python -m kumosql shared-model DIR [ID]` | List CTEs repeated across Dataform models, or write the patch that moves one into a shared model, checked by the prover |
+| `python -m kumosql ties DIR` | Dataform models whose result can change with the order of tied rows (windows, `LIMIT`, `ANY_VALUE`), each with a small database that shows it (`--budget`, `--limit`, `--json`) |
 | `python -m kumosql prove-tables LEFT RIGHT --project DIR` | Prove two models of a Dataform project equivalent, layer by layer, using saved equivalences |
 | `python -m kumosql equivalence list\|add\|remove` | Saved "column X of table A is column Y of table B" declarations |
 | `python -m kumosql pipeline-report` | Whole-pipeline lineage, impact, duplicates, coverage and release gate |

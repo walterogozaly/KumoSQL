@@ -73,6 +73,27 @@ The search runs the query on the databases of `targeted_data.database_suite` bui
 
 A witness belongs to the whole query: it does not say which of the query's sites caused the difference. No witness does not mean the query is deterministic: the search is bounded and tries a few dozen small databases. The tests check the other direction on a list of queries: none the analysis calls `deterministic` gets a witness.
 
+## Lint over a Dataform project
+
+`python -m kumosql ties PROJECT` (`kumosql-ties`) reads every query model of a Dataform project, runs `analyze` on it and, for each model with an `unknown` site, `find_tie_witness`.
+
+```
+python -m kumosql ties path/to/project [--budget 10] [--limit N] [--json]
+```
+
+- A **finding** is a model with an `unknown` site and a witness that replays (`tie_witness.replay`). The output names the model, the first site, the suggested fix and the size of the witness; `--json` includes every site and the witness itself.
+- An `unknown` site with no witness (no database found within `--budget` seconds per model, or DuckDB cannot run the query) is counted and listed apart as *unwitnessed*. It is never reported as a finding.
+- Incremental models and models whose query still holds Dataform expressions the loader could not resolve are skipped, with the reason (`--json` lists them): an incremental table's rows are not its query's output.
+
+The witness runs the model on its direct inputs, so the lint can be fast, and it keeps what each input promises: the project's declared `uniqueKey` and `nonNull` assertions, and the keys and NOT NULL columns an input model's own query guarantees (`GROUP BY` keys, `DISTINCT`, a one-row-per-key dedup; found with `output_properties`). `QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY ts DESC) = 1` over a model that groups by `id` is therefore not reported. Column types are the declared ones when the project knows them and otherwise guessed from the column name (`*_at` a timestamp, `*_date` a date, most else an integer); a model that needs another type (an array it unnests) ends up unwitnessed. When a model has several `unknown` sites the finding lists them all and does not say which one the database exercises.
+
+`tools/tie_lint_check.py` measures how far the shortcut can be trusted: for each finding it inlines the model's upstream table and view models down to the declared sources and looks for a result that changes with the order of the *source* rows. A finding it cannot confirm that way is a false alarm candidate.
+
+On the synthetic fixture (`python tools/make_dataform_fixture.py OUT --models 3000 --seed 11`, 3,378 models, about 48 s for the static pass) the counts are in [Measured on the fixture](#measured-on-the-fixture).
+
+The loaded project in the app has the same lint as a background job: `POST /api/ties/run` (optional `budget`, `limit`) starts it, `GET /api/ties` returns its state (`idle`, `running`, `done` with the result, `cancelled`, `error`) and `POST /api/ties/cancel` stops it. There is no page for it yet.
+
+@@MEASURED@@
 ## Checks
 
 `tests/test_tie_determinism.py` lists the verdicts for 50 queries without and with a declared key, and runs every query judged deterministic on DuckDB with its table's rows stored in every order (DuckDB on one thread breaks ties by storage order): each returns the same rows every time.
