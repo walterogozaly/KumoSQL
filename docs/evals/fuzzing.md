@@ -47,6 +47,12 @@ Seed 2 (count 60) went from 238/691 to 569/751 equivalent pairs proved (575/735 
 
 Re-measured on 2026-10-04 (master 4d294afd, sqlglot 30.21): seed 2 proves 640/735 equivalent pairs (was 639) with 0 false proofs and 532/533 refuted. Rewrite composition (seed 21, 60 queries) runs 430 steps, 143 of which change the SQL, with 0 behaviour changes; the prover verifies 129 and leaves 14 unsupported (150 steps, 146 and 4 on 2026-10-02: the same seed draws different chains once the registered rule set changes, so the counts are not comparable and the extra unsupported steps were not investigated).
 
+## DISTINCT partition recombination
+
+`src/kumosql/distinct_partition_rules.py` is the `UNION DISTINCT` counterpart of the `UNION ALL` merge above, for the TLP DISTINCT cases (`SELECT DISTINCT s FROM src` against `src WHERE p UNION DISTINCT src WHERE NOT p UNION DISTINCT src WHERE p IS NULL`). Under set semantics, branches that are the same `SELECT` (same select list, FROM and joins) except for their WHERE filters are one branch filtered by the `OR` of the filters, and the filters need not be disjoint because the union removes duplicates. The `OR` is dropped when it is TRUE for every row, using `partition_rules`' three-valued Z3 encoding. The leaves of a `UNION DISTINCT`, nested `UNION ALL` operands included, are read as one set; the merged branch stays in a `UNION DISTINCT` with the leaves it did not merge with, or becomes `SELECT DISTINCT` when it is the only one left. A union with an ORDER BY, LIMIT, WITH or BY NAME tail is left alone (only its operand unions merge). Branches with aggregates, windows, LIMIT, `DISTINCT ON`, GROUP BY, HAVING, QUALIFY, nondeterministic or unknown functions, or a subquery in the filter are not merged.
+
+Near misses that stay unproved: `p` and `NOT p` without the `p IS NULL` branch (refuted: rows with NULL `p` are lost), filters on different atoms, `UNION ALL` partitions or a trailing `UNION ALL` branch against `SELECT DISTINCT`, `DISTINCT ON`, different select lists or sources. The rule was also fuzzed at the rewrite level: 3363 rewritten random unions (filters, joins, mixed `UNION ALL`/`UNION DISTINCT`, NULL-heavy and empty tables) returned the same rows on DuckDB with the optimizer off.
+
 ## Bugs these suites found
 
 * The TLP DISTINCT pairs and the `UNION` mutant joined their partitions with a bare `UNION`, which BigQuery (and sqlglot's BigQuery reader) rejects, so 120 pairs per seed ran in neither engine. The generator now writes `UNION DISTINCT`.
