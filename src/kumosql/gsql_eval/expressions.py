@@ -768,8 +768,9 @@ def between(c: Compiler, node, cx):
 
     def run(env):
         x, lo, hi = fv(env), fl(env), fh(env)
-        ge = None if x is None or lo is None else not less(x, lo)
-        le = None if x is None or hi is None else not less(hi, x)
+        # x >= lo AND x <= hi, each with the ordinary comparison rules (NaN compares false).
+        ge = None if x is None or lo is None else (less(lo, x) or _eq_plain(target, x, lo))
+        le = None if x is None or hi is None else (less(x, hi) or _eq_plain(target, x, hi))
         if ge is False or le is False:
             return False
         if ge is None or le is None:

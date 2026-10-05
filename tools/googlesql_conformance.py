@@ -349,6 +349,59 @@ def parse_header_type(text: str) -> T.Type:
                 return text[start:pos]
         fail("unbalanced <>")
 
+    def field_end(start: int) -> int:
+        """Where the STRUCT field starting at ``start`` ends: its top-level ``,`` or the ``>`` closing the STRUCT."""
+
+        depth = 0
+        i = start
+        while i < n:
+            char = text[i]
+            if char == "<":
+                depth += 1
+            elif char == ">":
+                if depth == 0:
+                    return i
+                depth -= 1
+            elif char == "," and depth == 0:
+                return i
+            i += 1
+        fail("unterminated STRUCT")
+
+    def split_field(chunk: str) -> tuple[str | None, T.Type]:
+        """``name type`` or ``type``. The printer writes the name as it is, so it may hold spaces
+        (``GROUPING SETS INT64``): the type is what ends the field, the name everything before it."""
+
+        chunk = chunk.strip()
+        if not chunk:
+            fail("an empty STRUCT field")
+        if chunk.endswith(">"):
+            depth = 0
+            start = len(chunk)
+            for i in range(len(chunk) - 1, -1, -1):
+                if chunk[i] == ">":
+                    depth += 1
+                elif chunk[i] == "<":
+                    depth -= 1
+                    if depth == 0:
+                        start = i
+                        break
+            else:
+                fail("unbalanced <> in a STRUCT field")
+            while start > 0 and chunk[start - 1].isspace():
+                start -= 1
+            while start > 0 and (chunk[start - 1].isalnum() or chunk[start - 1] in "_.$"):
+                start -= 1
+        else:
+            start = chunk.rfind(" ") + 1
+            for i in range(len(chunk) - 1, -1, -1):
+                if chunk[i].isspace():
+                    start = i + 1
+                    break
+            else:
+                start = 0
+        name = chunk[:start].strip()
+        return (name or None), parse_header_type(chunk[start:])
+
     def one() -> T.Type:
         nonlocal pos
         name = word()
@@ -379,14 +432,9 @@ def parse_header_type(text: str) -> T.Type:
                 if text[pos] == ">":
                     pos += 1
                     break
-                save = pos
-                first = word()
-                skip()
-                if first and pos < n and text[pos] not in ",><":
-                    fields.append((first, one()))  # a name, then its type
-                else:
-                    pos = save
-                    fields.append((None, one()))
+                end = field_end(pos)
+                fields.append(split_field(text[pos:end]))
+                pos = end
                 skip()
                 if pos < n and text[pos] == ",":
                     pos += 1

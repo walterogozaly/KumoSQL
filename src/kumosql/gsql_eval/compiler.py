@@ -193,6 +193,11 @@ class Cx:
 class GroupInfo:
     base: FromScope
     by_sig: dict  # signature -> E
+    always: frozenset = frozenset()  # the signatures grouped by every grouping set
+    by_node: dict = field(default_factory=dict)  # id(SELECT item node a GROUP BY ordinal or alias names) -> E
+
+    def always_grouped(self, signature) -> bool:
+        return signature in self.always
 
 
 @dataclass
@@ -492,8 +497,8 @@ class Compiler:
         replaced = cx.replace.get(id(node))
         if replaced is not None:
             return replaced
-        if cx.group is not None and not isinstance(node, (exp.Literal, exp.Null, exp.Boolean, exp.Star, exp.Column, exp.Paren)):
-            found = cx.group.by_sig.get(self.signature(node, cx.group.base))
+        if cx.group is not None and not isinstance(node, (exp.Null, exp.Boolean, exp.Star, exp.Column, exp.Paren)):
+            found = self._group_key_match(node, cx.group)
             if found is not None:
                 return found
         handler = _HANDLERS.get(type(node))
@@ -506,6 +511,56 @@ class Compiler:
                 raise AnalysisError("Aggregations of aggregations are not allowed")
             raise AnalysisError(f"Aggregate function not allowed in {cx.no_agg or 'this context'}")
         return self._checked(functions.compile_call(self, node, cx))
+
+    def _group_key_match(self, node: exp.Expression, group: "GroupInfo") -> E | None:
+        """The grouping key a post-GROUP BY expression stands for, or None.
+
+        An expression whose every column is itself a grouping key is computed from the keys (NULL in the sets that do not
+        group them): with ``GROUPING SETS (a, a + 1)``, ``a + 1`` is ``a + 1`` over the key ``a``, not the key ``a + 1``.
+        An expression with a column that is not a key is that key when it is written like one (``GROUP BY a + b``). The
+        SELECT item a GROUP BY ordinal or alias names (``GROUP BY 2``) is the key itself.
+        """
+
+        direct = group.by_node.get(id(node))
+        if direct is not None:
+            return direct
+        signature = self.signature(node, group.base)
+        found = group.by_sig.get(signature)
+        if found is None:
+            return None
+        if node.find(exp.Column) is None and not group.always_grouped(signature):
+            # a constant expression equal to a key some grouping sets leave out: GoogleSQL's rule for it is not established
+            raise Unsupported("a constant expression equal to a GROUP BY expression some grouping sets leave out")
+        if self._from_keys(node, group):
+            return None
+        return found
+
+    def _from_keys(self, node: exp.Expression, group: "GroupInfo") -> bool:
+        """Whether every column ``node`` reads (outside subqueries) is a grouping key, or sits in an operand that is one."""
+
+        for child in node.iter_expressions():
+            while isinstance(child, exp.Paren):
+                child = child.this
+            if is_query(child) or isinstance(child, (exp.Null, exp.Boolean, exp.Star)):
+                continue
+            sig = self.signature(child, group.base)
+            if isinstance(child, exp.Literal):
+                if sig in group.by_sig and not group.always_grouped(sig):
+                    raise Unsupported("a constant that equals a GROUP BY constant some grouping sets leave out")
+                continue
+            if id(child) in group.by_node:
+                continue
+            if isinstance(child, exp.Column) or (isinstance(child, exp.Dot) and path_parts(child) is not None):
+                if not (isinstance(sig, tuple) and sig[:1] == ("col",) and any(
+                    isinstance(s, tuple) and s[:3] == sig[:3] and tuple(sig[3][: len(s[3])]) == tuple(s[3]) for s in group.by_sig
+                )):
+                    return False
+                continue
+            if sig in group.by_sig:
+                continue
+            if not self._from_keys(child, group):
+                return False
+        return True
 
     def _checked(self, value: E) -> E:
         if self.mode == "bigquery" and value.type.nested_array:
@@ -742,6 +797,8 @@ class Compiler:
             nulls_first = not desc
         target = item.this
         if isinstance(target, exp.Literal) and not target.is_string:
+            if not str(target.this).isdigit():
+                raise Unsupported("ORDER BY a numeric literal that is not an integer")
             position = int(target.this)
             if not 1 <= position <= len(columns):
                 raise AnalysisError(f"ORDER BY column number exceeds input table column count: {position}")
@@ -1078,7 +1135,7 @@ class Compiler:
         cx_final = Cx(final_scope, replace, group_info, no_agg=None)
         having_e = None
         if having_node is not None:
-            having_e = self._bool(self.expr(having_node, cx_final), "HAVING")
+            having_e = self._bool(self._alias_guard(lambda: self.expr(having_node, cx_final), alias_nodes, having_node), "HAVING")
         # windows: computed on the rows after HAVING, appended to each row
         window_stage = None
         if wins:
@@ -1092,7 +1149,7 @@ class Compiler:
         if qualify_node is not None:
             if not wins:
                 raise AnalysisError("QUALIFY needs a window function")
-            qualify_e = self._bool(self.expr(qualify_node, cx_post), "QUALIFY")
+            qualify_e = self._bool(self._alias_guard(lambda: self.expr(qualify_node, cx_post), alias_nodes, qualify_node), "QUALIFY")
         # SELECT list
         out_exprs = []
         out_columns = []
@@ -1153,7 +1210,9 @@ class Compiler:
                 if is_distinct:
                     raise Unsupported("ORDER BY an expression not in the SELECT DISTINCT list")
                 replacement = exp.Ordered(this=substituted, desc=ordered.args.get("desc"), nulls_first=ordered.args.get("nulls_first"))
-                key, desc, nulls_first = self._order_key(replacement, cx_post, out_columns, None)
+                key, desc, nulls_first = self._alias_guard(
+                    lambda: self._order_key(replacement, cx_post, out_columns, None), alias_nodes, substituted
+                )
                 order_keys.append((key, desc, nulls_first, False))
         limit_fn = self._limit(node.args.get("limit"), node.args.get("offset"))
         n_out = len(out_columns)
@@ -1206,6 +1265,25 @@ class Compiler:
 
         plan = Plan(out_columns, run, bool(order_keys), value_table, None if value_table else out_exprs)
         return plan
+
+    @staticmethod
+    def _alias_guard(compile_clause, alias_nodes: dict, node: exp.Expression):
+        """Run ``compile_clause``. A SELECT alias used inside a subquery of HAVING, QUALIFY or ORDER BY is not substituted
+        there (``_substitute_aliases`` stays out of subqueries); a name the subquery then cannot find is declined, not
+        reported as unknown."""
+
+        try:
+            return compile_clause()
+        except AnalysisError as error:
+            message = str(error)
+            if message.startswith("Unrecognized name: "):
+                name = message[len("Unrecognized name: "):].strip().lower()
+                if name in alias_nodes and any(
+                    isinstance(c, exp.Column) and not c.args.get("table") and c.name.lower() == name
+                    for q in node.find_all(exp.Subquery, exp.Select) for c in q.find_all(exp.Column)
+                ):
+                    raise Unsupported("a SELECT alias used inside a subquery of HAVING, QUALIFY or ORDER BY") from None
+            raise
 
     def _bool(self, value: E, clause: str) -> E:
         if value.lit == "null":
@@ -1370,6 +1448,8 @@ class Compiler:
         """An ORDER BY item: an output position (int) or the expression to sort by."""
 
         if isinstance(target, exp.Literal) and not target.is_string:
+            if not str(target.this).isdigit():
+                raise Unsupported("ORDER BY a numeric literal that is not an integer")
             position = int(target.this)
             if not 1 <= position <= len(items):
                 raise AnalysisError(f"ORDER BY column number exceeds input table column count: {position}")
@@ -1394,7 +1474,7 @@ class Compiler:
     def _group_stage(self, node, group, items, aggs, from_scope: FromScope, scope: Scope, replace: dict):
         from . import aggregates
 
-        grouping_sets, group_nodes = self._grouping_sets(group, items, from_scope)
+        grouping_sets, group_nodes, named = self._grouping_sets(group, items, from_scope)
         cx_from = Cx(from_scope, no_agg="GROUP BY")
         item_exprs = []
         signatures = []
@@ -1420,7 +1500,9 @@ class Compiler:
             group_items.append((signature, i, value.type))
             by_sig.setdefault(signature, getter)
         mask_slot = n_items
-        group_info = GroupInfo(from_scope, by_sig)
+        always = frozenset(signatures[i] for i in range(n_items) if all(i in s for s in grouping_sets))
+        by_node = {node_id: E(item_exprs[slot].type, _slot_getter(0, slot)) for node_id, slot in named.items()}
+        group_info = GroupInfo(from_scope, by_sig, always, by_node)
         group_scope = GroupScope(from_scope, group_items, scope, self)
         # aggregates: arguments read the FROM row
         specs = []
@@ -1436,51 +1518,65 @@ class Compiler:
         """(list of sets of item positions, item nodes)."""
 
         if group is None:
-            return [()], []
+            return [()], [], {}
         _only(group, "expressions", "all", "grouping_sets", "rollup", "cube", "totals")
         if group.args.get("totals"):
             raise Unsupported("WITH TOTALS")
         nodes: list = []
         signatures: list = []
+        named: dict = {}  # id(SELECT item node named by an ordinal or alias) -> the position of its key
 
         def position(n: exp.Expression) -> int:
+            written = n
             n = self._group_item(n, items, from_scope)
             signature = ("col", id(from_scope), n[1], n[3]) if isinstance(n, tuple) else self.signature(n, from_scope)
             for i, s in enumerate(signatures):
                 if s == signature and s[0] != "unresolved":
+                    if n is not written and not isinstance(n, tuple):
+                        named[id(n)] = i
                     return i
             nodes.append(n)
             signatures.append(signature)
+            if n is not written and not isinstance(n, tuple):
+                named[id(n)] = len(nodes) - 1
             return len(nodes) - 1
 
         if group.args.get("all"):
             for name, item_node, star in items:
                 if star is not None:
                     raise Unsupported("GROUP BY ALL with SELECT *")
-                if not _contains_aggregate(item_node):
-                    position(item_node)
-            return [tuple(range(len(nodes)))], nodes
+                if not _contains_aggregate(item_node) and not _contains_window(item_node):
+                    named[id(item_node)] = position(item_node)
+            return [tuple(range(len(nodes)))], nodes, named
+        def rollup_sets(g) -> list:
+            parts = [self._set_items(e, position) for e in g.expressions]
+            return [tuple(itertools.chain.from_iterable(parts[:k])) for k in range(len(parts), -1, -1)]
+
+        def cube_sets(g) -> list:
+            parts = [self._set_items(e, position) for e in g.expressions]
+            if len(parts) > 12:
+                raise Unsupported("CUBE with too many items")
+            sets = []
+            for mask in range(2 ** len(parts) - 1, -1, -1):
+                chosen = [parts[i] for i in range(len(parts)) if mask & (1 << (len(parts) - 1 - i))]
+                sets.append(tuple(itertools.chain.from_iterable(chosen)))
+            return sets
+
         factors: list[list[tuple]] = []
         for g in group.expressions:
             if isinstance(g, exp.Rollup):
-                parts = [self._set_items(e, position) for e in g.expressions]
-                sets = [tuple(itertools.chain.from_iterable(parts[:k])) for k in range(len(parts), -1, -1)]
-                factors.append(sets)
+                factors.append(rollup_sets(g))
             elif isinstance(g, exp.Cube):
-                parts = [self._set_items(e, position) for e in g.expressions]
-                if len(parts) > 12:
-                    raise Unsupported("CUBE with too many items")
-                sets = []
-                for mask in range(2 ** len(parts) - 1, -1, -1):
-                    chosen = [parts[i] for i in range(len(parts)) if mask & (1 << (len(parts) - 1 - i))]
-                    sets.append(tuple(itertools.chain.from_iterable(chosen)))
-                factors.append(sets)
+                factors.append(cube_sets(g))
             elif isinstance(g, exp.GroupingSets):
                 sets = []
-                for e in g.expressions:
-                    if isinstance(e, exp.Rollup) or isinstance(e, exp.Cube):
-                        raise Unsupported("ROLLUP or CUBE inside GROUPING SETS")
-                    sets.append(self._set_items(e, position))
+                for e in g.expressions:  # a ROLLUP or CUBE among the sets contributes its own sets
+                    if isinstance(e, exp.Rollup):
+                        sets.extend(rollup_sets(e))
+                    elif isinstance(e, exp.Cube):
+                        sets.extend(cube_sets(e))
+                    else:
+                        sets.append(self._set_items(e, position))
                 factors.append(sets)
             else:
                 factors.append([(position(g),)])
@@ -1497,7 +1593,7 @@ class Compiler:
                 if p not in unique:
                     unique.append(p)
             cleaned.append(tuple(unique))
-        return cleaned, nodes
+        return cleaned, nodes, named
 
     def _set_items(self, node: exp.Expression, position) -> tuple:
         if isinstance(node, exp.Tuple):
@@ -1510,6 +1606,8 @@ class Compiler:
 
     def _group_item(self, node: exp.Expression, items, from_scope: FromScope) -> exp.Expression:
         if isinstance(node, exp.Literal) and not node.is_string:
+            if not str(node.this).isdigit():
+                raise Unsupported("GROUP BY a numeric literal that is not an integer")
             position = int(node.this)
             if not 1 <= position <= len(items):
                 raise AnalysisError(f"GROUP BY position {position} is out of range")
@@ -2407,6 +2505,13 @@ def _collect(node: exp.Expression, aggs: list, wins: list, root: bool) -> None:
         return
     for child in node.iter_expressions():
         _collect(child, aggs, wins, False)
+
+
+def _contains_window(node: exp.Expression) -> bool:
+    aggs: list = []
+    wins: list = []
+    _collect(node, aggs, wins, True)
+    return bool(wins)
 
 
 def _contains_aggregate(node: exp.Expression) -> bool:

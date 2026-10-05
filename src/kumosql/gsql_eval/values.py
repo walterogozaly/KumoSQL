@@ -381,10 +381,11 @@ _DECIMAL = re.compile(r"^\s*[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?\s*
 _DATE = re.compile(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})\s*$")
 _TIME = r"(\d{1,2}):(\d{1,2})(?::(\d{1,2})(?:\.(\d{1,9}))?)?"
 _TIME_RE = re.compile(r"^\s*" + _TIME + r"\s*$")
-_DATETIME = re.compile(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})(?:(?:[ T]|\s+)" + _TIME + r")?\s*$")
+_DATETIME = re.compile(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})(?:(?:[ Tt]|\s+)" + _TIME + r")?\s*$")
 _TIMESTAMP = re.compile(
     r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})(?:(?:[ T]|\s+)" + _TIME + r")?\s*(Z|[+-]\d{1,2}(?::?\d{2})?|\s*[A-Za-z_][A-Za-z_/+\-0-9]*)?\s*$"
 )
+_TIMESTAMP_LOWER_T = re.compile(r"^\s*\d{4}-\d{1,2}-\d{1,2}t\d", re.IGNORECASE)
 
 
 def parse_int64(text: str) -> int:
@@ -444,12 +445,21 @@ def parse_date(text: str) -> date:
         raise EvalError(f"Invalid date: '{text}'") from None
 
 
+def _leap_second(h: str, m: str, s: str | None) -> bool:
+    """Whether the fields spell a leap second (``23:59:60``), which BigQuery rolls into the next minute."""
+    return s is not None and int(s) == 60 and int(h) < 24 and int(m) < 60
+
+
 def parse_time(text: str) -> time:
     match = _TIME_RE.match(text)
     if not match:
         raise EvalError(f"Invalid time string \"{text}\"")
     h, m, s, f = match.groups()
     try:
+        if _leap_second(h, m, s):
+            # A leap second becomes second 00 of the next minute and drops its fractional digits; 23:59:60 wraps to 00:00:00.
+            seconds = (int(h) * 3600 + int(m) * 60 + 60) % 86400
+            return time(seconds // 3600, seconds % 3600 // 60, 0, 0)
         return time(int(h), int(m), int(s or 0), _micros_of(f))
     except ValueError:
         raise EvalError(f"Invalid time string \"{text}\"") from None
@@ -461,20 +471,34 @@ def parse_datetime(text: str) -> datetime:
         raise EvalError(f"Invalid datetime string \"{text}\"")
     y, mo, d, h, mi, s, f = match.groups()
     try:
+        if h is not None and _leap_second(h, mi, s):
+            # Rolls into the next minute (possibly the next day), dropping the fractional digits.
+            civil = datetime(int(y), int(mo), int(d), int(h), int(mi), 59) + timedelta(seconds=1)
+            return civil
         return datetime(int(y), int(mo), int(d), int(h or 0), int(mi or 0), int(s or 0), _micros_of(f))
     except ValueError:
         raise EvalError(f"Invalid datetime string \"{text}\"") from None
+    except OverflowError:
+        raise Unsupported("a leap second past the last DATETIME") from None
 
 
 def parse_timestamp(text: str, default_zone: tzinfo) -> int:
     match = _TIMESTAMP.match(text)
     if not match:
+        if _TIMESTAMP_LOWER_T.match(text):
+            raise Unsupported("a lower-case t between the date and the time of a TIMESTAMP string")
         raise EvalError(f"Invalid timestamp: '{text}'")
     y, mo, d, h, mi, s, f, zone_text = match.groups()
     try:
-        civil = datetime(int(y), int(mo), int(d), int(h or 0), int(mi or 0), int(s or 0), _micros_of(f))
+        if h is not None and _leap_second(h, mi, s):
+            # Rolls into the next minute (possibly the next day); unlike DATETIME and TIME the fractional digits are kept.
+            civil = datetime(int(y), int(mo), int(d), int(h), int(mi), 59, _micros_of(f)) + timedelta(seconds=1)
+        else:
+            civil = datetime(int(y), int(mo), int(d), int(h or 0), int(mi or 0), int(s or 0), _micros_of(f))
     except ValueError:
         raise EvalError(f"Invalid timestamp: '{text}'") from None
+    except OverflowError:
+        raise Unsupported("a leap second past the last TIMESTAMP") from None
     tz = default_zone
     if zone_text:
         zone_text = zone_text.strip()
