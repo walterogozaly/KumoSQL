@@ -227,3 +227,19 @@ def test_the_order_file_is_valid_and_names_real_test_files():
     assert set(order) >= {"slow", "risky", "runs", "slow_seconds", "together", "files"}
     files = {nodeid.split("::")[0] for nodeid in [*order["slow"], *order["risky"]]} | set(order["together"]) | set(order["files"])
     assert all((ROOT / name).is_file() for name in files), sorted(f for f in files if not (ROOT / f).is_file())
+
+
+def test_routine_profile_keeps_full_and_eval_profiles_available(monkeypatch):
+    import run_tests
+    commands = []
+    monkeypatch.setattr(run_tests, "_compiled", lambda: False)
+    monkeypatch.setattr(run_tests.subprocess, "call", lambda command, **kwargs: commands.append(command) or 0)
+    for flags in (["--routine"], [], ["--evals"]):
+        assert run_tests.main([*flags, "-j", "1"]) == 0
+    routine, full, evals = commands
+    assert routine[routine.index("-m") + 1] == "not eval and not slow"
+    assert "--quick" in routine
+    assert full[full.index("-m") + 1] == "not slow"
+    assert "--quick" not in full
+    assert evals[evals.index("-m") + 1] == "eval and not slow"
+    assert "--quick" not in evals
