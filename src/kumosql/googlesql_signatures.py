@@ -668,6 +668,19 @@ def lambda_call(typer, node, name: str, scope, ctes) -> T:
 ARRAY_LAMBDA_RESULTS = {"ARRAY_FIND", "ARRAY_FIND_ALL", "ARRAY_OFFSET", "ARRAY_OFFSETS", "ARRAY_INCLUDES"}
 
 
+def _array_syntax(node) -> bool:
+    """Whether ``node`` is written as an array: ``[..]``, ``ARRAY<..>[..]`` or a CAST to an ARRAY type."""
+
+    if isinstance(node, exp.Paren):
+        return _array_syntax(node.this)
+    if isinstance(node, exp.Array):
+        return True
+    if isinstance(node, (exp.Cast, exp.TryCast)):
+        to = node.args.get("to")
+        return isinstance(to, exp.DataType) and to.is_type(exp.DataType.Type.ARRAY)
+    return False
+
+
 def array_lambda_call(typer, node, name: str, scope, ctes) -> T:
     """ARRAY_FIND(array, e -> cond [, mode]) is the element type, ARRAY_FIND_ALL the array type, ARRAY_OFFSET an INT64,
     ARRAY_OFFSETS an ARRAY<INT64> and ARRAY_INCLUDES a BOOL. The first argument must be a typed ARRAY."""
@@ -677,6 +690,13 @@ def array_lambda_call(typer, node, name: str, scope, ctes) -> T:
         _visit_children(typer, node, scope, ctes)
         return UNKNOWN
     array = typer.expr(args[0], scope, ctes)
+    if name in ("ARRAY_OFFSET", "ARRAY_OFFSETS", "ARRAY_INCLUDES") and (
+            array.lit == "empty_array" or (array.type is not None and array.lit is None and array.type.kind == "ARRAY")
+            or _array_syntax(args[0])):
+        # These results do not depend on the element type, so an array of a type this typer leaves unknown is fine.
+        if name == "ARRAY_OFFSET":
+            return T(INT64)
+        return T(GType.array(INT64)) if name == "ARRAY_OFFSETS" else T(BOOL)
     if array.type is None or array.lit is not None or array.type.kind != "ARRAY" or array.type.element is None:
         return UNKNOWN
     if name == "ARRAY_FIND":
