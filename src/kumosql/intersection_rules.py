@@ -23,6 +23,10 @@ def collapse_counted_intersection(select):
         return None
     from .algebraic_equivalence import _aligned_branches
 
+    # ``_aligned_branches`` steps through unaliased parentheses; one that carries an ORDER BY / LIMIT / OFFSET
+    # (``((SELECT ..) ORDER BY k LIMIT 1) UNION ALL ..``) would lose its cut there.
+    if any(isinstance(n, exp.Subquery) and any(n.args.get(k) for k in ("order", "limit", "offset")) for n in source.walk()):
+        return None
     branches = _aligned_branches(source.this)
     if branches is None or len(branches) < 2 or size.this != str(len(branches)):
         return None
