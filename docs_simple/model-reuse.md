@@ -10,6 +10,12 @@ The helper `rewrite_over_model` proposes a query reading the model and checks it
 
 For example, a model containing all orders with customer IDs might supply a query filtering those orders to one customer. A model that discarded a needed column cannot supply it.
 
+### When the model covers only part of what you need
+
+Suppose the model keeps orders numbered below 3 and you want orders below 6. The model still holds half the answer. KumoSQL can read the model for the rows it has and read the base table only for the rest (orders 3 to 5), then add the two together. For a summary model the two partial sums or counts are added again. The rest is chosen with "is not true" rather than "is false", so rows where the model's condition is unknown (NULL) are not lost.
+
+This proposal is off unless you ask for it, because the answer still reads the base table. It is proven like every other rewrite, and it is declined when the model lacks a needed column, when an average has no sum and count to combine, or when the model dropped groups. The recorded scores are in the [full reference](../docs/model-reuse.md).
+
 ## 2. Is one result contained in another?
 
 Containment asks whether every row from query A is also returned by query B.

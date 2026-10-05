@@ -183,6 +183,13 @@ def baseline(case: dict, schema: Schema, timeout_ms: int) -> ModelReuse:
     return ModelReuse("no_rewrite", "not the same query")
 
 
+# Whether a replacement may also read base tables (union compensation). The shared-model cases must be answered
+# from the model alone. Calcite's labels follow its own union rewriting, which takes a view inside the query's range
+# (its `noMat` cases where the view overlaps the range only partly stay unrewritten); the other sources label
+# a view that covers part of the range with the remaining rows read from the base tables as reusable.
+UNION_COMPENSATION = {"adapted": False, "calcite": "contained", "doris": True, "outer-union": True}
+
+
 def run_case(case: dict, use_baseline: bool, timeout_ms: int, trials: int) -> dict:
     schema = SCHEMAS[case["schema"]]
     start = time.time()
@@ -196,7 +203,7 @@ def run_case(case: dict, use_baseline: bool, timeout_ms: int, trials: int) -> di
                 schema=schema.columns,
                 constraints=constraints_of(schema),
                 timeout_ms=timeout_ms,
-                union_compensation=True,  # the labels allow a replacement that also reads base tables
+                union_compensation=UNION_COMPENSATION[case["source"]],
             )
     except Exception as error:  # noqa: BLE001 - reported as an error, never as a result
         return {"id": case["id"], "status": "error", "reason": f"{type(error).__name__}: {error}", "seconds": time.time() - start}

@@ -43,7 +43,9 @@ from .model_reuse import (
     _inner,
     _key,
     _mappings,
+    _merge_grouped_derived,
     _Rewriter,
+    _split_and,
 )
 
 _U = "u"  # the alias of the union of the two branches
@@ -59,11 +61,34 @@ def flatten_branches(sql: str, schema: Mapping[str, Sequence[str]]) -> str:
         columns = {t: {c: "unknown" for c in cols} for t, cols in schema.items()}
         tree = qualify(sqlglot.parse_one(sql, read="postgres"), schema=columns, dialect="postgres", validate_qualify_columns=False, quote_identifiers=False, identify=False)
         tree = merge_subqueries(tree)
-        for select in tree.find_all(exp.Select):
+        for select in list(tree.find_all(exp.Select))[::-1]:  # innermost first
+            merged = _merge_grouped_derived(select)  # a filter over a grouped model, as a filter of its groups
+            if merged is not select:
+                if select is tree:
+                    tree = merged
+                else:
+                    select.replace(merged)
+                select = merged
+            _group_filters_to_where(select)
             _join_conditions_to_where(select)
         return tree.sql(dialect="postgres")
     except Exception:  # noqa: BLE001 - sqlglot's optimizer raises many types; the unflattened SQL is still valid
         return sql
+
+
+def _group_filters_to_where(select: exp.Select) -> None:
+    """Conjuncts of HAVING that read no aggregate filter rows before grouping as well as groups after it."""
+
+    having = select.args.get("having")
+    if having is None or not select.args.get("group"):
+        return
+    moved = [c for c in _split_and(having.this) if not any(isinstance(n, (exp.AggFunc, exp.Window, exp.Subquery)) for n in c.walk())]
+    kept = [c for c in _split_and(having.this) if not any(c is m for m in moved)]
+    if not moved:
+        return
+    where = select.args.get("where")
+    select.set("where", exp.Where(this=_combine([*([where.this] if where is not None else []), *moved])))
+    select.set("having", exp.Having(this=_combine(kept)) if kept else None)
 
 
 def _join_conditions_to_where(select: exp.Select) -> None:
@@ -84,8 +109,24 @@ def _join_conditions_to_where(select: exp.Select) -> None:
     select.set("where", exp.Where(this=_combine(conditions)))
 
 
-def union_candidates(query: _Block, model: _Block, names: list[str], model_name: str) -> Iterator[_Candidate]:
-    """Replacements that read ``model_name`` for the rows it covers and the base tables for the rest."""
+def _order_keys(query: _Block) -> list[exp.Expression]:
+    """The query's ORDER BY items with a bare output name replaced by the expression it names."""
+
+    named = {item.alias: _inner(item) for item in query.outputs if isinstance(item, exp.Alias)}
+
+    def visit(n):
+        if isinstance(n, exp.Column) and not n.table and n.name in named:
+            return named[n.name].copy()
+        return n
+
+    return [_with_this(item, item.this.copy().transform(visit)) for item in query.order]
+
+
+def union_candidates(query: _Block, model: _Block, names: list[str], model_name: str, contained: bool = False) -> Iterator[_Candidate]:
+    """Replacements that read ``model_name`` for the rows it covers and the base tables for the rest.
+
+    With ``contained`` every row of the model is read as it is, so the proof needs the model's rows to be rows of the
+    query (a model inside the query's range); otherwise the model's rows are filtered by what the query asks beyond it."""
 
     if getattr(query, "shape", None) is not None or getattr(model, "shape", None) is not None:
         return  # outer-join blocks carry no usable conjuncts
@@ -96,10 +137,10 @@ def union_candidates(query: _Block, model: _Block, names: list[str], model_name:
     if len(model.tables) != len(query.tables):
         return
     for mapping in _mappings(model.tables, query.tables):  # query alias -> model alias
-        yield from _for_mapping(query, model, names, model_name, mapping)
+        yield from _for_mapping(query, model, names, model_name, mapping, contained)
 
 
-def _for_mapping(query: _Block, model: _Block, names: list[str], model_name: str, mapping: dict[str, str]) -> Iterator[_Candidate]:
+def _for_mapping(query: _Block, model: _Block, names: list[str], model_name: str, mapping: dict[str, str], contained: bool = False) -> Iterator[_Candidate]:
     model_in_query = {m: q for q, m in mapping.items()}  # model alias -> query alias
     model_conj = [_Rewriter._rename(c.copy(), model_in_query) for c in _expand_conjuncts(model.conjuncts)]
     query_conj = _expand_conjuncts(query.conjuncts)
@@ -122,9 +163,9 @@ def _for_mapping(query: _Block, model: _Block, names: list[str], model_name: str
     )
     rewriter = _Rewriter(renamed, names, model_name, {}, set())
     rewriter.learn_equalities(model_conj)
-    over_model = [rewriter.rewrite(r) for r in residual]
-    if any(r is None for r in over_model):
-        return  # the model cannot filter what the query asks beyond it
+    # What the query asks beyond the model, read over the model's columns. A part the model cannot read is
+    # dropped, and the prover then has to show that it holds on every row of the model already.
+    over_model = [] if contained else [new for new in (rewriter.rewrite(r) for r in residual) if new is not None]
 
     def model_rows(select_items: list[exp.Expression]) -> exp.Select:
         select = exp.Select(expressions=select_items).from_(exp.to_table(model_name))
@@ -159,7 +200,8 @@ def _for_mapping(query: _Block, model: _Block, names: list[str], model_name: str
 
 
 def _row_candidates(query: _Block, rewriter: _Rewriter, model_rows, base_rows, union) -> Iterator[_Candidate]:
-    simple = not (query.is_aggregate or query.distinct or query.order)
+    order = _order_keys(query)
+    simple = not (query.is_aggregate or query.distinct or order)
     if simple:
         view_items, base_items = [], []
         for item in query.outputs:
@@ -172,7 +214,7 @@ def _row_candidates(query: _Block, rewriter: _Rewriter, model_rows, base_rows, u
         yield _Candidate(union(model_rows(view_items), base_rows(base_items)).sql(dialect="postgres"), "union-rows", flatten=True)
         return
     # anything else runs on top of the union of the columns it reads
-    roots = [*query.outputs, *query.group, *query.order] + ([query.having] if query.having is not None else [])
+    roots = [*query.outputs, *query.group, *order] + ([query.having] if query.having is not None else [])
     columns: dict[str, exp.Column] = {}
     for root in roots:
         for column in root.find_all(exp.Column):
@@ -204,8 +246,8 @@ def _row_candidates(query: _Block, rewriter: _Rewriter, model_rows, base_rows, u
         outer.set("group", exp.Group(expressions=[over_union(g) for g in query.group]))
     if query.having is not None:
         outer.set("having", exp.Having(this=over_union(query.having)))
-    if query.order:
-        outer.set("order", exp.Order(expressions=[_with_this(o, over_union(o.this)) for o in query.order]))
+    if order:
+        outer.set("order", exp.Order(expressions=[_with_this(o, over_union(o.this)) for o in order]))
     yield _Candidate(outer.sql(dialect="postgres"), "union-rows-regrouped" if query.is_aggregate else "union-rows-on-top", flatten=True)
 
 
@@ -299,7 +341,7 @@ def _aggregate_candidates(query, model, renamed, names, model_name, rewriter, mo
     if query.having is not None and having is None:
         return
     order = []
-    for item in query.order:
+    for item in _order_keys(query):
         new = visit(item.this)
         if new is None:
             return

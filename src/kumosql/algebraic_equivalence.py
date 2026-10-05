@@ -80,6 +80,7 @@ from .outer_filters import strengthen_derived_outer_join
 from .grouped_sums import drop_grouped_sum_coalesce
 from .sum_of_counts import sum_of_grouped_counts
 from .lone_source import lift_derived_expressions
+from .grouped_partition_rules import unsplit_grouped_partitions
 from .partition_rules import recombine_partitions
 from .keyed_rules import drop_keyed_distinct, exists_over_aggregate, remove_keyed_grouping
 from .keyed_set_join import lift_keyed_set_join
@@ -4931,7 +4932,7 @@ def normalize(
 
     for _ in range(16):
         before = tree.sql(dialect="bigquery")
-        tree = _select_list_in_to_exists(_fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(normalize_set_operations(_fold_boolean_constants(fold_string_literals(_fold_constants(propagate_empty(recombine_partitions(tree)).transform(step)))))))), not_null), not_null)
+        tree = _select_list_in_to_exists(_fold_null_guards(_fold_count_coalesce(_fold_empty_set_operands(_flatten_unions(normalize_set_operations(_fold_boolean_constants(fold_string_literals(_fold_constants(propagate_empty(recombine_partitions(unsplit_grouped_partitions(tree))).transform(step)))))))), not_null), not_null)
         from .passthrough_sources import remove_passthrough_sources
 
         tree = remove_passthrough_sources(tree, schema)

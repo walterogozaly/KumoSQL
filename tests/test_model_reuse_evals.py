@@ -124,3 +124,16 @@ def test_residual_disjunctions_keep_their_parentheses(query, model):
     reuse = rewrite_over_model(query, model, schema=T)
     assert reuse.rewritten, reuse.reason
     assert "(" in reuse.sql
+
+
+def test_union_compensation_floor_on_the_outer_union_cases(tmp_path):
+    """A model that covers part of the query's range plus base-table rows: every reusable case in the ``union`` group
+    of the development split is rewritten, the trap stays unrewritten, and each rewrite was re-run on random databases."""
+
+    cases = [c["id"] for c in mv_bench.load_cases("outer-union") if c["origin"] == "union" and not mv_bench.is_held_out(c["id"])]
+    args = ["--source", "outer-union"]
+    for case_id in cases:
+        args += ["--id", case_id]
+    summary = _run(mv_bench, args, tmp_path)["outer-union:union"]
+    assert summary["wrong"] == 0 and summary["rewritten_beyond_label"] == 0 and summary["unchecked"] == 0
+    assert summary["rewritten_of_expected"] >= 15 and summary["no_rewrite_of_none"] == summary["expect_none"]

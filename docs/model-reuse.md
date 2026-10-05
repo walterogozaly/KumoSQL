@@ -41,7 +41,21 @@ What the proposer reads beyond select-project-join and rollups:
 
 The `COALESCE` fix matters for correctness: the prover currently proves `COUNT(*)` equal to a `SUM` of grouped counts even over an empty table, so before it five CUBE/ROLLUP rewrites were accepted and failed the random-database check (reported to the prover's soundness owners).
 
-Not read yet: unique/foreign-key joins, outer-join models, `INTERSECT ALL` and branchwise set-operation compensation, union compensation from base tables, correlated subqueries, injective group keys.
+Not read yet: unique/foreign-key joins, outer-join models, `INTERSECT ALL` and branchwise set-operation compensation, correlated subqueries, injective group keys.
+
+### Union compensation (a model that covers part of the query)
+
+A model that keeps only the rows meeting `P_V` still holds part of the answer to a query that asks for `P_Q`. With `union_compensation=True`, `rewrite_over_model` also proposes
+
+    Q  =  sigma_residual(V)  UNION ALL  sigma_(P_Q AND (P_V) IS NOT TRUE)(base tables)
+
+where `residual` is what the query asks beyond the model's own conjuncts, read over the model's columns (a part the model cannot read is dropped, and the prover must then show the model's filter implies it). The complement is `(P_V) IS NOT TRUE`, never `NOT (P_V)`, which loses the rows where `P_V` is NULL. The two branches are disjoint and together cover `P_Q`. The module is `src/kumosql/union_compensation.py` (proposer only; the prover decides).
+
+* Model of rows: a plain projection becomes the `UNION ALL` (strategy `union-rows`); a query with `DISTINCT`, `ORDER BY` or `GROUP BY` runs on top of the union of the columns it reads (`union-rows-on-top`, `union-rows-regrouped`).
+* Grouped model (`union-aggregate`): the residual may read only group keys (a filter keeps or drops whole groups). Each branch gives partial aggregates by the query's grouping, a final aggregation combines them: `SUM` of sums and counts, `MIN`, `MAX`, and `AVG` from the model's `SUM` and `COUNT`. A distinct aggregate, an `AVG` the model has no sum and count for, a model with `HAVING` or `DISTINCT`, `ROLLUP`/`CUBE`/`GROUPING SETS`, an outer-join block or a model over other tables than the query are declined.
+* The option is off by default: the replacement also reads base tables, so a caller that needs the model to stand alone (`check_containment` among them) must not get one. `union_compensation="contained"` accepts only a model all of whose rows are rows of the query (Calcite's union rewriting); `True` also filters a model that overlaps the range only partly. A query that the model already covers is still answered by plain reuse first. `tools/mv_reuse_bench.py` scores `adapted` without it (the answer must come from the model alone), `calcite` in `contained` mode (so Calcite's `noMat` cases with a partly overlapping view stay cannot-cases) and `doris` and `outer-union` with `True`.
+* Prover support: `grouped_partition_rules.unsplit_grouped_partitions` (one entry in `algebraic_equivalence.normalize`) reads `SUM`/`MIN`/`MAX` over a `UNION ALL` of grouped selects that are one query split by disjoint filters as one aggregate over the whole (it reverses the split of `_split_aggregates`, and fires only when `partition_rules` then merges the branches; without an outer `GROUP BY` a recombined `COUNT` also needs a branch that always yields a row). The replacement's model definition is merged into its branches (`union_compensation.flatten_branches`) before the proof, so the branches differ only by their filters.
+* Result on the outer-union `union` group (development split): 15/15 reusable cases rewritten (baseline 3/15), the trap (`missing-column`) and `average-without-count` stay unrewritten, 0 wrong, every rewrite re-run on random databases.
 
 ## Query containment
 

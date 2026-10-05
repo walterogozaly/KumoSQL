@@ -922,13 +922,15 @@ def rewrite_over_model(
     timeout_ms: int = 5000,
     exact_arithmetic: bool = False,
     identity: bool = False,
-    union_compensation: bool = False,
+    union_compensation: bool | str = False,
 ) -> ModelReuse:
     """Return a verified replacement for ``query_sql`` that reads ``model_name``, or say why not.
 
     With ``union_compensation`` a model that covers only part of the query's rows may be completed with the
     remaining rows read from the base tables (see :mod:`kumosql.union_compensation`); the replacement then
     reads base tables as well as the model, so callers that need the model to stand alone leave it off.
+    ``"contained"`` allows only a model all of whose rows belong to the query (Calcite's union rewriting);
+    ``True`` also filters the model's rows with what the query asks beyond it.
     """
 
     try:
@@ -983,7 +985,7 @@ def rewrite_over_model(
         if union_compensation:
             from .union_compensation import union_candidates
 
-            out.extend(union_candidates(query, model, names, model_name))
+            out.extend(union_candidates(query, model, names, model_name, contained=union_compensation == "contained"))
         return out
 
     whole.reason = ""  # type: ignore[attr-defined]
