@@ -16,6 +16,8 @@ Every counted proof that has been re-checked so far survived: QED (366), the SQL
 
 The tool also covers the fuzzing, rewrite, view-reuse, containment, dialect, pipeline, minimization and bounded-verification evals. Each of those was compared with how its eval proves pairs, and has been run on a small sample, with full runs done for three of them and the rest still to do. Where an eval's recorded count is out of date, the tool follows the eval's code, and the full reference lists the differences.
 
+Some proofs hold only under named conditions (a column is never empty, a column is unique). The tool declares those conditions to the search, so every database it builds meets them, and a difference on one would be a wrong proof. Without the conditions a difference is expected and means nothing.
+
 ## Limits
 
 - Surviving the search is evidence, not a proof. A database the search never builds can still hide a bug.

@@ -31,6 +31,7 @@ An adapter proves each pair exactly as its eval does (same entry point, options 
 | `sqlsolver-calcite`, `sqlsolver-spark`, `sqlsolver-tpch`, `sqlsolver-tpcc`, `qed-calcite`, `calcite-mined`, `rbot-calcite`, `cosette`, `spes-only` | `calcite_family.py` |
 | `singh`, `singh-fractions`, `singh-leetcode-types` | `singh.py` |
 | `verieql` (pairs are named `<suite>:<VeriEQL index>`) | `verieql.py` |
+| `conditional-equivalence-singh`, `conditional-equivalence-verieql` (proofs that hold only under named NOT NULL, unique-key and foreign-key conditions; the conditions are declared to the search, so every database meets them) | `conditional.py` |
 | `sqlancer-tlp-norec`, `unsafe-rewrite-detection`, `rewrite-composition`, `join-rewrites`, `constraint-rewrites` | `fuzz_rewrites.py` |
 | `mv-reuse-calcite`, `mv-benchmark`, `containment`, `aggregate-decomposition` | `reuse_containment.py` |
 | `dlbench`, `dlbench-target`, `llm-sql-solver-relaxed`, `llm-sql-solver-negatives`, `llm-sql-solver-uncounted`, `sql-rewritebench`, `wetune-issues`, `wetune-issues-mysql-ci`, `clickbench-rewrites`, `llm-r2-scale`, `llm-r2-scale-train`, `spider2-bigquery` | `dialect_rewrites.py` |
