@@ -801,6 +801,77 @@ def compare_outputs_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def advise_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python -m kumosql advise",
+        description="Rank materialization changes (store a view, make a table a view) for a Dataform project by its "
+        "measured job history. Only changes proven to keep results are recommended and counted; the rest are listed "
+        "as needing proof. Reads local files only: nothing reaches the network. "
+        "`python -m kumosql export-warehouse` writes the --jobs and --sizes files.",
+    )
+    parser.add_argument("--project", required=True, type=Path, help="Dataform project root, folder of .sql files, or compiled graph JSON")
+    parser.add_argument("--jobs", required=True, type=Path, help="Job history export (JSON, JSON lines or CSV)")
+    parser.add_argument("--sizes", type=Path, help='Table sizes JSON: {"project.dataset.table": {"rows": n, "bytes": b, "columns": {"col": bytes}}}')
+    parser.add_argument("--schedules", type=Path, help='JSON mapping each model to the names of the schedules that refresh it, e.g. {"p.d.t": ["daily"]}')
+    parser.add_argument("--source-schema", type=Path, help='JSON mapping of source tables to columns, e.g. {"p.d.t": {"id": "INT64"}}')
+    parser.add_argument("--compute", choices=("on_demand", "editions"), default="on_demand", help="Compute pricing model (default on_demand: bytes billed)")
+    parser.add_argument("--usd-per-tib", type=float, help="On-demand price per TiB billed (no price is assumed)")
+    parser.add_argument("--usd-per-slot-hour", type=float, help="Editions price per slot hour (no price is assumed)")
+    parser.add_argument("--usd-per-gib-month", type=float, help="Active logical storage price per GiB-month (no price is assumed)")
+    parser.add_argument("--days", type=float, help="Days the job history covers (default: its first to last job)")
+    parser.add_argument("--refresh-per-day", type=float, help="Refreshes a day for a stored view (default: its inputs' observed build rate)")
+    parser.add_argument("--budget-bytes", type=float, help="Most extra storage the chosen set may add")
+    parser.add_argument("--exact-limit", type=int, default=12, help="Search every set exactly up to this many candidates, else greedy with local search")
+    parser.add_argument("--format", choices=("text", "json"), default="text", help="Output format (default text)")
+    parser.add_argument("-o", "--output", type=Path, help="Write the result here; stdout if omitted")
+    args = parser.parse_args(argv)
+
+    from .advice_report import render, to_json
+    from .advisor import advise, load_sizes
+    from .cost_model import Pricing
+    from .costs import load_jobs
+
+    try:
+        pricing = Pricing(args.compute, args.usd_per_tib, args.usd_per_slot_hour, args.usd_per_gib_month)
+    except ValueError as exc:
+        parser.error(str(exc))
+    try:
+        pipeline = _load_pipeline(args.project, args.source_schema)
+        jobs = load_jobs(args.jobs)
+        sizes = load_sizes(args.sizes) if args.sizes else None
+        schedules = None
+        if args.schedules:
+            schedules = parse_json_or_raise(args.schedules, "schedules file")
+            if not isinstance(schedules, dict) or not all(
+                isinstance(v, list) and all(isinstance(n, str) for n in v) for v in schedules.values()
+            ):
+                raise PipelineLoadError("schedules file must map each model to a list of schedule names")
+    except (PipelineLoadError, OSError, ValueError, AttributeError, TypeError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if not jobs:
+        print("error: the job history file has no jobs", file=sys.stderr)
+        return 2
+    try:
+        advice = advise(
+            pipeline, jobs, sizes=sizes, pricing=pricing, schedules=schedules, refresh_per_day=args.refresh_per_day,
+            days=args.days, budget_bytes=args.budget_bytes, exact_limit=args.exact_limit,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if sizes is None:
+        advice.notes.append("No --sizes file: bytes are estimated from column types, so the estimates are weaker. "
+                            "`python -m kumosql export-warehouse` writes one.")
+    payload = advice.to_json()
+    text = json.dumps(to_json(payload), indent=2) if args.format == "json" else render(payload, title=args.project.name)
+    if args.output:
+        args.output.write_text(text + "\n", encoding="utf-8")
+    else:
+        print(text)
+    return 0
+
+
 def _split(value: str | None) -> list[str]:
     return [part.strip() for part in (value or "").split(",") if part.strip()]
 

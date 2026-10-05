@@ -837,6 +837,10 @@ These pieces build on the pipeline graph. They report evidence and never claim m
 - **Failures stay local** (`resilience.py`): an asset that cannot be read or parsed becomes an entry in `diagnostics` and the rest of the report is still produced. Diagnostics carry no file contents.
 - **Refactoring proposals** (`shared_logic.py`, `filter_pushdown.py`, `proposal_readiness.py`): `propose_shared_logic` and `find_upstream_filter_proposals` suggest extracting shared logic or pushing a filter upstream, listing every affected consumer and refusing when the consumer set is incomplete. Neither applies changes. `assess_proposal` marks a proposal `ready` only when every consumer is `proven` or `unchanged`; a missing result is `unknown`.
 
+## Workload-ranked materialization advice
+
+`python -m kumosql advise --project DIR --jobs FILE --sizes FILE` ranks which Dataform views to store as tables, and which tables to make views, by the cost in your job history. It recommends and counts only changes proven to keep results; changes that need a condition are listed as "needs proof" and never counted as savings. `python -m kumosql export-warehouse` writes the jobs and sizes files from read-only INFORMATION_SCHEMA reads and free dry runs. Savings are estimates; the backtest against measured runtimes is in progress. See [docs/workload-advisor.md](docs/workload-advisor.md).
+
 ## Join ordering and cardinality estimation
 
 `kumosql.joinorder` estimates the sizes of sub-joins from statistics gathered once from the data, and picks bushy join orders with DPccp. Both run in pure Python with no database. On STATS-CEB its sub-plan Q-error is 16.9 at p99, against 3,482 for Postgres 16 and 156 to 1,027 for the published learned estimators. On JOB with the full IMDB data, its plans cost 1.41x the optimum on geometric average (Postgres 16's estimates: 2.79x) and run the 113 queries in 10.8 s in DuckDB, against 15.5 s for DuckDB's own optimizer. `python tools/joinorder_bench.py stats-ceb|job --repo PATH` reruns them. See [docs/joinorder.md](docs/joinorder.md) for the method, the benchmarks, the held-out split and credits.
@@ -896,6 +900,8 @@ Every command prints `--help`.
 | `python -m kumosql scopes` | Manage saved scopes (`list`, `add`, `remove`, `fields`, `refresh`) |
 | `python -m kumosql compare-outputs` | Generate SQL that compares pipeline outputs before and after a refactor |
 | `python -m kumosql dry-run` | BigQuery planning and schema check, no query execution |
+| `python -m kumosql advise` | Rank which views to store and which tables to make views from job history and table sizes (`--project`, `--jobs`, `--sizes`, `--schedules`, `--usd-per-tib`, `--format json`) |
+| `python -m kumosql export-warehouse` | Read-only export of job history and table sizes from BigQuery INFORMATION_SCHEMA and free dry runs for `advise` (`--project`, `--region`, `--jobs-out`, `--sizes-out`, `--dry-run` prints the SQL and sends nothing) |
 | `python -m kumosql change-report` | Report changes between two project snapshots |
 | `python -m kumosql ci-check` | Turn a change report into a check conclusion and comment |
 | `python -m kumosql evidence-summary` | Anonymized share of changed outputs that have useful evidence |

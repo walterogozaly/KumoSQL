@@ -27,6 +27,7 @@ This folder is the plain-language companion to [the full documentation](../docs/
 | See when two queries match only if some facts hold | [Equivalent under conditions](conditional-equivalence.md) |
 | Find dependencies and repeated work | [Pipeline analysis](pipeline-analysis.md) |
 | Review cost or a proposed change | [Cost and change reports](cost-and-change-reports.md) |
+| Decide which models to store as tables | [Workload advisor](workload-advisor.md) |
 | Reduce the number of models | [Refactor](refactor.md) |
 | Simplify an explicit set of table definitions | [Table minimization](table-minimization.md) |
 | Extract a copied WITH query into one model | [Shared models](shared-models.md) |

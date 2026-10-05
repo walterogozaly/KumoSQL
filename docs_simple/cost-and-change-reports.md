@@ -37,6 +37,10 @@ When you give a price per TiB, the result repeats the price, currency, billing m
 
 A repeated query is an opportunity to investigate. Sharing it can have storage or refresh costs, and it might not reduce the jobs that actually run. Inspect the proposal's validation and cost rationale.
 
+## Decide which models to store
+
+Job history can also show which views are read so often that storing them as tables would cost less, and which tables are barely read. `python -m kumosql advise` ranks those changes and counts a saving only when the readers would get the same rows. See [Which models should be stored?](workload-advisor.md).
+
 ## Compare two project versions
 
 ```sh
