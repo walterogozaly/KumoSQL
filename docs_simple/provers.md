@@ -92,6 +92,10 @@ KumoSQL knows that `SELECT d.b + 1 FROM (SELECT a AS b FROM t ORDER BY a LIMIT 1
 
 Proofs may depend on declared keys, non-NULL columns, arithmetic assumptions, or restrictions on runtime errors. Check those before applying a change to real data. [Constraint-dependent rewrites](constraint-rewrites.md) explains data guarantees, and [bounded verification](evals/bounded-verification.md) explains the row limit.
 
+## Facts belong to one spelling of a table
+
+If you tell KumoSQL that column `x` of table `t` is never NULL, that promise is about `t`, not about `other_ds.t`, which is another table that only happens to share the name. A rewrite such as "this `EXISTS` test is always true because every row matches itself" is only safe when `x` cannot be NULL, so it now checks the promise under the same spelling the query uses. A promise made for `ds.t` is used for `ds.t`, and a foreign key may name its parent table with fewer leading parts than were declared, never with more. The evidence is a few pairs checked against DuckDB with data that breaks the promise; the details are in [provers](../docs/provers.md) and `tests/test_declared_fact_spelling.py`.
+
 ## Numbers and errors
 
 BigQuery numbers have traps. A whole number past about nine quadrillion loses its last digits once it meets a decimal, `0.1 + 0.2` is not `0.3`, and dividing by zero is an error. Worse, BigQuery does not promise to filter rows before it computes the select list, so `SELECT x / y FROM t WHERE y <> 0` can still divide by zero.
