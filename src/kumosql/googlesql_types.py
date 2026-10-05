@@ -1401,8 +1401,15 @@ class _Typer:
             key = node.expressions[0]
             if isinstance(key, exp.Literal) and key.is_string:
                 return T(base.type.field(key.this)) if base.type.field(key.this) is not None else UNKNOWN
-            if isinstance(key, exp.Literal) and node.args.get("offset") in (0, 1):
-                position = int(key.this) - node.args["offset"]  # OFFSET(k) is offset 0, ORDINAL(k) offset 1
+            offset = node.args.get("offset")
+            if isinstance(key, exp.Anonymous) and offset is None and not node.args.get("safe"):
+                # sqlglot leaves OFFSET(k) / ORDINAL(k) unread in a chain of subscripts (t[OFFSET(0)][OFFSET(1)])
+                word = str(key.this).upper()
+                offset = {"OFFSET": 0, "ORDINAL": 1}.get(word) if len(key.expressions) == 1 else None
+                key = key.expressions[0] if offset is not None else key
+            if isinstance(key, exp.Literal) and not key.is_string and offset in (0, 1) and not node.args.get("safe") \
+                    and re.fullmatch(r"\d+", key.this):
+                position = int(key.this) - offset  # OFFSET(k) is offset 0, ORDINAL(k) offset 1
                 fields = base.type.fields
                 return known(fields[position].type) if 0 <= position < len(fields) else UNKNOWN
         return UNKNOWN

@@ -449,8 +449,8 @@ def _named(typer, node, name: str, scope, ctes) -> T:
         return T(GType.array(INT64))  # an untyped NULL is INT64
     if name in ARRAY_OF_FIRST:
         first = call.first()
-        if first.type is None or first.lit == "null" or first.type.kind == "ARRAY":
-            return UNKNOWN
+        if first.type is None or first.lit == "null" or (first.type.kind == "ARRAY" and name != "ARRAY_AGG"):
+            return UNKNOWN  # ARRAY_AGG of arrays is an array of arrays (where the feature is on; else an error)
         return T(GType.array(first.type))
     if name in STRING_OR_BYTES:
         return string_or_bytes(call.first(), call.ts[1:])
@@ -964,4 +964,5 @@ RULES = {
     "BOOL": _bool_function,
     "GENERATE_RANGE_ARRAY": _generate_range_array,
     "CONCAT": lambda call: concat(call.ts),
+    "ERROR": lambda call: NULL_LITERAL,  # a value of any type: coerces like an untyped NULL, INT64 on its own
 }
