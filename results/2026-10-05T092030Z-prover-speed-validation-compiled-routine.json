@@ -1,0 +1,27 @@
+{
+  "job": "prover-speed-validation",
+  "kind": "candidate",
+  "ref": "codex/parallel-eval-chunks",
+  "sha": "c0d8a352ae17e008aeae548044ed1bc8eaa97a95",
+  "leg": "compiled-routine",
+  "mode": "routine",
+  "status": "finished",
+  "exit": 0,
+  "seconds": 562.23,
+  "workers": 4,
+  "finished": "2026-10-05T09:20:30Z",
+  "notes": [
+    "Routine quick non-eval coverage. Affected compiled303checks and121sampled base/candidate status+assumption comparisons passed; these do not represent a full-default result."
+  ],
+  "machine": {
+    "system": "Linux",
+    "release": "6.18.40.1-microsoft-standard-WSL2",
+    "cpus": 6,
+    "python": "3.12.3"
+  },
+  "tests": 10968,
+  "skipped": 108,
+  "passed": 10860,
+  "failed": [],
+  "errors": []
+}
