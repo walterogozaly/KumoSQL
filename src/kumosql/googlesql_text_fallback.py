@@ -128,11 +128,20 @@ def _privacy_clause(sql: str, dialect: str) -> str | None:
             spans.append((tokens[i - 1].start, tokens[j - 1].end, ""))
     cut = _cut(sql, spans)
     # Any other named argument may change the result type (report_format => "JSON" makes the aggregate a JSON report),
-    # and the typer does not read them, so a query that still has one is left alone.
+    # and the typer does not read them: a call that still has one becomes an expression of unknown type.
     rest = _tokens(cut, dialect)
-    if rest is None or any(t.text == "=>" for t in rest):
+    rest_pairs = _pairs(rest) if rest is not None else None
+    if rest is None or rest_pairs is None:
         return None
-    return cut
+    wraps: list[tuple[int, int, str]] = []
+    for i, t in enumerate(rest):
+        if t.text != "=>":
+            continue
+        group = max((o for o, c in rest_pairs.items() if o < i < c and rest[o].type == "L_PAREN"), default=None)
+        if group is None or group == 0 or not re.fullmatch(r"[A-Za-z_]\w*", rest[group - 1].text):
+            return None
+        wraps.append((rest[group - 1].start, rest[rest_pairs[group]].end, f"{UNKNOWN_FUNCTION}(NULL)"))
+    return _cut(cut, wraps)
 
 
 _NOT_A_FUNCTION = frozenset({
