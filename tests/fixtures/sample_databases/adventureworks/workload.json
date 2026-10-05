@@ -1,0 +1,708 @@
+{
+ "about": "AdventureWorks workload for tools/sample_db_bench.py. origin 'upstream-view': the CREATE VIEW bodies of upstream/instawdb.sql (name = the upstream view name), adapted from T-SQL to BigQuery SQL as 'adaptation' says; 'upstream-procedure': the SELECT statements of the upstream functions and recursive stored procedures with their parameters bound to the values in 'adaptation'; 'authored': written for this eval. 'declined' lists what upstream has that was not adapted, with the reason.",
+ "queries": [
+  {
+   "id": "aw-view-vEmployee",
+   "origin": "upstream-view",
+   "name": "vEmployee",
+   "adaptation": "square brackets, schema prefixes and the semicolon dropped; the INNER JOIN and LEFT OUTER JOIN keywords written as JOIN and LEFT JOIN",
+   "features": [
+    "outer joins",
+    "join chain"
+   ],
+   "sql": "SELECT e.BusinessEntityID, p.Title, p.FirstName, p.MiddleName, p.LastName, p.Suffix, e.JobTitle, pp.PhoneNumber, pnt.Name AS PhoneNumberType, ea.EmailAddress, p.EmailPromotion,\n  a.AddressLine1, a.AddressLine2, a.City, sp.Name AS StateProvinceName, a.PostalCode, cr.Name AS CountryRegionName, p.AdditionalContactInfo\nFROM Employee AS e\nJOIN Person AS p ON p.BusinessEntityID = e.BusinessEntityID\nJOIN BusinessEntityAddress AS bea ON bea.BusinessEntityID = e.BusinessEntityID\nJOIN Address AS a ON a.AddressID = bea.AddressID\nJOIN StateProvince AS sp ON sp.StateProvinceID = a.StateProvinceID\nJOIN CountryRegion AS cr ON cr.CountryRegionCode = sp.CountryRegionCode\nLEFT JOIN PersonPhone AS pp ON pp.BusinessEntityID = p.BusinessEntityID\nLEFT JOIN PhoneNumberType AS pnt ON pp.PhoneNumberTypeID = pnt.PhoneNumberTypeID\nLEFT JOIN EmailAddress AS ea ON p.BusinessEntityID = ea.BusinessEntityID"
+  },
+  {
+   "id": "aw-view-vEmployeeDepartment",
+   "origin": "upstream-view",
+   "name": "vEmployeeDepartment",
+   "adaptation": "square brackets, schema prefixes and the semicolon dropped",
+   "features": [
+    "key joins",
+    "filter"
+   ],
+   "sql": "SELECT e.BusinessEntityID, p.Title, p.FirstName, p.MiddleName, p.LastName, p.Suffix, e.JobTitle, d.Name AS Department, d.GroupName, edh.StartDate\nFROM Employee AS e\nJOIN Person AS p ON p.BusinessEntityID = e.BusinessEntityID\nJOIN EmployeeDepartmentHistory AS edh ON e.BusinessEntityID = edh.BusinessEntityID\nJOIN Department AS d ON edh.DepartmentID = d.DepartmentID\nWHERE edh.EndDate IS NULL"
+  },
+  {
+   "id": "aw-view-vEmployeeDepartmentHistory",
+   "origin": "upstream-view",
+   "name": "vEmployeeDepartmentHistory",
+   "adaptation": "square brackets, schema prefixes and the semicolon dropped",
+   "features": [
+    "key joins"
+   ],
+   "sql": "SELECT e.BusinessEntityID, p.Title, p.FirstName, p.MiddleName, p.LastName, p.Suffix, s.Name AS Shift, d.Name AS Department, d.GroupName, edh.StartDate, edh.EndDate\nFROM Employee AS e\nJOIN Person AS p ON p.BusinessEntityID = e.BusinessEntityID\nJOIN EmployeeDepartmentHistory AS edh ON e.BusinessEntityID = edh.BusinessEntityID\nJOIN Department AS d ON edh.DepartmentID = d.DepartmentID\nJOIN Shift AS s ON s.ShiftID = edh.ShiftID"
+  },
+  {
+   "id": "aw-view-vIndividualCustomer",
+   "origin": "upstream-view",
+   "name": "vIndividualCustomer",
+   "adaptation": "square brackets, schema prefixes and the semicolon dropped; the alias at of AddressType becomes aty ([StateProvinceName] = sp.[Name] is written sp.Name AS StateProvinceName, likewise CountryRegionName)",
+   "features": [
+    "outer joins",
+    "nullable foreign key"
+   ],
+   "sql": "SELECT p.BusinessEntityID, p.Title, p.FirstName, p.MiddleName, p.LastName, p.Suffix, pp.PhoneNumber, pnt.Name AS PhoneNumberType, ea.EmailAddress, p.EmailPromotion,\n  aty.Name AS AddressType, a.AddressLine1, a.AddressLine2, a.City, sp.Name AS StateProvinceName, a.PostalCode, cr.Name AS CountryRegionName, p.Demographics\nFROM Person AS p\nJOIN BusinessEntityAddress AS bea ON bea.BusinessEntityID = p.BusinessEntityID\nJOIN Address AS a ON a.AddressID = bea.AddressID\nJOIN StateProvince AS sp ON sp.StateProvinceID = a.StateProvinceID\nJOIN CountryRegion AS cr ON cr.CountryRegionCode = sp.CountryRegionCode\nJOIN AddressType AS aty ON aty.AddressTypeID = bea.AddressTypeID\nJOIN Customer AS c ON c.PersonID = p.BusinessEntityID\nLEFT JOIN EmailAddress AS ea ON ea.BusinessEntityID = p.BusinessEntityID\nLEFT JOIN PersonPhone AS pp ON pp.BusinessEntityID = p.BusinessEntityID\nLEFT JOIN PhoneNumberType AS pnt ON pnt.PhoneNumberTypeID = pp.PhoneNumberTypeID\nWHERE c.StoreID IS NULL"
+  },
+  {
+   "id": "aw-view-vProductAndDescription",
+   "origin": "upstream-view",
+   "name": "vProductAndDescription",
+   "adaptation": "square brackets, schema prefixes and the semicolon dropped; WITH SCHEMABINDING and the comment dropped",
+   "features": [
+    "key joins",
+    "composite key"
+   ],
+   "sql": "SELECT p.ProductID, p.Name, pm.Name AS ProductModel, pmx.CultureID, pd.Description\nFROM Product AS p\nJOIN ProductModel AS pm ON p.ProductModelID = pm.ProductModelID\nJOIN ProductModelProductDescriptionCulture AS pmx ON pm.ProductModelID = pmx.ProductModelID\nJOIN ProductDescription AS pd ON pmx.ProductDescriptionID = pd.ProductDescriptionID"
+  },
+  {
+   "id": "aw-view-vSalesPerson",
+   "origin": "upstream-view",
+   "name": "vSalesPerson",
+   "adaptation": "square brackets, schema prefixes and the semicolon dropped; [StateProvinceName] = sp.[Name] style aliases written as AS; the column [Group] of SalesTerritory is quoted with backticks",
+   "features": [
+    "outer joins",
+    "nullable foreign key",
+    "join chain"
+   ],
+   "sql": "SELECT s.BusinessEntityID, p.Title, p.FirstName, p.MiddleName, p.LastName, p.Suffix, e.JobTitle, pp.PhoneNumber, pnt.Name AS PhoneNumberType, ea.EmailAddress, p.EmailPromotion,\n  a.AddressLine1, a.AddressLine2, a.City, sp.Name AS StateProvinceName, a.PostalCode, cr.Name AS CountryRegionName, st.Name AS TerritoryName, st.`Group` AS TerritoryGroup,\n  s.SalesQuota, s.SalesYTD, s.SalesLastYear\nFROM SalesPerson AS s\nJOIN Employee AS e ON e.BusinessEntityID = s.BusinessEntityID\nJOIN Person AS p ON p.BusinessEntityID = s.BusinessEntityID\nJOIN BusinessEntityAddress AS bea ON bea.BusinessEntityID = s.BusinessEntityID\nJOIN Address AS a ON a.AddressID = bea.AddressID\nJOIN StateProvince AS sp ON sp.StateProvinceID = a.StateProvinceID\nJOIN CountryRegion AS cr ON cr.CountryRegionCode = sp.CountryRegionCode\nLEFT JOIN SalesTerritory AS st ON st.TerritoryID = s.TerritoryID\nLEFT JOIN EmailAddress AS ea ON ea.BusinessEntityID = p.BusinessEntityID\nLEFT JOIN PersonPhone AS pp ON pp.BusinessEntityID = p.BusinessEntityID\nLEFT JOIN PhoneNumberType AS pnt ON pnt.PhoneNumberTypeID = pp.PhoneNumberTypeID"
+  },
+  {
+   "id": "aw-view-vSalesPersonSalesByFiscalYears",
+   "origin": "upstream-view",
+   "name": "vSalesPersonSalesByFiscalYears",
+   "adaptation": "square brackets, schema prefixes and the semicolon dropped; PIVOT (SUM([SubTotal]) FOR [FiscalYear] IN ([2002], [2003], [2004])) becomes one SUM(IF(FiscalYear = year, SubTotal, NULL)) per listed year grouped by the other columns (the same rows: PIVOT groups by every column it does not aggregate or pivot, and a year with no sales is NULL in both); '+' string concatenation becomes ||; DATEADD(m, 6, d) becomes DATETIME_ADD(d, INTERVAL 6 MONTH); YEAR() becomes EXTRACT(YEAR FROM ...). The years 2002 to 2004 are the view's own and lie outside this release's order dates (2022 to 2025), so the three columns are NULL, as they would be upstream on this data",
+   "features": [
+    "PIVOT as conditional sums",
+    "derived table",
+    "aggregation"
+   ],
+   "sql": "SELECT pvt.SalesPersonID, pvt.FullName, pvt.JobTitle, pvt.SalesTerritory,\n  SUM(IF(pvt.FiscalYear = 2002, pvt.SubTotal, NULL)) AS `2002`, SUM(IF(pvt.FiscalYear = 2003, pvt.SubTotal, NULL)) AS `2003`, SUM(IF(pvt.FiscalYear = 2004, pvt.SubTotal, NULL)) AS `2004`\nFROM (SELECT soh.SalesPersonID, p.FirstName || ' ' || COALESCE(p.MiddleName, '') || ' ' || p.LastName AS FullName, e.JobTitle, st.Name AS SalesTerritory, soh.SubTotal,\n    EXTRACT(YEAR FROM DATETIME_ADD(soh.OrderDate, INTERVAL 6 MONTH)) AS FiscalYear\n  FROM SalesPerson AS sp\n  JOIN SalesOrderHeader AS soh ON sp.BusinessEntityID = soh.SalesPersonID\n  JOIN SalesTerritory AS st ON sp.TerritoryID = st.TerritoryID\n  JOIN Employee AS e ON soh.SalesPersonID = e.BusinessEntityID\n  JOIN Person AS p ON p.BusinessEntityID = sp.BusinessEntityID) AS pvt\nGROUP BY pvt.SalesPersonID, pvt.FullName, pvt.JobTitle, pvt.SalesTerritory"
+  },
+  {
+   "id": "aw-view-vStateProvinceCountryRegion",
+   "origin": "upstream-view",
+   "name": "vStateProvinceCountryRegion",
+   "adaptation": "square brackets, schema prefixes and the semicolon dropped; WITH SCHEMABINDING dropped",
+   "features": [
+    "key join"
+   ],
+   "sql": "SELECT sp.StateProvinceID, sp.StateProvinceCode, sp.IsOnlyStateProvinceFlag, sp.Name AS StateProvinceName, sp.TerritoryID, cr.CountryRegionCode, cr.Name AS CountryRegionName\nFROM StateProvince AS sp\nJOIN CountryRegion AS cr ON sp.CountryRegionCode = cr.CountryRegionCode"
+  },
+  {
+   "id": "aw-view-vStoreWithContacts",
+   "origin": "upstream-view",
+   "name": "vStoreWithContacts",
+   "adaptation": "square brackets, schema prefixes and the semicolon dropped",
+   "features": [
+    "outer joins",
+    "composite key"
+   ],
+   "sql": "SELECT s.BusinessEntityID, s.Name, ct.Name AS ContactType, p.Title, p.FirstName, p.MiddleName, p.LastName, p.Suffix, pp.PhoneNumber, pnt.Name AS PhoneNumberType, ea.EmailAddress, p.EmailPromotion\nFROM Store AS s\nJOIN BusinessEntityContact AS bec ON bec.BusinessEntityID = s.BusinessEntityID\nJOIN ContactType AS ct ON ct.ContactTypeID = bec.ContactTypeID\nJOIN Person AS p ON p.BusinessEntityID = bec.PersonID\nLEFT JOIN EmailAddress AS ea ON ea.BusinessEntityID = p.BusinessEntityID\nLEFT JOIN PersonPhone AS pp ON pp.BusinessEntityID = p.BusinessEntityID\nLEFT JOIN PhoneNumberType AS pnt ON pnt.PhoneNumberTypeID = pp.PhoneNumberTypeID"
+  },
+  {
+   "id": "aw-view-vStoreWithAddresses",
+   "origin": "upstream-view",
+   "name": "vStoreWithAddresses",
+   "adaptation": "square brackets, schema prefixes and the semicolon dropped; the alias at of AddressType becomes aty",
+   "features": [
+    "key joins",
+    "join chain"
+   ],
+   "sql": "SELECT s.BusinessEntityID, s.Name, aty.Name AS AddressType, a.AddressLine1, a.AddressLine2, a.City, sp.Name AS StateProvinceName, a.PostalCode, cr.Name AS CountryRegionName\nFROM Store AS s\nJOIN BusinessEntityAddress AS bea ON bea.BusinessEntityID = s.BusinessEntityID\nJOIN Address AS a ON a.AddressID = bea.AddressID\nJOIN StateProvince AS sp ON sp.StateProvinceID = a.StateProvinceID\nJOIN CountryRegion AS cr ON cr.CountryRegionCode = sp.CountryRegionCode\nJOIN AddressType AS aty ON aty.AddressTypeID = bea.AddressTypeID"
+  },
+  {
+   "id": "aw-view-vVendorWithContacts",
+   "origin": "upstream-view",
+   "name": "vVendorWithContacts",
+   "adaptation": "square brackets, schema prefixes and the semicolon dropped",
+   "features": [
+    "outer joins",
+    "composite key"
+   ],
+   "sql": "SELECT v.BusinessEntityID, v.Name, ct.Name AS ContactType, p.Title, p.FirstName, p.MiddleName, p.LastName, p.Suffix, pp.PhoneNumber, pnt.Name AS PhoneNumberType, ea.EmailAddress, p.EmailPromotion\nFROM Vendor AS v\nJOIN BusinessEntityContact AS bec ON bec.BusinessEntityID = v.BusinessEntityID\nJOIN ContactType AS ct ON ct.ContactTypeID = bec.ContactTypeID\nJOIN Person AS p ON p.BusinessEntityID = bec.PersonID\nLEFT JOIN EmailAddress AS ea ON ea.BusinessEntityID = p.BusinessEntityID\nLEFT JOIN PersonPhone AS pp ON pp.BusinessEntityID = p.BusinessEntityID\nLEFT JOIN PhoneNumberType AS pnt ON pnt.PhoneNumberTypeID = pp.PhoneNumberTypeID"
+  },
+  {
+   "id": "aw-view-vVendorWithAddresses",
+   "origin": "upstream-view",
+   "name": "vVendorWithAddresses",
+   "adaptation": "square brackets, schema prefixes and the semicolon dropped; the alias at of AddressType becomes aty",
+   "features": [
+    "key joins",
+    "join chain"
+   ],
+   "sql": "SELECT v.BusinessEntityID, v.Name, aty.Name AS AddressType, a.AddressLine1, a.AddressLine2, a.City, sp.Name AS StateProvinceName, a.PostalCode, cr.Name AS CountryRegionName\nFROM Vendor AS v\nJOIN BusinessEntityAddress AS bea ON bea.BusinessEntityID = v.BusinessEntityID\nJOIN Address AS a ON a.AddressID = bea.AddressID\nJOIN StateProvince AS sp ON sp.StateProvinceID = a.StateProvinceID\nJOIN CountryRegion AS cr ON cr.CountryRegionCode = sp.CountryRegionCode\nJOIN AddressType AS aty ON aty.AddressTypeID = bea.AddressTypeID"
+  },
+  {
+   "id": "aw-func-ufnGetContactInformation-employee",
+   "origin": "upstream-procedure",
+   "adaptation": "the Employee branch of ufnGetContactInformation with @PersonID = 1 (the IF EXISTS guard and the INSERT into the table variable dropped: an empty SELECT inserts nothing); @PersonID in the select list is the constant 1",
+   "features": [
+    "key join",
+    "constant filter"
+   ],
+   "sql": "SELECT 1 AS PersonID, p.FirstName, p.LastName, e.JobTitle, 'Employee' AS BusinessEntityType\nFROM Employee AS e\nJOIN Person AS p ON p.BusinessEntityID = e.BusinessEntityID\nWHERE e.BusinessEntityID = 1"
+  },
+  {
+   "id": "aw-func-ufnGetContactInformation-vendor",
+   "origin": "upstream-procedure",
+   "adaptation": "the Vendor Contact branch of ufnGetContactInformation with @PersonID = 1491 (guard and INSERT dropped; the table alias v kept)",
+   "features": [
+    "composite key",
+    "key joins"
+   ],
+   "sql": "SELECT 1491 AS PersonID, p.FirstName, p.LastName, ct.Name AS JobTitle, 'Vendor Contact' AS BusinessEntityType\nFROM Vendor AS v\nJOIN BusinessEntityContact AS bec ON bec.BusinessEntityID = v.BusinessEntityID\nJOIN ContactType AS ct ON ct.ContactTypeID = bec.ContactTypeID\nJOIN Person AS p ON p.BusinessEntityID = bec.PersonID\nWHERE bec.PersonID = 1491"
+  },
+  {
+   "id": "aw-func-ufnGetContactInformation-store",
+   "origin": "upstream-procedure",
+   "adaptation": "the Store Contact branch of ufnGetContactInformation with @PersonID = 291 (guard and INSERT dropped)",
+   "features": [
+    "composite key",
+    "key joins"
+   ],
+   "sql": "SELECT 291 AS PersonID, p.FirstName, p.LastName, ct.Name AS JobTitle, 'Store Contact' AS BusinessEntityType\nFROM Store AS s\nJOIN BusinessEntityContact AS bec ON bec.BusinessEntityID = s.BusinessEntityID\nJOIN ContactType AS ct ON ct.ContactTypeID = bec.ContactTypeID\nJOIN Person AS p ON p.BusinessEntityID = bec.PersonID\nWHERE bec.PersonID = 291"
+  },
+  {
+   "id": "aw-func-ufnGetContactInformation-consumer",
+   "origin": "upstream-procedure",
+   "adaptation": "the Consumer branch of ufnGetContactInformation with @PersonID = 1699 (guard and INSERT dropped; the NULL job title is CAST to STRING)",
+   "features": [
+    "nullable foreign key",
+    "constant filter"
+   ],
+   "sql": "SELECT 1699 AS PersonID, p.FirstName, p.LastName, CAST(NULL AS STRING) AS JobTitle, 'Consumer' AS BusinessEntityType\nFROM Person AS p\nJOIN Customer AS c ON c.PersonID = p.BusinessEntityID\nWHERE p.BusinessEntityID = 1699 AND c.StoreID IS NULL"
+  },
+  {
+   "id": "aw-func-ufnGetContactInformation-all",
+   "origin": "upstream-procedure",
+   "adaptation": "the four INSERT ... SELECT branches of ufnGetContactInformation as one UNION ALL (the function's result table), @PersonID = 1491 (a vendor contact, so only that branch returns a row); the guards are dropped",
+   "features": [
+    "union all",
+    "four branches"
+   ],
+   "sql": "SELECT 1491 AS PersonID, p.FirstName, p.LastName, e.JobTitle, 'Employee' AS BusinessEntityType\nFROM Employee AS e JOIN Person AS p ON p.BusinessEntityID = e.BusinessEntityID\nWHERE e.BusinessEntityID = 1491\nUNION ALL\nSELECT 1491, p.FirstName, p.LastName, ct.Name, 'Vendor Contact'\nFROM Vendor AS v JOIN BusinessEntityContact AS bec ON bec.BusinessEntityID = v.BusinessEntityID\n  JOIN ContactType AS ct ON ct.ContactTypeID = bec.ContactTypeID JOIN Person AS p ON p.BusinessEntityID = bec.PersonID\nWHERE bec.PersonID = 1491\nUNION ALL\nSELECT 1491, p.FirstName, p.LastName, ct.Name, 'Store Contact'\nFROM Store AS s JOIN BusinessEntityContact AS bec ON bec.BusinessEntityID = s.BusinessEntityID\n  JOIN ContactType AS ct ON ct.ContactTypeID = bec.ContactTypeID JOIN Person AS p ON p.BusinessEntityID = bec.PersonID\nWHERE bec.PersonID = 1491\nUNION ALL\nSELECT 1491, p.FirstName, p.LastName, CAST(NULL AS STRING), 'Consumer'\nFROM Person AS p JOIN Customer AS c ON c.PersonID = p.BusinessEntityID\nWHERE p.BusinessEntityID = 1491 AND c.StoreID IS NULL"
+  },
+  {
+   "id": "aw-func-ufnGetProductDealerPrice",
+   "origin": "upstream-procedure",
+   "adaptation": "the SELECT of ufnGetProductDealerPrice with @ProductID = 707 and @OrderDate = DATETIME '2023-07-01 00:00:00'; the assignment to a variable becomes a plain select (the function returns the one row's value); CONVERT(datetime, '99991231', 112) becomes DATETIME '9999-12-31 00:00:00' ; the constant @DealerDiscount = 0.60 is inlined",
+   "features": [
+    "join with a range condition",
+    "BETWEEN"
+   ],
+   "sql": "SELECT h.ListPrice * 0.60 AS DealerPrice\nFROM Product AS p\nJOIN ProductListPriceHistory AS h ON p.ProductID = h.ProductID AND p.ProductID = 707\n  AND DATETIME '2023-07-01 00:00:00' BETWEEN h.StartDate AND COALESCE(h.EndDate, DATETIME '9999-12-31 00:00:00')"
+  },
+  {
+   "id": "aw-func-ufnGetProductListPrice",
+   "origin": "upstream-procedure",
+   "adaptation": "the SELECT of ufnGetProductListPrice with @ProductID = 707 and @OrderDate = DATETIME '2023-07-01 00:00:00'; the assignment to a variable becomes a plain select (the function returns the one row's value); CONVERT(datetime, '99991231', 112) becomes DATETIME '9999-12-31 00:00:00'",
+   "features": [
+    "join with a range condition",
+    "BETWEEN"
+   ],
+   "sql": "SELECT h.ListPrice AS ListPrice\nFROM Product AS p\nJOIN ProductListPriceHistory AS h ON p.ProductID = h.ProductID AND p.ProductID = 707\n  AND DATETIME '2023-07-01 00:00:00' BETWEEN h.StartDate AND COALESCE(h.EndDate, DATETIME '9999-12-31 00:00:00')"
+  },
+  {
+   "id": "aw-func-ufnGetProductStandardCost",
+   "origin": "upstream-procedure",
+   "adaptation": "the SELECT of ufnGetProductStandardCost with @ProductID = 707 and @OrderDate = DATETIME '2023-07-01 00:00:00'; the assignment to a variable becomes a plain select (the function returns the one row's value); CONVERT(datetime, '99991231', 112) becomes DATETIME '9999-12-31 00:00:00'",
+   "features": [
+    "join with a range condition",
+    "BETWEEN"
+   ],
+   "sql": "SELECT h.StandardCost AS StandardCost\nFROM Product AS p\nJOIN ProductCostHistory AS h ON p.ProductID = h.ProductID AND p.ProductID = 707\n  AND DATETIME '2023-07-01 00:00:00' BETWEEN h.StartDate AND COALESCE(h.EndDate, DATETIME '9999-12-31 00:00:00')"
+  },
+  {
+   "id": "aw-func-ufnGetStock",
+   "origin": "upstream-procedure",
+   "adaptation": "the SELECT of ufnGetStock with @ProductID = 1; LocationID = '6' (a string compared with an int) is LocationID = 6; the IF @ret IS NULL SET @ret = 0 branch is COALESCE(SUM(...), 0)",
+   "features": [
+    "aggregate without GROUP BY",
+    "COALESCE"
+   ],
+   "sql": "SELECT COALESCE(SUM(p.Quantity), 0) AS ret\nFROM ProductInventory AS p\nWHERE p.ProductID = 1 AND p.LocationID = 6"
+  },
+  {
+   "id": "aw-proc-uspGetBillOfMaterials",
+   "origin": "upstream-procedure",
+   "adaptation": "the recursive query of uspGetBillOfMaterials with @StartProductID = 749 and @CheckDate = DATETIME '2021-06-01 00:00:00'; WITH [BOM_cte](columns) becomes WITH RECURSIVE with the names given as aliases in the anchor member (BigQuery has no column list); ISNULL becomes COALESCE; OPTION (MAXRECURSION 25) has no BigQuery form and is dropped (the recursion ends by itself on this data). BillOfMaterials dates lie in 2021 in this release while the other tables' dates are 2022 to 2025, hence the check date",
+   "features": [
+    "recursive CTE",
+    "aggregation over a CTE"
+   ],
+   "sql": "WITH RECURSIVE BOM_cte AS (\n  SELECT b.ProductAssemblyID, b.ComponentID, p.Name AS ComponentDesc, b.PerAssemblyQty, p.StandardCost, p.ListPrice, b.BOMLevel, 0 AS RecursionLevel\n  FROM BillOfMaterials AS b\n  JOIN Product AS p ON b.ComponentID = p.ProductID\n  WHERE b.ProductAssemblyID = 749\n    AND DATETIME '2021-06-01 00:00:00' >= b.StartDate\n    AND DATETIME '2021-06-01 00:00:00' <= COALESCE(b.EndDate, DATETIME '2021-06-01 00:00:00')\n  UNION ALL\n  SELECT b.ProductAssemblyID, b.ComponentID, p.Name, b.PerAssemblyQty, p.StandardCost, p.ListPrice, b.BOMLevel, cte.RecursionLevel + 1\n  FROM BOM_cte AS cte\n  JOIN BillOfMaterials AS b ON b.ProductAssemblyID = cte.ComponentID\n  JOIN Product AS p ON b.ComponentID = p.ProductID\n  WHERE DATETIME '2021-06-01 00:00:00' >= b.StartDate\n    AND DATETIME '2021-06-01 00:00:00' <= COALESCE(b.EndDate, DATETIME '2021-06-01 00:00:00')\n)\nSELECT b.ProductAssemblyID, b.ComponentID, b.ComponentDesc, SUM(b.PerAssemblyQty) AS TotalQuantity, b.StandardCost, b.ListPrice, b.BOMLevel, b.RecursionLevel\nFROM BOM_cte AS b\nGROUP BY b.ComponentID, b.ComponentDesc, b.ProductAssemblyID, b.BOMLevel, b.RecursionLevel, b.StandardCost, b.ListPrice\nORDER BY b.BOMLevel, b.ProductAssemblyID, b.ComponentID"
+  },
+  {
+   "id": "aw-proc-uspGetWhereUsedProductID",
+   "origin": "upstream-procedure",
+   "adaptation": "the recursive query of uspGetWhereUsedProductID with @StartProductID = 803 and @CheckDate = DATETIME '2021-06-01 00:00:00'; WITH [BOM_cte](columns) becomes WITH RECURSIVE with the names given as aliases in the anchor member (BigQuery has no column list); ISNULL becomes COALESCE; OPTION (MAXRECURSION 25) has no BigQuery form and is dropped (the recursion ends by itself on this data). BillOfMaterials dates lie in 2021 in this release while the other tables' dates are 2022 to 2025, hence the check date",
+   "features": [
+    "recursive CTE",
+    "aggregation over a CTE"
+   ],
+   "sql": "WITH RECURSIVE BOM_cte AS (\n  SELECT b.ProductAssemblyID, b.ComponentID, p.Name AS ComponentDesc, b.PerAssemblyQty, p.StandardCost, p.ListPrice, b.BOMLevel, 0 AS RecursionLevel\n  FROM BillOfMaterials AS b\n  JOIN Product AS p ON b.ProductAssemblyID = p.ProductID\n  WHERE b.ComponentID = 803\n    AND DATETIME '2021-06-01 00:00:00' >= b.StartDate\n    AND DATETIME '2021-06-01 00:00:00' <= COALESCE(b.EndDate, DATETIME '2021-06-01 00:00:00')\n  UNION ALL\n  SELECT b.ProductAssemblyID, b.ComponentID, p.Name, b.PerAssemblyQty, p.StandardCost, p.ListPrice, b.BOMLevel, cte.RecursionLevel + 1\n  FROM BOM_cte AS cte\n  JOIN BillOfMaterials AS b ON cte.ProductAssemblyID = b.ComponentID\n  JOIN Product AS p ON b.ProductAssemblyID = p.ProductID\n  WHERE DATETIME '2021-06-01 00:00:00' >= b.StartDate\n    AND DATETIME '2021-06-01 00:00:00' <= COALESCE(b.EndDate, DATETIME '2021-06-01 00:00:00')\n)\nSELECT b.ProductAssemblyID, b.ComponentID, b.ComponentDesc, SUM(b.PerAssemblyQty) AS TotalQuantity, b.StandardCost, b.ListPrice, b.BOMLevel, b.RecursionLevel\nFROM BOM_cte AS b\nGROUP BY b.ComponentID, b.ComponentDesc, b.ProductAssemblyID, b.BOMLevel, b.RecursionLevel, b.StandardCost, b.ListPrice\nORDER BY b.BOMLevel, b.ProductAssemblyID, b.ComponentID"
+  },
+  {
+   "id": "aw-a01",
+   "origin": "authored",
+   "features": [
+    "not null foreign key join"
+   ],
+   "sql": "SELECT d.SalesOrderID, d.SalesOrderDetailID, d.ProductID, d.LineTotal\nFROM SalesOrderDetail AS d\nJOIN SalesOrderHeader AS h ON d.SalesOrderID = h.SalesOrderID\nWHERE d.OrderQty > 10"
+  },
+  {
+   "id": "aw-a02",
+   "origin": "authored",
+   "features": [
+    "two-hop foreign key join"
+   ],
+   "sql": "SELECT d.SalesOrderID, d.SalesOrderDetailID, d.OrderQty\nFROM SalesOrderDetail AS d\nJOIN SalesOrderHeader AS h ON d.SalesOrderID = h.SalesOrderID\nJOIN Customer AS c ON h.CustomerID = c.CustomerID\nWHERE d.UnitPriceDiscount > 0"
+  },
+  {
+   "id": "aw-a03",
+   "origin": "authored",
+   "features": [
+    "composite foreign key join"
+   ],
+   "sql": "SELECT d.SalesOrderID, d.SalesOrderDetailID, d.SpecialOfferID\nFROM SalesOrderDetail AS d\nJOIN SpecialOfferProduct AS sop ON d.SpecialOfferID = sop.SpecialOfferID AND d.ProductID = sop.ProductID\nWHERE d.SpecialOfferID > 1"
+  },
+  {
+   "id": "aw-a04",
+   "origin": "authored",
+   "features": [
+    "nullable foreign key join"
+   ],
+   "sql": "SELECT c.CustomerID, c.AccountNumber\nFROM Customer AS c\nJOIN Store AS s ON c.StoreID = s.BusinessEntityID"
+  },
+  {
+   "id": "aw-a05",
+   "origin": "authored",
+   "features": [
+    "left join on a nullable foreign key, parent columns unused"
+   ],
+   "sql": "SELECT p.ProductID, p.Name\nFROM Product AS p\nLEFT JOIN ProductModel AS pm ON p.ProductModelID = pm.ProductModelID\nWHERE p.ListPrice > 1000"
+  },
+  {
+   "id": "aw-a06",
+   "origin": "authored",
+   "features": [
+    "left join, parent columns used",
+    "aggregation"
+   ],
+   "sql": "SELECT ps.Name AS Subcategory, COUNT(*) AS Products\nFROM Product AS p\nLEFT JOIN ProductSubcategory AS ps ON p.ProductSubcategoryID = ps.ProductSubcategoryID\nGROUP BY ps.Name"
+  },
+  {
+   "id": "aw-a07",
+   "origin": "authored",
+   "features": [
+    "DISTINCT on a composite key"
+   ],
+   "sql": "SELECT DISTINCT BusinessEntityID, AddressID, AddressTypeID\nFROM BusinessEntityAddress"
+  },
+  {
+   "id": "aw-a08",
+   "origin": "authored",
+   "features": [
+    "DISTINCT on part of a composite key"
+   ],
+   "sql": "SELECT DISTINCT BusinessEntityID\nFROM BusinessEntityAddress"
+  },
+  {
+   "id": "aw-a09",
+   "origin": "authored",
+   "features": [
+    "DISTINCT after a key join"
+   ],
+   "sql": "SELECT DISTINCT p.ProductID, p.Name\nFROM Product AS p\nJOIN ProductSubcategory AS ps ON p.ProductSubcategoryID = ps.ProductSubcategoryID\nWHERE ps.ProductCategoryID = 1"
+  },
+  {
+   "id": "aw-a10",
+   "origin": "authored",
+   "features": [
+    "in subquery"
+   ],
+   "sql": "SELECT ProductID, Name\nFROM Product\nWHERE ProductID IN (SELECT ProductID FROM SalesOrderDetail WHERE OrderQty > 20)"
+  },
+  {
+   "id": "aw-a11",
+   "origin": "authored",
+   "features": [
+    "not in over a nullable column"
+   ],
+   "sql": "SELECT ProductID, Name\nFROM Product\nWHERE ProductID NOT IN (SELECT ProductAssemblyID FROM BillOfMaterials)"
+  },
+  {
+   "id": "aw-a12",
+   "origin": "authored",
+   "features": [
+    "not in over a not null column"
+   ],
+   "sql": "SELECT ProductID, Name\nFROM Product\nWHERE ProductID NOT IN (SELECT ComponentID FROM BillOfMaterials)"
+  },
+  {
+   "id": "aw-a13",
+   "origin": "authored",
+   "features": [
+    "not exists"
+   ],
+   "sql": "SELECT c.CustomerID, c.AccountNumber\nFROM Customer AS c\nWHERE NOT EXISTS (SELECT 1 FROM SalesOrderHeader AS h WHERE h.CustomerID = c.CustomerID)\n  AND c.TerritoryID = 1"
+  },
+  {
+   "id": "aw-a14",
+   "origin": "authored",
+   "features": [
+    "exists, correlated"
+   ],
+   "sql": "SELECT s.BusinessEntityID, s.Name\nFROM Store AS s\nWHERE EXISTS (SELECT 1 FROM Customer AS c WHERE c.StoreID = s.BusinessEntityID)"
+  },
+  {
+   "id": "aw-a15",
+   "origin": "authored",
+   "features": [
+    "scalar correlated subquery in the select list"
+   ],
+   "sql": "SELECT c.CustomerID,\n  (SELECT COUNT(*) FROM SalesOrderHeader AS h WHERE h.CustomerID = c.CustomerID) AS Orders\nFROM Customer AS c\nWHERE c.CustomerID BETWEEN 11000 AND 11200"
+  },
+  {
+   "id": "aw-a16",
+   "origin": "authored",
+   "features": [
+    "aggregation",
+    "having"
+   ],
+   "sql": "SELECT TerritoryID, COUNT(*) AS Orders, SUM(TotalDue) AS Due\nFROM SalesOrderHeader\nGROUP BY TerritoryID\nHAVING SUM(TotalDue) > 20000000"
+  },
+  {
+   "id": "aw-a17",
+   "origin": "authored",
+   "features": [
+    "aggregation over a key join, dependent group columns"
+   ],
+   "sql": "SELECT t.TerritoryID, t.Name, SUM(h.TotalDue) AS Due\nFROM SalesOrderHeader AS h\nJOIN SalesTerritory AS t ON h.TerritoryID = t.TerritoryID\nGROUP BY t.TerritoryID, t.Name"
+  },
+  {
+   "id": "aw-a18",
+   "origin": "authored",
+   "features": [
+    "count of a nullable column"
+   ],
+   "sql": "SELECT COUNT(StoreID) AS WithStore, COUNT(*) AS Customers\nFROM Customer"
+  },
+  {
+   "id": "aw-a19",
+   "origin": "authored",
+   "features": [
+    "count distinct"
+   ],
+   "sql": "SELECT COUNT(DISTINCT CustomerID) AS Buyers\nFROM SalesOrderHeader\nWHERE OnlineOrderFlag"
+  },
+  {
+   "id": "aw-a20",
+   "origin": "authored",
+   "features": [
+    "having on the group key"
+   ],
+   "sql": "SELECT ProductID, SUM(OrderQty) AS Quantity\nFROM SalesOrderDetail\nGROUP BY ProductID\nHAVING ProductID < 800"
+  },
+  {
+   "id": "aw-a21",
+   "origin": "authored",
+   "features": [
+    "window",
+    "first row per partition"
+   ],
+   "sql": "SELECT CustomerID, SalesOrderID, OrderDate\nFROM (\n  SELECT CustomerID, SalesOrderID, OrderDate,\n    ROW_NUMBER() OVER (PARTITION BY CustomerID ORDER BY OrderDate, SalesOrderID) AS rn\n  FROM SalesOrderHeader\n) AS ranked\nWHERE rn = 1"
+  },
+  {
+   "id": "aw-a22",
+   "origin": "authored",
+   "features": [
+    "window",
+    "filter on the partition column"
+   ],
+   "sql": "SELECT *\nFROM (\n  SELECT ProductID, SalesOrderID, OrderQty,\n    SUM(OrderQty) OVER (PARTITION BY ProductID) AS Total\n  FROM SalesOrderDetail\n) AS t\nWHERE ProductID = 776"
+  },
+  {
+   "id": "aw-a23",
+   "origin": "authored",
+   "features": [
+    "cte, unused one"
+   ],
+   "sql": "WITH unused AS (SELECT * FROM TransactionHistory WHERE Quantity > 5),\n  big AS (SELECT SalesOrderID, TotalDue FROM SalesOrderHeader WHERE TotalDue > 100000)\nSELECT SalesOrderID, TotalDue FROM big"
+  },
+  {
+   "id": "aw-a24",
+   "origin": "authored",
+   "features": [
+    "cte used once"
+   ],
+   "sql": "WITH top_products AS (\n  SELECT ProductID, SUM(LineTotal) AS Revenue\n  FROM SalesOrderDetail\n  GROUP BY ProductID\n)\nSELECT p.Name, t.Revenue\nFROM top_products AS t\nJOIN Product AS p ON p.ProductID = t.ProductID\nWHERE t.Revenue > 1000000"
+  },
+  {
+   "id": "aw-a25",
+   "origin": "authored",
+   "features": [
+    "derived table",
+    "trivial predicate"
+   ],
+   "sql": "SELECT x.CustomerID, x.Orders\nFROM (SELECT CustomerID, COUNT(*) AS Orders FROM SalesOrderHeader WHERE 1 = 1 GROUP BY CustomerID) AS x\nWHERE x.Orders > 20"
+  },
+  {
+   "id": "aw-a26",
+   "origin": "authored",
+   "features": [
+    "union all of complementary filters"
+   ],
+   "sql": "SELECT SalesOrderID, TotalDue FROM SalesOrderHeader WHERE OnlineOrderFlag\nUNION ALL\nSELECT SalesOrderID, TotalDue FROM SalesOrderHeader WHERE NOT OnlineOrderFlag"
+  },
+  {
+   "id": "aw-a27",
+   "origin": "authored",
+   "features": [
+    "union distinct"
+   ],
+   "sql": "SELECT TerritoryID FROM Customer\nUNION DISTINCT\nSELECT TerritoryID FROM SalesPerson"
+  },
+  {
+   "id": "aw-a28",
+   "origin": "authored",
+   "features": [
+    "intersect"
+   ],
+   "sql": "SELECT CustomerID FROM SalesOrderHeader WHERE EXTRACT(YEAR FROM OrderDate) = 2023\nINTERSECT DISTINCT\nSELECT CustomerID FROM SalesOrderHeader WHERE EXTRACT(YEAR FROM OrderDate) = 2024"
+  },
+  {
+   "id": "aw-a29",
+   "origin": "authored",
+   "features": [
+    "except"
+   ],
+   "sql": "SELECT ProductID FROM Product\nEXCEPT DISTINCT\nSELECT ProductID FROM SalesOrderDetail"
+  },
+  {
+   "id": "aw-a30",
+   "origin": "authored",
+   "features": [
+    "EXTRACT on a datetime",
+    "group by"
+   ],
+   "sql": "SELECT EXTRACT(YEAR FROM OrderDate) AS OrderYear, COUNT(*) AS Orders, SUM(SubTotal) AS SubTotal\nFROM SalesOrderHeader\nGROUP BY EXTRACT(YEAR FROM OrderDate)"
+  },
+  {
+   "id": "aw-a31",
+   "origin": "authored",
+   "features": [
+    "DATE columns",
+    "DATE_DIFF"
+   ],
+   "sql": "SELECT BusinessEntityID, JobTitle, HireDate, DATE_DIFF(DATE '2025-01-01', HireDate, DAY) AS Days\nFROM Employee\nWHERE HireDate >= DATE '2010-01-01' AND CurrentFlag"
+  },
+  {
+   "id": "aw-a32",
+   "origin": "authored",
+   "features": [
+    "DATETIME_TRUNC",
+    "group by"
+   ],
+   "sql": "SELECT DATETIME_TRUNC(OrderDate, MONTH) AS Month, SUM(TotalDue) AS Due\nFROM PurchaseOrderHeader\nGROUP BY DATETIME_TRUNC(OrderDate, MONTH)"
+  },
+  {
+   "id": "aw-a33",
+   "origin": "authored",
+   "features": [
+    "two joins to the same table",
+    "nullable foreign key"
+   ],
+   "sql": "SELECT b.BillOfMaterialsID, pa.Name AS Assembly, pc.Name AS Component\nFROM BillOfMaterials AS b\nJOIN Product AS pa ON b.ProductAssemblyID = pa.ProductID\nJOIN Product AS pc ON b.ComponentID = pc.ProductID\nWHERE b.BOMLevel = 1"
+  },
+  {
+   "id": "aw-a34",
+   "origin": "authored",
+   "features": [
+    "two foreign keys to one parent"
+   ],
+   "sql": "SELECT h.SalesOrderID, bill.City AS BillCity, ship.City AS ShipCity\nFROM SalesOrderHeader AS h\nJOIN Address AS bill ON h.BillToAddressID = bill.AddressID\nJOIN Address AS ship ON h.ShipToAddressID = ship.AddressID\nWHERE bill.City <> ship.City"
+  },
+  {
+   "id": "aw-a35",
+   "origin": "authored",
+   "features": [
+    "anti join with left join"
+   ],
+   "sql": "SELECT c.CustomerID\nFROM Customer AS c\nLEFT JOIN SalesOrderHeader AS h ON h.CustomerID = c.CustomerID\nWHERE h.SalesOrderID IS NULL"
+  },
+  {
+   "id": "aw-a36",
+   "origin": "authored",
+   "features": [
+    "one to one join through a primary key that is a foreign key"
+   ],
+   "sql": "SELECT p.BusinessEntityID, p.LastName\nFROM Person AS p\nJOIN BusinessEntity AS be ON p.BusinessEntityID = be.BusinessEntityID\nWHERE p.PersonType = 'EM'"
+  },
+  {
+   "id": "aw-a37",
+   "origin": "authored",
+   "features": [
+    "one to one join, chain"
+   ],
+   "sql": "SELECT e.BusinessEntityID, e.JobTitle\nFROM Employee AS e\nJOIN Person AS p ON e.BusinessEntityID = p.BusinessEntityID\nJOIN BusinessEntity AS be ON p.BusinessEntityID = be.BusinessEntityID"
+  },
+  {
+   "id": "aw-a38",
+   "origin": "authored",
+   "features": [
+    "coalesce on a nullable column"
+   ],
+   "sql": "SELECT ProductID, COALESCE(Color, 'none') AS Color, COALESCE(Name, 'unnamed') AS Name\nFROM Product\nWHERE ListPrice > 0"
+  },
+  {
+   "id": "aw-a39",
+   "origin": "authored",
+   "features": [
+    "is not null on a not null column"
+   ],
+   "sql": "SELECT ProductID, Name\nFROM Product\nWHERE ProductID IS NOT NULL AND Name IS NOT NULL AND ListPrice > 3000"
+  },
+  {
+   "id": "aw-a40",
+   "origin": "authored",
+   "features": [
+    "case",
+    "like"
+   ],
+   "sql": "SELECT ProductID, Name,\n  CASE WHEN ListPrice = 0 THEN 'free' WHEN ListPrice < 100 THEN 'cheap' ELSE 'dear' END AS Band\nFROM Product\nWHERE Name LIKE '%Bike%' OR Name LIKE 'Road%'"
+  },
+  {
+   "id": "aw-a41",
+   "origin": "authored",
+   "features": [
+    "string functions"
+   ],
+   "sql": "SELECT BusinessEntityID, UPPER(LastName) AS Last, SUBSTR(FirstName, 1, 1) AS Initial, LENGTH(LastName) AS Letters\nFROM Person\nWHERE PersonType = 'SC' AND LastName LIKE 'S%'"
+  },
+  {
+   "id": "aw-a42",
+   "origin": "authored",
+   "features": [
+    "aggregate of an aggregate"
+   ],
+   "sql": "SELECT AVG(Spent) AS AverageSpent\nFROM (SELECT CustomerID, SUM(TotalDue) AS Spent FROM SalesOrderHeader GROUP BY CustomerID) AS per_customer"
+  },
+  {
+   "id": "aw-a43",
+   "origin": "authored",
+   "features": [
+    "correlated max"
+   ],
+   "sql": "SELECT h.CustomerID, h.SalesOrderID, h.OrderDate\nFROM SalesOrderHeader AS h\nWHERE h.OrderDate = (SELECT MAX(x.OrderDate) FROM SalesOrderHeader AS x WHERE x.CustomerID = h.CustomerID)\n  AND h.CustomerID < 11100"
+  },
+  {
+   "id": "aw-a44",
+   "origin": "authored",
+   "features": [
+    "redundant range predicate"
+   ],
+   "sql": "SELECT SalesOrderID, SalesOrderDetailID, OrderQty\nFROM SalesOrderDetail\nWHERE OrderQty BETWEEN 1 AND 3 AND OrderQty >= 1"
+  },
+  {
+   "id": "aw-a45",
+   "origin": "authored",
+   "features": [
+    "PIVOT as conditional sums over this release's fiscal years"
+   ],
+   "sql": "SELECT sp.BusinessEntityID,\n  SUM(IF(EXTRACT(YEAR FROM DATETIME_ADD(h.OrderDate, INTERVAL 6 MONTH)) = 2023, h.SubTotal, NULL)) AS FY2023,\n  SUM(IF(EXTRACT(YEAR FROM DATETIME_ADD(h.OrderDate, INTERVAL 6 MONTH)) = 2024, h.SubTotal, NULL)) AS FY2024,\n  SUM(IF(EXTRACT(YEAR FROM DATETIME_ADD(h.OrderDate, INTERVAL 6 MONTH)) = 2025, h.SubTotal, NULL)) AS FY2025\nFROM SalesPerson AS sp\nJOIN SalesOrderHeader AS h ON sp.BusinessEntityID = h.SalesPersonID\nGROUP BY sp.BusinessEntityID"
+  },
+  {
+   "id": "aw-a46",
+   "origin": "authored",
+   "features": [
+    "composite key table, three-way join"
+   ],
+   "sql": "SELECT pm.Name AS Model, c.Name AS Culture, pd.Description\nFROM ProductModelProductDescriptionCulture AS x\nJOIN ProductModel AS pm ON x.ProductModelID = pm.ProductModelID\nJOIN Culture AS c ON x.CultureID = c.CultureID\nJOIN ProductDescription AS pd ON x.ProductDescriptionID = pd.ProductDescriptionID\nWHERE c.CultureID LIKE 'en%'"
+  },
+  {
+   "id": "aw-a47",
+   "origin": "authored",
+   "features": [
+    "scalar subquery compared with an average"
+   ],
+   "sql": "SELECT ProductID, Name, ListPrice\nFROM Product\nWHERE ListPrice > (SELECT AVG(ListPrice) FROM Product WHERE ListPrice > 0)"
+  },
+  {
+   "id": "aw-a48",
+   "origin": "authored",
+   "features": [
+    "distinct over a left join"
+   ],
+   "sql": "SELECT DISTINCT c.CustomerID, c.AccountNumber\nFROM Customer AS c\nLEFT JOIN SalesOrderHeader AS h ON h.CustomerID = c.CustomerID\nWHERE c.CustomerID < 11050"
+  }
+ ],
+ "declined": [
+  {
+   "upstream": "vAdditionalContactInfo",
+   "kind": "view",
+   "reason": "reads the XML column Person.AdditionalContactInfo with XQuery value() calls and a namespace declaration: no BigQuery form"
+  },
+  {
+   "upstream": "vPersonDemographics",
+   "kind": "view",
+   "reason": "XQuery nodes() and value() over Person.Demographics, and CONVERT(datetime, ..., 101): no BigQuery form for the XML"
+  },
+  {
+   "upstream": "vJobCandidate",
+   "kind": "view",
+   "reason": "XQuery nodes() and value() over JobCandidate.Resume: no BigQuery form"
+  },
+  {
+   "upstream": "vJobCandidateEmployment",
+   "kind": "view",
+   "reason": "XQuery nodes() and value() over JobCandidate.Resume: no BigQuery form"
+  },
+  {
+   "upstream": "vJobCandidateEducation",
+   "kind": "view",
+   "reason": "XQuery nodes() and value() over JobCandidate.Resume: no BigQuery form"
+  },
+  {
+   "upstream": "vProductModelCatalogDescription",
+   "kind": "view",
+   "reason": "XQuery value() over ProductModel.CatalogDescription: no BigQuery form"
+  },
+  {
+   "upstream": "vProductModelInstructions",
+   "kind": "view",
+   "reason": "XQuery nodes() and value() over ProductModel.Instructions: no BigQuery form"
+  },
+  {
+   "upstream": "vStoreWithDemographics",
+   "kind": "view",
+   "reason": "XQuery value() over Store.Demographics: no BigQuery form"
+  },
+  {
+   "upstream": "ufnGetAccountingStartDate, ufnGetAccountingEndDate, ufnGetDocumentStatusText, ufnGetPurchaseOrderStatusText, ufnGetSalesOrderStatusText, ufnLeadingZeros",
+   "kind": "function",
+   "reason": "scalar functions with no table in them (a constant, a CASE or string padding): there is no query to run"
+  },
+  {
+   "upstream": "uspGetEmployeeManagers, uspGetManagerEmployees",
+   "kind": "procedure",
+   "reason": "recursive over hierarchyid methods (GetAncestor, ToString) of Employee.OrganizationNode, which the data files write as hex and BigQuery has no counterpart for"
+  },
+  {
+   "upstream": "uspSearchCandidateResumes",
+   "kind": "procedure",
+   "reason": "full-text CONTAINS and FREETEXT over an XML column"
+  },
+  {
+   "upstream": "uspUpdateEmployeeHireInfo, uspUpdateEmployeeLogin, uspUpdateEmployeePersonalInfo, uspLogError, uspPrintError",
+   "kind": "procedure",
+   "reason": "UPDATE, INSERT and error handling: no query"
+  },
+  {
+   "upstream": "the triggers (dEmployee, iuPerson, iPurchaseOrderDetail, uPurchaseOrderDetail, uPurchaseOrderHeader, iduSalesOrderDetail, uSalesOrderHeader, dVendor, iWorkOrder, uWorkOrder, ddlDatabaseTriggerLog)",
+   "kind": "procedure",
+   "reason": "statements on the inserted and deleted pseudo-tables that change data; their SELECTs are not queries a user runs"
+  }
+ ]
+}
