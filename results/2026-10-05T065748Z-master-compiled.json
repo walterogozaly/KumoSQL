@@ -1,0 +1,30 @@
+{
+  "job": "master",
+  "kind": "master",
+  "ref": "master",
+  "sha": "bc83f521d953e1777a16929e03eb03f09514f163",
+  "leg": "compiled",
+  "mode": "full",
+  "status": "finished",
+  "exit": 1,
+  "seconds": 2390.0,
+  "workers": 6,
+  "notes": [],
+  "finished": "2026-10-05T06:57:48Z",
+  "machine": {
+    "system": "Linux",
+    "release": "6.18.40.1-microsoft-standard-WSL2",
+    "cpus": 6,
+    "python": "3.12.3"
+  },
+  "passed": 11638,
+  "failed": [
+    "tests/test_scoreboard.py::test_every_test_file_that_loads_an_eval_script_is_marked_eval",
+    "tests/test_smt_robustness.py::test_unreadable_input_is_not_proven_never_an_exception[SELECT ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))]"
+  ],
+  "errors": [],
+  "skipped": 108,
+  "tests": 11748,
+  "known_failed": [],
+  "tail": "=============================== warnings summary ===============================\ntests/test_conditional_benchmark.py: 6 warnings\ntests/test_sample_db_oracle.py: 2 warnings\ntests/test_sqlfluff_refusals_bench.py: 2 warnings\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=519113) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\ntests/test_conditional_benchmark.py::test_singh_sample\ntests/test_conditional_benchmark.py::test_singh_sample\ntests/test_conditional_benchmark.py::test_singh_sample\ntests/test_conditional_benchmark.py::test_singh_sample\ntests/test_conditional_benchmark.py::test_singh_sample\ntests/test_conditional_benchmark.py::test_singh_sample\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=519122) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\ntests/test_sqlfluff_fixtures_bench.py: 6 warnings\ntests/test_quite_bench.py: 1 warning\ntests/test_spider2_bench.py: 4 warnings\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=519107) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\ntests/test_arcwise_bench.py: 147 warnings\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=519119) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\ntests/test_singh_bedathur_benchmark.py::test_sample_of_pairs\ntests/test_singh_bedathur_benchmark.py::test_sample_of_pairs\ntests/test_singh_bedathur_benchmark.py::test_sample_of_pairs\ntests/test_singh_bedathur_benchmark.py::test_sample_of_pairs\ntests/test_singh_bedathur_benchmark.py::test_sample_of_pairs\ntests/test_singh_bedathur_benchmark.py::test_sample_of_pairs\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=519110) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED tests/test_scoreboard.py::test_every_test_file_that_loads_an_eval_script_is_marked_eval\nFAILED tests/test_smt_robustness.py::test_unreadable_input_is_not_proven_never_an_exception[SELECT ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))]\n2 failed, 11638 passed, 1 skipped, 107 xfailed, 180 warnings in 2188.10s (0:36:28)"
+}
