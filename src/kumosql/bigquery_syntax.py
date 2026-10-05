@@ -24,6 +24,7 @@ from sqlglot.errors import ParseError
 from sqlglot.generator import Generator
 from sqlglot.tokens import Token, TokenType
 
+from . import match_recognize
 from .string_literals import _bytes_literal, _decode_bytes, _string_end
 
 
@@ -49,6 +50,10 @@ def _generate(self: Generator, expression: exp.Anonymous) -> str:
         return f"TABLE {self.sql(expression.expressions[0])}"
     if expression.name == VERBATIM and len(expression.expressions) == 1 and expression.expressions[0].is_string:
         return expression.expressions[0].this
+    if expression.name == match_recognize.MATCH_OPTIONS:
+        text = match_recognize.generate_options(self.sql, expression)
+        if text is not None:
+            return text
     return self.anonymous_sql(expression)
 
 
@@ -58,6 +63,14 @@ def _all_sql(self: Generator, expression: exp.All) -> str:
     if isinstance(expression.this, exp.Unnest):
         return f"ALL {self.sql(expression, 'this')}"
     return Generator.all_sql(self, expression)
+
+
+def _match_recognize_sql(self: Generator, expression: exp.MatchRecognize) -> str:
+    return match_recognize.generate_match_recognize(self, expression)
+
+
+def _subquery_sql(self: Generator, expression: exp.Subquery) -> str:
+    return match_recognize.generate_subquery(self, expression, type(self).subquery_sql)
 
 
 def _filter_sql(self: Generator, expression: exp.Filter) -> str:
@@ -710,6 +723,7 @@ def install() -> None:
             for rewrite in (
                 _rewrite_raw_bytes, _rewrite_verbatim_calls, _rewrite_model_arguments, _rewrite_pipe_operators, _rewrite_pipe_with,
                 _rewrite_like_quantifiers, _rewrite_aggregate_where, _rewrite_with_expressions, _rewrite_unnest_offset,
+                match_recognize.rewrite_text,
             ):
                 rewritten = rewrite(rewritten, tokens if rewritten == sql else self.tokenize(rewritten))
             if rewritten != sql:
@@ -719,7 +733,7 @@ def install() -> None:
                     raise
                 except ParseError:
                     raise error from None
-            marked = _mark_table_arguments(_merge_table_function_kind(tokens))
+            marked = match_recognize.mark_tokens(_mark_table_arguments(_merge_table_function_kind(tokens)))
             if len(marked) == len(tokens) and all(a is b for a, b in zip(marked, tokens)):
                 raise
             return list(_resolve_markers(_resolve_table_arguments(self.parser(**opts).parse(marked, sql))))
@@ -736,6 +750,8 @@ def install() -> None:
     from sqlglot import generator as generator_module
 
     BigQuery.Generator.TRANSFORMS[exp.Filter] = _filter_sql
+    BigQuery.Generator.TRANSFORMS[exp.MatchRecognize] = _match_recognize_sql
+    BigQuery.Generator.TRANSFORMS[exp.Subquery] = _subquery_sql
     getattr(generator_module, "_DISPATCH_CACHE", {}).clear()
 
 install()
