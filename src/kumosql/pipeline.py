@@ -37,7 +37,7 @@ from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
 from sqlglot.schema import MappingSchema
 
-from . import lineage_limits
+from . import lineage_limits, match_recognize_view
 from .lineage_soundness import (
     UNTRACED,
     condition_columns,
@@ -1529,7 +1529,7 @@ class _Analysis:
             for unit, (writer, query, partial) in enumerate(units[key]):
                 excepted: set[ColumnRef] = set()
                 try:
-                    marked = query.copy()
+                    marked = match_recognize_view.lineage_form(query) if match_recognize_view.has_match_recognize(query) else query.copy()
                     for node in marked.find_all(exp.Column):
                         node.meta["named"] = True  # written in the SQL, as opposed to made by expanding a star
                     excepted = _excepted_columns(pipeline, marked)
