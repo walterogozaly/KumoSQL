@@ -541,6 +541,10 @@ def _literal_arithmetic(name: str, left: T, right: T) -> T | None:
     if lit.lit == "float" and kind in ("FLOAT64", "INT64"):
         out = table.get((F64, F64))
         return T(GType(out)) if out else None
+    if lit.lit in ("int", "float") and kind == "FLOAT32":
+        # the literal is a FLOAT32 or a FLOAT64 (a FLOAT32 operand coerces to FLOAT64): FLOAT64 either way
+        out = table.get(("FLOAT32", "FLOAT32"))
+        return T(GType(out)) if out and out == table.get(("FLOAT32", F64)) == table.get((F64, "FLOAT32")) else None
     return None
 
 
