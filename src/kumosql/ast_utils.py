@@ -483,7 +483,25 @@ def check_modeled(tree: exp.Expression) -> exp.Expression:
     tree = read_is_after_comparison(tree)
     if table_function_reads_cte(tree):
         raise UnmodeledConstruct("a table function that reads a CTE by name is not modeled")
+    check_struct_field_reads(tree)
     return tree
+
+
+def check_struct_field_reads(tree: exp.Expression) -> None:
+    """Raise :class:`UnmodeledConstruct` for ``a.s.f`` when ``a`` names a source of the query.
+
+    sqlglot reads the three-part column ``a.s.f`` as column ``f`` of a table ``s`` in dataset ``a``, which is what
+    ``dataset.table.column`` means. When ``a`` is a source alias it is the struct column ``s`` of that source
+    and the field ``f`` instead, and the rules that attribute a column to the source named by its qualifier would
+    attribute it to a source ``s`` (turning a LEFT JOIN to ``s`` inner because of a test on ``a``'s own struct).
+    """
+
+    aliases = {(node.alias_or_name or "").lower() for node in tree.find_all(exp.Table, exp.Subquery, exp.Unnest, exp.Lateral, exp.CTE)}
+    aliases.discard("")
+    for column in tree.find_all(exp.Column):
+        first = column.args.get("catalog") or column.args.get("db")
+        if first is not None and first.name.lower() in aliases:
+            raise UnmodeledConstruct(f"the struct field read {column.sql()} is not modeled")
 
 
 def exponent_out_of_range(text: str) -> bool:
