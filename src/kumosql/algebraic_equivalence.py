@@ -5096,7 +5096,7 @@ def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, **kwarg
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "no keyed DISTINCT to drop", assumptions=tuple(sorted(normalization_assumptions)))
     except sqlglot.errors.SqlglotError as error:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}", assumptions=tuple(sorted(normalization_assumptions)))
-    from . import scalar_subqueries
+    from . import nested_scalar_unnest, scalar_subqueries
 
     replaced = False
     report: dict = {}
@@ -5118,7 +5118,7 @@ def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, **kwarg
                 return False
 
         left, right, replaced = scalar_subqueries.unify(
-            left, right, dialect=dialect, schema=kwargs.get("schema"), prove=same, single_row=single_row, report=report
+            left, right, dialect=dialect, schema=kwargs.get("schema"), prove=same, single_row=single_row, report=report, types=types
         )
     except sqlglot.errors.SqlglotError:
         replaced = False
@@ -5150,4 +5150,6 @@ def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, **kwarg
         result = dataclasses.replace(
             result, assumptions=tuple(result.assumptions) + (scalar_subqueries.ASSUMPTION,)
         )
+    if replaced and result.proven and report.get("unnest_lookups"):
+        result = dataclasses.replace(result, assumptions=tuple(dict.fromkeys((*result.assumptions, nested_scalar_unnest.ASSUMPTION))))
     return result
