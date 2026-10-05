@@ -45,6 +45,7 @@ import sqlglot
 from sqlglot import exp
 
 from .incremental import SourceTable
+from .incremental_copy_dedup import is_key_copy_dedup
 
 INSERT_KINDS = frozenset({"insert_new", "insert_late", "insert_boundary", "duplicate", "null_key"})
 UPDATE_KINDS = frozenset({"update", "update_touch"})
@@ -147,8 +148,10 @@ class _Scope:
 
 class Analyzer:
     def __init__(self, sources: dict[str, SourceTable], kinds: Iterable[str], tables: Iterable[str] | None, target: str = ""):
+        kinds = frozenset(kinds)
         self.sources = {k.lower(): v for k, v in sources.items()}
         self.states = classify(sources, kinds, tables)
+        self.kinds = kinds
         self.target = target.lower()
 
     # -- queries -----------------------------------------------------------
@@ -335,7 +338,9 @@ class Analyzer:
             if scope.stable is not None:
                 stable = frozenset(i for i, (_, e) in enumerate(projections) if self._stable_value(e, scope))
             grows = scope.grows and stable is not None and len(stable) == len(projections)
-            if qualify is not None:
+            if qualify is not None and is_key_copy_dedup(select, self.sources, self.states, self.kinds, ctes, self.target):
+                pass  # only copies of a row are dropped, so what is stable without the QUALIFY stays stable
+            elif qualify is not None:
                 stable, grows = self._qualify(qualify.this, scope, projections, stable), False
         if select.args.get("limit") or select.args.get("offset"):
             return _Rel([("", n) for n in names], False, False, None)

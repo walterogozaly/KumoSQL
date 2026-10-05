@@ -40,3 +40,11 @@ An unknown is not a safety guarantee.
 The simulator models appends and merges. A merge can fail if several source rows match one target row; NULL keys do not match and can be inserted repeatedly. It runs adapted SQL in DuckDB, so it only claims the BigQuery behavior explicitly modeled.
 
 The full guide covers watermark rules, lookback windows, deduplication, grouped summaries, unchanged joined tables, pre-operations, and adapted pg_ivm workloads. Always read the contract alongside the verdict.
+
+## Suggested repairs
+
+When a model diverges, KumoSQL can propose a patch for it; it never applies one. For example, a model that merges on `id` and sets `updatePartitionFilter` fails when a source row is delivered twice. The proposed patch drops the filter and reads the source through `QUALIFY ROW_NUMBER() OVER (PARTITION BY id ...) = 1`, shown as a diff of the `.sqlx` file.
+
+A repair is shown only if two things are proven. The repaired model must be safe under the same contract, and it must still return what the original returns on a full rebuild when each key is unique. If either proof fails, nothing is offered for that edit.
+
+Limits: only four edits are tried (de-duplicate the source, drop `updatePartitionFilter`, re-run the full query and merge, read the watermark with `>=` and a lookback plus a key). Models that fan rows out, depend on tie-breaking, or need updates and deletes tolerated get no repair. Dropping `updatePartitionFilter` can make each merge cost more. See the [full guide](../docs/incremental.md#repairs) for the proofs and what they assume.
