@@ -1983,14 +1983,23 @@ def _drop_implied_exists(select: exp.Select, schema: dict[str, list[str]] | None
         inner = source.this
         if not inner.args.get("group") or inner.args.get("distinct") or inner.args.get("where") is None:
             continue
-        group_names = {g.name.lower() for g in inner.args["group"].expressions if isinstance(g, exp.Column)}
-        if len(group_names) != len(inner.args["group"].expressions):
+        inner_sources = _sources_of(inner)
+        sole_source = (inner_sources[0].alias_or_name or "").lower() if len(inner_sources) == 1 else None
+
+        def column_key(column: exp.Column) -> tuple[str, str] | None:
+            """The source and name a column of ``inner`` reads (an unqualified one reads the only source, if any)."""
+
+            table = column.table.lower() or sole_source
+            return (table, column.name.lower()) if table else None
+
+        group_names = {column_key(g) for g in inner.args["group"].expressions if isinstance(g, exp.Column)}
+        if None in group_names or len(group_names) != len(inner.args["group"].expressions):
             continue
         output_of = {}
         for item in inner.expressions:
             value = item.this if isinstance(item, exp.Alias) else item
-            if isinstance(value, exp.Column) and value.name.lower() in group_names and item.alias_or_name:
-                output_of[value.name.lower()] = item.alias_or_name.lower()
+            if isinstance(value, exp.Column) and column_key(value) in group_names and item.alias_or_name:
+                output_of[column_key(value)] = item.alias_or_name.lower()
         ties: dict[str, exp.Column] = {}
         for condition in conditions:
             if isinstance(condition, exp.EQ):
@@ -2003,7 +2012,6 @@ def _drop_implied_exists(select: exp.Select, schema: dict[str, list[str]] | None
                         and other.table.lower() != source.alias.lower()
                     ):
                         ties.setdefault(g_side.name.lower(), other)
-        inner_sources = _sources_of(inner)
         parts = _conjuncts(inner.args["where"].this)
         for index, part in enumerate(parts):
             test = part.this if isinstance(part, exp.Not) else part
@@ -2017,9 +2025,10 @@ def _drop_implied_exists(select: exp.Select, schema: dict[str, list[str]] | None
             for column in list(substituted.find_all(exp.Column)):
                 if not any(column.sql() == r.sql() for r in references):
                     continue
-                name = column.name.lower()
-                out = output_of.get(name)
-                if name not in group_names or out is None or out not in ties or (column.table and column.table.lower() not in {(s.alias_or_name or "").lower() for s in inner_sources}):
+                # the group column itself, not a same-named column of another source of the derived table
+                key = column_key(column)
+                out = output_of.get(key)
+                if key not in group_names or out is None or out not in ties or (column.table and column.table.lower() not in {(s.alias_or_name or "").lower() for s in inner_sources}):
                     ok = False
                     break
                 column.replace(ties[out].copy())
@@ -4043,6 +4052,8 @@ def _select_list_in_to_exists(tree: exp.Expression, not_null: dict[str, frozense
             continue
         if _global_aggregate(walker):
             continue  # a bare column of an aggregate without GROUP BY reads NULL over no rows (SQLite, MySQL)
+        if walker.args.get("group") is not None and extended_grouping(walker.args["group"]):
+            continue  # ROLLUP, CUBE and GROUPING SETS pad the grouping columns with NULL in their total rows
         outer_known = _declared_not_null(node, declared)
         inner_known = _declared_not_null(inner.expressions[0], declared)
         values = [(item.this if isinstance(item, exp.Alias) else item) for item in inner.expressions]
