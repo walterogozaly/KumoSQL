@@ -19,6 +19,10 @@ Names follow GoogleSQL: a column reference or path takes the last identifier as 
 on its own is a STRUCT of its table's columns (or the row value of a value table such as ``UNNEST``), and range
 variables are looked up before columns. ``UNNEST`` of an array of structs makes the struct's fields columns.
 
+Pipe syntax (``FROM t |> WHERE ... |> SELECT ...``) is typed operator by operator by :mod:`kumosql.googlesql_pipe_types`:
+``infer`` replaces each pipe chain in the SQL text by a placeholder subquery and ``_Typer.query`` hands the placeholder to
+that module. A tree that sqlglot already rewrote from pipe syntax (its ``__tmpN`` CTEs) is left untyped.
+
 The catalog takes BigQuery schemas (``dryrun.Field``, ``schema_fetch`` column maps) and Dataform declarations; upstream
 models can be added with their inferred columns, in dependency order. The tree passed in is never modified.
 """
