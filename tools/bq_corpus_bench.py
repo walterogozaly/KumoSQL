@@ -185,9 +185,31 @@ def _counts(counts: dict) -> str:
     return ", ".join(f"{value} {key}" for key, value in counts.items()) or "none"
 
 
+def held_out_text(results: dict[str, dict]) -> str:
+    """The held-out sentence of the results file: the projects fixed against with their held-out files in view, and the clean ones apart."""
+
+    sources = {project["name"]: project for project in json.loads((CORPORA / "sources.json").read_text())["projects"]}
+    clean = [name for name in results if sources[name].get("held_out_clean")]
+    held = lambda names: {key: sum(results[n].get("held_out", {}).get(key, 0) for n in names) for key in ("files", "handled", "failures")}  # noqa: E731
+    everyone = held(list(results))
+    fresh = held(clean)
+    text = (f"A fifth of the files, chosen by SHA-1 of project/path, scored apart: {everyone['handled']}/{everyone['files']} handled, "
+            f"{everyone['failures']} with a failure.")
+    if clean:
+        text += (f" The {len(clean)} projects added last ({fresh['handled']}/{fresh['files']} of their held-out files handled, "
+                 f"{fresh['failures']} with a failure) were scored with a baseline first and their held-out files' failures and gaps were never "
+                 "printed while fixing, so that part is a clean hold-out. ")
+    text += ("The five projects added before them were tuned on test: their loader bugs were fixed with every file's failures in view. "
+             "The first eight projects were never held out.")
+    return text
+
+
 def write_results(results: dict[str, dict], seconds: float) -> None:
     t = totals(results)
     record = json.loads(RESULTS.read_text()) if RESULTS.is_file() else {}
+    reads = (f"; table reads of the plain .sql projects {t['table_reads_found']}/{t['table_reads_expected']}"
+             if t["table_reads_expected"] else "")
+    defects = f" ({t['upstream_defects']} ref to an action the project does not define is counted as the project's defect, not a miss)" if t["upstream_defects"] else ""
     record.update({
         "suite": "BigQuery real-code corpora",
         "order": record.get("order", 225),
@@ -196,10 +218,11 @@ def write_results(results: dict[str, dict], seconds: float) -> None:
                   f"{t['statements_matched']}/{t['statements_total']}; columns traced {t['columns_traced']}/{t['columns_total']}"),
         "metric": ("Open-source Dataform projects and BigQuery SQL, copied at pinned commits. Each project is loaded whole; "
                    "every file goes through the cleanup rules and the formatter. A failure is a crash, a change accepted "
-                   "without a proof, a changed backticked name, or a literal ref() that is not a graph edge."),
+                   "without a proof, a changed backticked name, a literal ref() that is not a graph edge, or, for plain .sql "
+                   "projects, a table the text names in backticks that is not read (or a read it does not name)."),
         "evidence": "executed",
         "correctness": (f"{t['failures']} failures; dependencies {t['dependencies_found']}/{t['dependencies_expected']} "
-                        "literal ref() and config dependencies found"),
+                        f"literal ref() and config dependencies found{defects}{reads}"),
         "coverage": {"proven": t["handled"], "unsupported": t["files"] - t["handled"]},
         "analysis": (f"Files read with no blocking gap, cleaned up and formatted: {t['handled']}/{t['files']}. "
                      f"Cleanup: {_counts(t['cleanup'])}; format: {_counts(t['format'])}. Gaps the loader reports: {_counts(t['gaps'])}."),
@@ -207,10 +230,7 @@ def write_results(results: dict[str, dict], seconds: float) -> None:
         "command": "python tools/bq_corpus_bench.py --write-results",
         "date": date.today().isoformat(),
         "performance": f"{seconds:.1f} s for every project and stage",
-        "held_out": (f"A fifth of the files, chosen by SHA-1 of project/path, scored apart: {t['held_out']['handled']}/"
-                     f"{t['held_out']['files']} handled, {t['held_out']['failures']} with a failure. Tuned on test: the "
-                     "bugs the five projects added last exposed were fixed with every file's failures in view, held-out "
-                     "files included. The first eight projects were never held out."),
+        "held_out": held_out_text(results),
     })
     record.setdefault("caveats", "")
     RESULTS.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")

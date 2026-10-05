@@ -142,11 +142,11 @@ From [Additional public SQL sources](../additional-public-sql-sources.md), check
 | ID | Source | Licence | Download | Size | Status |
 | --- | --- | --- | --- | --- | --- |
 | A-G01 | Mozilla `bigquery-etl` | MPL-2.0 | yes | 323 UDFs, 162 query tests with `expect` files | **new** (batch 2): UDF assertions and query tests with supplied inputs, as native expected results |
-| A-G02 | GCP data pipeline demo | MIT | yes | 4 SQLX, 6 sample rows | **new** (batch 2): real-projects corpus |
-| A-G03 | mimic-code concepts | MIT | yes | 65 GoogleSQL files | **new** (batch 2): real-projects corpus (no data) |
+| A-G02 | GCP data pipeline demo | MIT | yes | 4 SQLX, 6 sample rows | covered: `bq-real-corpora` ([page](bq-real-corpora.md)), project `gcp-pipeline-demo` (the 4 SQLX files; the 6 sample rows are not used) |
+| A-G03 | mimic-code concepts | MIT | yes | 65 GoogleSQL files | covered: `bq-real-corpora` ([page](bq-real-corpora.md)), project `mimic-concepts`: parsing, dependencies and lineage only, no data |
 | A-G04, G06, G07 | wintermi MovieLens, BQE, IMDb Dataform | Apache-2.0 | yes | — | covered: `wintermi-*` in `bq-real-corpora` ([page](bq-real-corpora.md)) |
 | A-G05 | `bq-bench` TPC-DS | Apache-2.0, TPC terms | yes | 99 queries | covered by the TPC-DS evals; needs a billed project to run natively |
 | A-G08 | Dataform deployment sample | no licence | — | — | not added |
-| A-G09 | Google patents public data examples | Apache-2.0 (archived) | yes | — | **new** (batch 2): real-projects corpus |
+| A-G09 | Google patents public data examples | Apache-2.0 (archived) | yes | — | covered: `bq-real-corpora` ([page](bq-real-corpora.md)), projects `patents-public-data` (its one `.sql` file) and `patents-queries` (23 queries adapted from notebooks and Python files, kept apart); no data |
 | A-G10 | GoogleSQL compliance tests | Apache-2.0 | yes | 7,870 queries already used without their results | **covered** (batch 2): the typed expected rows are an oracle for KumoSQL's BigQuery-to-DuckDB execution: 1,609/4,633 supported cases agree, 0 wrong ([page](googlesql-expected-results.md)) |
 | — | BIRD-CRITIC BigQuery, SQLShare, Fashion Dataform, NHANES-GCP, SQLRight, DQETool, AMOEBA, SlabCity, CODDTest | — | — | — | not added: empty, unlicensed or not a released corpus (as the research says) |
