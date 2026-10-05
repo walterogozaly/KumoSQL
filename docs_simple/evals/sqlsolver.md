@@ -24,4 +24,6 @@ Some rules were built while inspecting failing corpus cases, so those scores are
 
 Other suites overlap. Adding their case counts does not produce a count of unique independent tests.
 
+KumoSQL requires SQLGlot 30.21.0, and routine testing uses the matching compiled build. Older parser scores in the reference describe historical measurements.
+
 The reference includes Python and optional Java setup, supported refactors, ORDER BY/LIMIT rules, cases that must remain unknown, source conversion, and corpus-specific results. Start with [provers](../provers.md) for the evidence levels, or [bounded verification](bounded-verification.md) for the separate small-database check.

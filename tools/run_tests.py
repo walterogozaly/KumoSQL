@@ -10,7 +10,8 @@
 
 sqlglot runs compiled when ``sqlglotc`` (mypyc wheels, same version as ``sqlglot``) is installed, which is
 about 10-15% faster on the prover tests; ``--install-compiled`` installs it. ``--pure`` runs the same suite
-against a pure-Python copy of sqlglot even when ``sqlglotc`` is installed, so both builds can be checked.
+against a pure-Python copy for focused diagnostics. Routine CI and Dell full-suite runs use compiled
+SQLGlot 30.21.0 once per revision; older versions are no longer supported.
 KumoSQL itself is always pure Python.
 
 Workers default to the number of CPUs (``-j N`` to change it, ``-j 1`` for a plain serial run). Any other
