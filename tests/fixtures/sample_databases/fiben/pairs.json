@@ -1,0 +1,942 @@
+{
+ "about": "Authored query pairs on IBM FIBEN for tools/sample_db_bench.py. label: 'equivalent' or 'different' under the declared keys minus 'drop' (not_null:T.c, pk:T, fk:T.c). A 'different' pair carries a witness: 'real' (the two queries already differ on the FIBEN data) or a small database (missing columns are completed with legal values) that satisfies the remaining declarations and separates them. 'sibling' names the pair it negates. FIBEN declares a primary key on every table, a foreign key on 159 columns and NOT NULL only on the primary keys; the class hierarchy of its ontology is stored as tables whose primary key is also a foreign key to the parent class (LISTEDSECURITY -> SECURITY -> FINANCIALINSTRUMENT), which most join-elimination pairs use. In the data every foreign key column of the tables below is filled except PERSON.HASPLACEOFBIRTH and MONETARYAMOUNT.HASAMOUNT, so most 'different' pairs carry a small witness database.",
+ "pairs": [
+  {
+   "id": "fb-isa-join-elimination",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "a listed security is a security: LISTEDSECURITYID is NOT NULL and references SECURITY's key, so every row joins exactly one parent row",
+   "left": "SELECT l.LISTEDSECURITYID, l.HASTICKERSYMBOL FROM LISTEDSECURITY AS l JOIN SECURITY AS s ON l.LISTEDSECURITYID = s.SECURITYID",
+   "right": "SELECT LISTEDSECURITYID, HASTICKERSYMBOL FROM LISTEDSECURITY"
+  },
+  {
+   "id": "fb-isa-join-elimination-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "fb-isa-join-elimination",
+   "drop": [
+    "fk:LISTEDSECURITY.LISTEDSECURITYID"
+   ],
+   "why": "without the foreign key a listed security may have no security row",
+   "left": "SELECT l.LISTEDSECURITYID, l.HASTICKERSYMBOL FROM LISTEDSECURITY AS l JOIN SECURITY AS s ON l.LISTEDSECURITYID = s.SECURITYID",
+   "right": "SELECT LISTEDSECURITYID, HASTICKERSYMBOL FROM LISTEDSECURITY",
+   "witness": {
+    "LISTEDSECURITY": [
+     {
+      "LISTEDSECURITYID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-isa-join-elimination-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "fb-isa-join-elimination",
+   "drop": [
+    "pk:SECURITY"
+   ],
+   "why": "without SECURITY's key two security rows may share an id, and the join repeats the listed security",
+   "left": "SELECT l.LISTEDSECURITYID, l.HASTICKERSYMBOL FROM LISTEDSECURITY AS l JOIN SECURITY AS s ON l.LISTEDSECURITYID = s.SECURITYID",
+   "right": "SELECT LISTEDSECURITYID, HASTICKERSYMBOL FROM LISTEDSECURITY",
+   "witness": {
+    "SECURITY": [
+     {
+      "SECURITYID": 1
+     },
+     {
+      "SECURITYID": 1
+     }
+    ],
+    "LISTEDSECURITY": [
+     {
+      "LISTEDSECURITYID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-isa-join-on-other-column",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "fb-isa-join-elimination",
+   "why": "the join is on a monetary-amount id, not on the hierarchy key: it keeps only listed securities whose last traded value happens to be a security id",
+   "left": "SELECT l.LISTEDSECURITYID FROM LISTEDSECURITY AS l JOIN SECURITY AS s ON l.HASLASTTRADEDVALUE = s.SECURITYID",
+   "right": "SELECT LISTEDSECURITYID FROM LISTEDSECURITY",
+   "witness": {
+    "LISTEDSECURITY": [
+     {
+      "LISTEDSECURITYID": 1,
+      "HASLASTTRADEDVALUE": 7
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-isa-chain-elimination",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "LISTEDSECURITY, SECURITY and FINANCIALINSTRUMENT form a chain of NOT NULL keys that are also foreign keys: both joins are redundant",
+   "left": "SELECT l.LISTEDSECURITYID, l.HASLEGALNAME FROM LISTEDSECURITY AS l JOIN SECURITY AS s ON l.LISTEDSECURITYID = s.SECURITYID JOIN FINANCIALINSTRUMENT AS f ON s.SECURITYID = f.FINANCIALINSTRUMENTID",
+   "right": "SELECT LISTEDSECURITYID, HASLEGALNAME FROM LISTEDSECURITY"
+  },
+  {
+   "id": "fb-isa-chain-elimination-broken-link",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "fb-isa-chain-elimination",
+   "drop": [
+    "fk:SECURITY.SECURITYID"
+   ],
+   "why": "without the foreign key from SECURITY to FINANCIALINSTRUMENT a security may have no instrument row, which the second join then drops",
+   "left": "SELECT l.LISTEDSECURITYID, l.HASLEGALNAME FROM LISTEDSECURITY AS l JOIN SECURITY AS s ON l.LISTEDSECURITYID = s.SECURITYID JOIN FINANCIALINSTRUMENT AS f ON s.SECURITYID = f.FINANCIALINSTRUMENTID",
+   "right": "SELECT LISTEDSECURITYID, HASLEGALNAME FROM LISTEDSECURITY",
+   "witness": {
+    "LISTEDSECURITY": [
+     {
+      "LISTEDSECURITYID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-person-agent-elimination",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "a person is an autonomous agent: PERSONID is NOT NULL and references AUTONOMOUSAGENT's key",
+   "left": "SELECT p.PERSONID, p.HASLASTNAME FROM PERSON AS p JOIN AUTONOMOUSAGENT AS a ON p.PERSONID = a.AUTONOMOUSAGENTID",
+   "right": "SELECT PERSONID, HASLASTNAME FROM PERSON"
+  },
+  {
+   "id": "fb-person-agent-elimination-without-key",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "fb-person-agent-elimination",
+   "drop": [
+    "pk:AUTONOMOUSAGENT"
+   ],
+   "why": "without AUTONOMOUSAGENT's key an agent id may appear twice, and the join repeats the person",
+   "left": "SELECT p.PERSONID, p.HASLASTNAME FROM PERSON AS p JOIN AUTONOMOUSAGENT AS a ON p.PERSONID = a.AUTONOMOUSAGENTID",
+   "right": "SELECT PERSONID, HASLASTNAME FROM PERSON",
+   "witness": {
+    "AUTONOMOUSAGENT": [
+     {
+      "AUTONOMOUSAGENTID": 1
+     },
+     {
+      "AUTONOMOUSAGENTID": 1
+     }
+    ],
+    "PERSON": [
+     {
+      "PERSONID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-email-address-elimination",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "an e-mail address is a virtual address: the same hierarchy foreign key",
+   "left": "SELECT e.EMAILADDRESSID, e.HASVALUE FROM EMAILADDRESS AS e JOIN VIRTUALADDRESS AS v ON e.EMAILADDRESSID = v.VIRTUALADDRESSID",
+   "right": "SELECT EMAILADDRESSID, HASVALUE FROM EMAILADDRESS"
+  },
+  {
+   "id": "fb-report-element-chain-elimination",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "revenue is an element of a financial statement, which is an element of a financial report: two redundant joins along the hierarchy",
+   "left": "SELECT r.REVENUEID, r.HASNAME FROM REVENUE AS r JOIN ELEMENTOFFINANCIALSTATEMENT AS e ON r.REVENUEID = e.ELEMENTOFFINANCIALSTATEMENTID JOIN ELEMENTSOFFINANCIALREPORT AS x ON e.ELEMENTOFFINANCIALSTATEMENTID = x.ELEMENTSOFFINANCIALREPORTID",
+   "right": "SELECT REVENUEID, HASNAME FROM REVENUE"
+  },
+  {
+   "id": "fb-report-element-chain-elimination-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "fb-report-element-chain-elimination",
+   "drop": [
+    "fk:ELEMENTOFFINANCIALSTATEMENT.ELEMENTOFFINANCIALSTATEMENTID"
+   ],
+   "why": "without the foreign key of ELEMENTOFFINANCIALSTATEMENT a statement element may have no report element row",
+   "left": "SELECT r.REVENUEID, r.HASNAME FROM REVENUE AS r JOIN ELEMENTOFFINANCIALSTATEMENT AS e ON r.REVENUEID = e.ELEMENTOFFINANCIALSTATEMENTID JOIN ELEMENTSOFFINANCIALREPORT AS x ON e.ELEMENTOFFINANCIALSTATEMENTID = x.ELEMENTSOFFINANCIALREPORTID",
+   "right": "SELECT REVENUEID, HASNAME FROM REVENUE",
+   "witness": {
+    "REVENUE": [
+     {
+      "REVENUEID": 1
+     }
+    ],
+    "ELEMENTOFFINANCIALSTATEMENT": [
+     {
+      "ELEMENTOFFINANCIALSTATEMENTID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-nullable-fk-join-with-filter",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "HASLASTTRADEDVALUE is a nullable foreign key: when it is not NULL the monetary amount exists and is unique, when it is NULL the join drops the row",
+   "left": "SELECT l.LISTEDSECURITYID FROM LISTEDSECURITY AS l JOIN MONETARYAMOUNT AS m ON l.HASLASTTRADEDVALUE = m.MONETARYAMOUNTID",
+   "right": "SELECT LISTEDSECURITYID FROM LISTEDSECURITY WHERE HASLASTTRADEDVALUE IS NOT NULL"
+  },
+  {
+   "id": "fb-nullable-fk-join-without-filter",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "fb-nullable-fk-join-with-filter",
+   "why": "a listed security with no last traded value (NULL) joins nothing",
+   "left": "SELECT l.LISTEDSECURITYID FROM LISTEDSECURITY AS l JOIN MONETARYAMOUNT AS m ON l.HASLASTTRADEDVALUE = m.MONETARYAMOUNTID",
+   "right": "SELECT LISTEDSECURITYID FROM LISTEDSECURITY",
+   "witness": {
+    "LISTEDSECURITY": [
+     {
+      "LISTEDSECURITYID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-nullable-fk-join-without-fk",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "fb-nullable-fk-join-with-filter",
+   "drop": [
+    "fk:LISTEDSECURITY.HASLASTTRADEDVALUE"
+   ],
+   "why": "without the foreign key the last traded value may name a monetary amount that does not exist",
+   "left": "SELECT l.LISTEDSECURITYID FROM LISTEDSECURITY AS l JOIN MONETARYAMOUNT AS m ON l.HASLASTTRADEDVALUE = m.MONETARYAMOUNTID",
+   "right": "SELECT LISTEDSECURITYID FROM LISTEDSECURITY WHERE HASLASTTRADEDVALUE IS NOT NULL",
+   "witness": {
+    "LISTEDSECURITY": [
+     {
+      "LISTEDSECURITYID": 1,
+      "HASLASTTRADEDVALUE": 9
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-person-birthplace-join-with-filter",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "the place of birth is a nullable foreign key to COUNTRY's key",
+   "left": "SELECT p.PERSONID FROM PERSON AS p JOIN COUNTRY AS c ON p.HASPLACEOFBIRTH = c.COUNTRYID",
+   "right": "SELECT PERSONID FROM PERSON WHERE HASPLACEOFBIRTH IS NOT NULL"
+  },
+  {
+   "id": "fb-person-birthplace-join-without-filter",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "fb-person-birthplace-join-with-filter",
+   "why": "100 of the 50,100 persons of the data have no place of birth and are dropped by the join",
+   "left": "SELECT p.PERSONID FROM PERSON AS p JOIN COUNTRY AS c ON p.HASPLACEOFBIRTH = c.COUNTRYID",
+   "right": "SELECT PERSONID FROM PERSON",
+   "witness": "real"
+  },
+  {
+   "id": "fb-two-fk-joins-to-one-parent",
+   "category": "join elimination",
+   "label": "equivalent",
+   "why": "two nullable foreign keys into the same parent: each join only needs its own column to be present",
+   "left": "SELECT p.PERSONID FROM PERSON AS p JOIN COUNTRY AS b ON p.HASPLACEOFBIRTH = b.COUNTRYID JOIN COUNTRY AS c ON p.HASCITIZENSHIP = c.COUNTRYID",
+   "right": "SELECT PERSONID FROM PERSON WHERE HASPLACEOFBIRTH IS NOT NULL AND HASCITIZENSHIP IS NOT NULL"
+  },
+  {
+   "id": "fb-two-fk-joins-one-filter",
+   "category": "join elimination",
+   "label": "different",
+   "sibling": "fb-two-fk-joins-to-one-parent",
+   "why": "a person with a place of birth but no citizenship is dropped by the second join",
+   "left": "SELECT p.PERSONID FROM PERSON AS p JOIN COUNTRY AS b ON p.HASPLACEOFBIRTH = b.COUNTRYID JOIN COUNTRY AS c ON p.HASCITIZENSHIP = c.COUNTRYID",
+   "right": "SELECT PERSONID FROM PERSON WHERE HASPLACEOFBIRTH IS NOT NULL",
+   "witness": {
+    "PERSON": [
+     {
+      "PERSONID": 1,
+      "HASPLACEOFBIRTH": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-count-join-fk-vs-filter",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "REFERSTO is a nullable foreign key to LISTEDSECURITY's key",
+   "left": "SELECT COUNT(*) FROM HOLDING AS h JOIN LISTEDSECURITY AS l ON h.REFERSTO = l.LISTEDSECURITYID",
+   "right": "SELECT COUNT(*) FROM HOLDING WHERE REFERSTO IS NOT NULL"
+  },
+  {
+   "id": "fb-count-join-fk-no-filter",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "fb-count-join-fk-vs-filter",
+   "why": "a holding that refers to no security is not counted by the join",
+   "left": "SELECT COUNT(*) FROM HOLDING AS h JOIN LISTEDSECURITY AS l ON h.REFERSTO = l.LISTEDSECURITYID",
+   "right": "SELECT COUNT(*) FROM HOLDING",
+   "witness": {
+    "HOLDING": [
+     {
+      "HOLDINGID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-count-distinct-key",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "HOLDINGID is the primary key: no duplicates, no NULL",
+   "left": "SELECT COUNT(DISTINCT HOLDINGID) FROM HOLDING",
+   "right": "SELECT COUNT(*) FROM HOLDING"
+  },
+  {
+   "id": "fb-count-distinct-foreign-key",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "fb-count-distinct-key",
+   "why": "many holdings refer to the same security (2,745 distinct securities in 534,473 holdings)",
+   "left": "SELECT COUNT(DISTINCT REFERSTO) FROM HOLDING",
+   "right": "SELECT COUNT(*) FROM HOLDING",
+   "witness": "real"
+  },
+  {
+   "id": "fb-count-column-not-null",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "HOLDINGID is NOT NULL, so COUNT(column) counts every row",
+   "left": "SELECT COUNT(HOLDINGID) FROM HOLDING",
+   "right": "SELECT COUNT(*) FROM HOLDING"
+  },
+  {
+   "id": "fb-count-column-nullable",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "fb-count-column-not-null",
+   "why": "REFERSTO is nullable: COUNT(column) skips a NULL",
+   "left": "SELECT COUNT(REFERSTO) FROM HOLDING",
+   "right": "SELECT COUNT(*) FROM HOLDING",
+   "witness": {
+    "HOLDING": [
+     {
+      "HOLDINGID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-group-by-key-via-parent-join",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "holdings per account: ISHELDBY is a foreign key to the account's key, the join only drops the NULL group",
+   "left": "SELECT a.FINANCIALSERVICEACCOUNTID AS account, COUNT(*) AS n FROM FINANCIALSERVICEACCOUNT AS a JOIN HOLDING AS h ON h.ISHELDBY = a.FINANCIALSERVICEACCOUNTID GROUP BY a.FINANCIALSERVICEACCOUNTID",
+   "right": "SELECT ISHELDBY AS account, COUNT(*) AS n FROM HOLDING WHERE ISHELDBY IS NOT NULL GROUP BY ISHELDBY"
+  },
+  {
+   "id": "fb-group-by-fk-keeps-null-group",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "fb-group-by-key-via-parent-join",
+   "why": "the right side keeps a group for holdings held by no account (NULL)",
+   "left": "SELECT a.FINANCIALSERVICEACCOUNTID AS account, COUNT(*) AS n FROM FINANCIALSERVICEACCOUNT AS a JOIN HOLDING AS h ON h.ISHELDBY = a.FINANCIALSERVICEACCOUNTID GROUP BY a.FINANCIALSERVICEACCOUNTID",
+   "right": "SELECT ISHELDBY AS account, COUNT(*) AS n FROM HOLDING GROUP BY ISHELDBY",
+   "witness": {
+    "HOLDING": [
+     {
+      "HOLDINGID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-having-key-to-where",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "a HAVING on a grouping column is a WHERE",
+   "left": "SELECT ISHELDBY, COUNT(*) AS n FROM HOLDING GROUP BY ISHELDBY HAVING ISHELDBY > 100",
+   "right": "SELECT ISHELDBY, COUNT(*) AS n FROM HOLDING WHERE ISHELDBY > 100 GROUP BY ISHELDBY"
+  },
+  {
+   "id": "fb-having-sum-to-where",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "fb-having-key-to-where",
+   "why": "a group of two small holdings passes the HAVING on the total but no row passes the WHERE",
+   "left": "SELECT ISHELDBY, SUM(HASCOUNT) AS total FROM HOLDING GROUP BY ISHELDBY HAVING SUM(HASCOUNT) > 10",
+   "right": "SELECT ISHELDBY, SUM(HASCOUNT) AS total FROM HOLDING WHERE HASCOUNT > 10 GROUP BY ISHELDBY",
+   "witness": {
+    "HOLDING": [
+     {
+      "HOLDINGID": 1,
+      "HASCOUNT": 6.0
+     },
+     {
+      "HOLDINGID": 2,
+      "HASCOUNT": 6.0
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-sum-ignores-null",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "SUM skips NULL anyway (and is NULL over no rows either way)",
+   "left": "SELECT SUM(HASCOUNT) FROM HOLDING",
+   "right": "SELECT SUM(HASCOUNT) FROM HOLDING WHERE HASCOUNT IS NOT NULL"
+  },
+  {
+   "id": "fb-count-star-with-null-filter",
+   "category": "aggregation",
+   "label": "different",
+   "sibling": "fb-sum-ignores-null",
+   "why": "COUNT(*) counts a row whose HASCOUNT is NULL",
+   "left": "SELECT COUNT(*) FROM HOLDING",
+   "right": "SELECT COUNT(*) FROM HOLDING WHERE HASCOUNT IS NOT NULL",
+   "witness": {
+    "HOLDING": [
+     {
+      "HOLDINGID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-max-ignores-null",
+   "category": "aggregation",
+   "label": "equivalent",
+   "why": "MAX skips NULL",
+   "left": "SELECT MAX(HASAMOUNT) FROM MONETARYAMOUNT",
+   "right": "SELECT MAX(HASAMOUNT) FROM MONETARYAMOUNT WHERE HASAMOUNT IS NOT NULL"
+  },
+  {
+   "id": "fb-distinct-on-key",
+   "category": "DISTINCT removal",
+   "label": "equivalent",
+   "why": "the primary key is already unique",
+   "left": "SELECT DISTINCT LISTEDSECURITYID FROM LISTEDSECURITY",
+   "right": "SELECT LISTEDSECURITYID FROM LISTEDSECURITY"
+  },
+  {
+   "id": "fb-distinct-on-non-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "fb-distinct-on-key",
+   "why": "two listed securities may share a legal name (the data has 2,363 distinct names for 2,745 securities)",
+   "left": "SELECT DISTINCT HASLEGALNAME FROM LISTEDSECURITY",
+   "right": "SELECT HASLEGALNAME FROM LISTEDSECURITY",
+   "witness": "real"
+  },
+  {
+   "id": "fb-distinct-key-over-parent-join",
+   "category": "DISTINCT removal",
+   "label": "equivalent",
+   "why": "the key of the child is selected and the parent join is on its key: every output row is unique",
+   "left": "SELECT DISTINCT l.LISTEDSECURITYID, s.ISPROVIDEDBY FROM LISTEDSECURITY AS l JOIN SECURITY AS s ON l.LISTEDSECURITYID = s.SECURITYID",
+   "right": "SELECT l.LISTEDSECURITYID, s.ISPROVIDEDBY FROM LISTEDSECURITY AS l JOIN SECURITY AS s ON l.LISTEDSECURITYID = s.SECURITYID"
+  },
+  {
+   "id": "fb-distinct-key-over-parent-join-without-key",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "fb-distinct-key-over-parent-join",
+   "drop": [
+    "pk:SECURITY"
+   ],
+   "why": "without SECURITY's key two identical security rows make the join repeat the listed security",
+   "left": "SELECT DISTINCT l.LISTEDSECURITYID, s.ISPROVIDEDBY FROM LISTEDSECURITY AS l JOIN SECURITY AS s ON l.LISTEDSECURITYID = s.SECURITYID",
+   "right": "SELECT l.LISTEDSECURITYID, s.ISPROVIDEDBY FROM LISTEDSECURITY AS l JOIN SECURITY AS s ON l.LISTEDSECURITYID = s.SECURITYID",
+   "witness": {
+    "SECURITY": [
+     {
+      "SECURITYID": 1
+     },
+     {
+      "SECURITYID": 1
+     }
+    ],
+    "LISTEDSECURITY": [
+     {
+      "LISTEDSECURITYID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-distinct-fk-join-vs-filter",
+   "category": "DISTINCT removal",
+   "label": "equivalent",
+   "why": "the issuer of a security is a nullable foreign key to the corporation's key",
+   "left": "SELECT DISTINCT s.ISPROVIDEDBY FROM SECURITY AS s JOIN CORPORATION AS c ON s.ISPROVIDEDBY = c.CORPORATIONID",
+   "right": "SELECT DISTINCT ISPROVIDEDBY FROM SECURITY WHERE ISPROVIDEDBY IS NOT NULL"
+  },
+  {
+   "id": "fb-distinct-with-group-by",
+   "category": "DISTINCT removal",
+   "label": "equivalent",
+   "why": "GROUP BY already makes the grouping column unique",
+   "left": "SELECT DISTINCT ISHELDBY FROM HOLDING GROUP BY ISHELDBY",
+   "right": "SELECT ISHELDBY FROM HOLDING GROUP BY ISHELDBY"
+  },
+  {
+   "id": "fb-distinct-vs-group-by",
+   "category": "DISTINCT removal",
+   "label": "equivalent",
+   "why": "DISTINCT on one column is a GROUP BY on it",
+   "left": "SELECT DISTINCT ISHELDBY FROM HOLDING",
+   "right": "SELECT ISHELDBY FROM HOLDING GROUP BY ISHELDBY"
+  },
+  {
+   "id": "fb-group-by-vs-plain",
+   "category": "DISTINCT removal",
+   "label": "different",
+   "sibling": "fb-distinct-vs-group-by",
+   "why": "an account holds many holdings",
+   "left": "SELECT ISHELDBY FROM HOLDING GROUP BY ISHELDBY",
+   "right": "SELECT ISHELDBY FROM HOLDING",
+   "witness": "real"
+  },
+  {
+   "id": "fb-not-in-vs-not-exists-not-null",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "both sides of the comparison are NOT NULL keys: NOT IN has no NULL trap",
+   "left": "SELECT l.LISTEDSECURITYID FROM LISTEDSECURITY AS l WHERE l.LISTEDSECURITYID NOT IN (SELECT s.SECURITYID FROM SECURITY AS s WHERE s.ISTRADEDON = 1)",
+   "right": "SELECT l.LISTEDSECURITYID FROM LISTEDSECURITY AS l WHERE NOT EXISTS (SELECT 1 FROM SECURITY AS s WHERE s.SECURITYID = l.LISTEDSECURITYID AND s.ISTRADEDON = 1)"
+  },
+  {
+   "id": "fb-not-in-vs-not-exists-nullable",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "fb-not-in-vs-not-exists-not-null",
+   "why": "REFERSTO is nullable: one holding with no security makes NOT IN unknown for every listed security",
+   "left": "SELECT l.LISTEDSECURITYID FROM LISTEDSECURITY AS l WHERE l.LISTEDSECURITYID NOT IN (SELECT h.REFERSTO FROM HOLDING AS h WHERE h.ISHELDBY = 1)",
+   "right": "SELECT l.LISTEDSECURITYID FROM LISTEDSECURITY AS l WHERE NOT EXISTS (SELECT 1 FROM HOLDING AS h WHERE h.REFERSTO = l.LISTEDSECURITYID AND h.ISHELDBY = 1)",
+   "witness": {
+    "LISTEDSECURITY": [
+     {
+      "LISTEDSECURITYID": 5
+     }
+    ],
+    "HOLDING": [
+     {
+      "HOLDINGID": 1,
+      "ISHELDBY": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-not-equal-vs-not-equal-negated",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "both are unknown for a NULL citizenship",
+   "left": "SELECT PERSONID FROM PERSON WHERE HASCITIZENSHIP <> 5",
+   "right": "SELECT PERSONID FROM PERSON WHERE NOT (HASCITIZENSHIP = 5)"
+  },
+  {
+   "id": "fb-not-equal-vs-is-distinct-from",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "fb-not-equal-vs-not-equal-negated",
+   "why": "IS DISTINCT FROM keeps a person with a NULL citizenship",
+   "left": "SELECT PERSONID FROM PERSON WHERE HASCITIZENSHIP <> 5",
+   "right": "SELECT PERSONID FROM PERSON WHERE HASCITIZENSHIP IS DISTINCT FROM 5",
+   "witness": {
+    "PERSON": [
+     {
+      "PERSONID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-coalesce-vs-or-is-null",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "COALESCE to 0 then comparing with 0 is NULL or 0",
+   "left": "SELECT PERSONID FROM PERSON WHERE COALESCE(HASCITIZENSHIP, 0) = 0",
+   "right": "SELECT PERSONID FROM PERSON WHERE HASCITIZENSHIP IS NULL OR HASCITIZENSHIP = 0"
+  },
+  {
+   "id": "fb-coalesce-vs-is-null",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "fb-coalesce-vs-or-is-null",
+   "why": "a citizenship that is the country with id 0 also passes the COALESCE",
+   "left": "SELECT PERSONID FROM PERSON WHERE COALESCE(HASCITIZENSHIP, 0) = 0",
+   "right": "SELECT PERSONID FROM PERSON WHERE HASCITIZENSHIP IS NULL",
+   "witness": {
+    "PERSON": [
+     {
+      "PERSONID": 1,
+      "HASCITIZENSHIP": 0
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-de-morgan",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "De Morgan holds in three-valued logic",
+   "left": "SELECT MONETARYAMOUNTID FROM MONETARYAMOUNT WHERE NOT (HASAMOUNT > 5 AND HASCURRENCY = 1)",
+   "right": "SELECT MONETARYAMOUNTID FROM MONETARYAMOUNT WHERE HASAMOUNT <= 5 OR HASCURRENCY <> 1"
+  },
+  {
+   "id": "fb-tautology-with-nulls",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "fb-tautology-with-not-null-filter",
+   "why": "500,000 of the 502,745 amounts of the data are NULL and satisfy neither comparison",
+   "left": "SELECT MONETARYAMOUNTID FROM MONETARYAMOUNT WHERE HASAMOUNT > 5 OR HASAMOUNT <= 5",
+   "right": "SELECT MONETARYAMOUNTID FROM MONETARYAMOUNT",
+   "witness": "real"
+  },
+  {
+   "id": "fb-tautology-with-not-null-filter",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "a comparison and its complement cover exactly the non-NULL values",
+   "left": "SELECT MONETARYAMOUNTID FROM MONETARYAMOUNT WHERE HASAMOUNT > 5 OR HASAMOUNT <= 5",
+   "right": "SELECT MONETARYAMOUNTID FROM MONETARYAMOUNT WHERE HASAMOUNT IS NOT NULL"
+  },
+  {
+   "id": "fb-between-vs-range",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "BETWEEN is inclusive on both ends",
+   "left": "SELECT MONETARYAMOUNTID FROM MONETARYAMOUNT WHERE HASAMOUNT BETWEEN 1 AND 5",
+   "right": "SELECT MONETARYAMOUNTID FROM MONETARYAMOUNT WHERE HASAMOUNT >= 1 AND HASAMOUNT <= 5"
+  },
+  {
+   "id": "fb-between-vs-exclusive-range",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "fb-between-vs-range",
+   "why": "the end points 1 and 5 belong to BETWEEN",
+   "left": "SELECT MONETARYAMOUNTID FROM MONETARYAMOUNT WHERE HASAMOUNT BETWEEN 1 AND 5",
+   "right": "SELECT MONETARYAMOUNTID FROM MONETARYAMOUNT WHERE HASAMOUNT > 1 AND HASAMOUNT < 5",
+   "witness": {
+    "MONETARYAMOUNT": [
+     {
+      "MONETARYAMOUNTID": 1,
+      "HASAMOUNT": 1.0
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-in-list-vs-or",
+   "category": "NULL semantics",
+   "label": "equivalent",
+   "why": "an IN list over constants is a disjunction of equalities",
+   "left": "SELECT HOLDINGID FROM HOLDING WHERE ISHELDBY IN (1, 2, 3)",
+   "right": "SELECT HOLDINGID FROM HOLDING WHERE ISHELDBY = 1 OR ISHELDBY = 2 OR ISHELDBY = 3"
+  },
+  {
+   "id": "fb-not-in-list-with-null",
+   "category": "NULL semantics",
+   "label": "different",
+   "sibling": "fb-in-list-vs-or",
+   "why": "a NULL in a NOT IN list makes the predicate unknown for every other value",
+   "left": "SELECT HOLDINGID FROM HOLDING WHERE ISHELDBY NOT IN (1, 2, NULL)",
+   "right": "SELECT HOLDINGID FROM HOLDING WHERE ISHELDBY NOT IN (1, 2)",
+   "witness": {
+    "HOLDING": [
+     {
+      "HOLDINGID": 1,
+      "ISHELDBY": 3
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-union-distinct-of-same-key",
+   "category": "set operation",
+   "label": "equivalent",
+   "why": "UNION DISTINCT of a set with itself, the key being unique already",
+   "left": "SELECT SECURITYID FROM SECURITY UNION DISTINCT SELECT SECURITYID FROM SECURITY",
+   "right": "SELECT SECURITYID FROM SECURITY"
+  },
+  {
+   "id": "fb-union-all-of-same-key",
+   "category": "set operation",
+   "label": "different",
+   "sibling": "fb-union-distinct-of-same-key",
+   "why": "UNION ALL keeps both copies",
+   "left": "SELECT SECURITYID FROM SECURITY UNION ALL SELECT SECURITYID FROM SECURITY",
+   "right": "SELECT SECURITYID FROM SECURITY",
+   "witness": "real"
+  },
+  {
+   "id": "fb-intersect-subset-by-fk",
+   "category": "set operation",
+   "label": "equivalent",
+   "why": "every listed security is a security (foreign key), so the intersection is the whole child key set",
+   "left": "SELECT SECURITYID AS id FROM SECURITY INTERSECT DISTINCT SELECT LISTEDSECURITYID AS id FROM LISTEDSECURITY",
+   "right": "SELECT LISTEDSECURITYID AS id FROM LISTEDSECURITY"
+  },
+  {
+   "id": "fb-intersect-subset-without-fk",
+   "category": "set operation",
+   "label": "different",
+   "sibling": "fb-intersect-subset-by-fk",
+   "drop": [
+    "fk:LISTEDSECURITY.LISTEDSECURITYID"
+   ],
+   "why": "without the foreign key a listed security may have no security row",
+   "left": "SELECT SECURITYID AS id FROM SECURITY INTERSECT DISTINCT SELECT LISTEDSECURITYID AS id FROM LISTEDSECURITY",
+   "right": "SELECT LISTEDSECURITYID AS id FROM LISTEDSECURITY",
+   "witness": {
+    "LISTEDSECURITY": [
+     {
+      "LISTEDSECURITYID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-except-vs-not-exists-keys",
+   "category": "set operation",
+   "label": "equivalent",
+   "why": "both columns are unique, NOT NULL keys: no duplicate collapse and no NULL to compare",
+   "left": "SELECT SECURITYID FROM SECURITY EXCEPT DISTINCT SELECT LISTEDSECURITYID FROM LISTEDSECURITY",
+   "right": "SELECT s.SECURITYID FROM SECURITY AS s WHERE NOT EXISTS (SELECT 1 FROM LISTEDSECURITY AS l WHERE l.LISTEDSECURITYID = s.SECURITYID)"
+  },
+  {
+   "id": "fb-except-vs-not-exists-duplicates",
+   "category": "set operation",
+   "label": "different",
+   "sibling": "fb-except-vs-not-exists-keys",
+   "why": "EXCEPT DISTINCT collapses persons sharing a citizenship, NOT EXISTS keeps them",
+   "left": "SELECT HASCITIZENSHIP FROM PERSON EXCEPT DISTINCT SELECT ISDOMICILEDIN FROM CORPORATION",
+   "right": "SELECT p.HASCITIZENSHIP FROM PERSON AS p WHERE NOT EXISTS (SELECT 1 FROM CORPORATION AS c WHERE c.ISDOMICILEDIN = p.HASCITIZENSHIP)",
+   "witness": {
+    "PERSON": [
+     {
+      "PERSONID": 1,
+      "HASCITIZENSHIP": 3
+     },
+     {
+      "PERSONID": 2,
+      "HASCITIZENSHIP": 3
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-union-all-complementary-filters",
+   "category": "set operation",
+   "label": "equivalent",
+   "why": "the two branches split the non-NULL counts",
+   "left": "SELECT HOLDINGID FROM HOLDING WHERE HASCOUNT > 10 UNION ALL SELECT HOLDINGID FROM HOLDING WHERE HASCOUNT <= 10",
+   "right": "SELECT HOLDINGID FROM HOLDING WHERE HASCOUNT IS NOT NULL"
+  },
+  {
+   "id": "fb-union-all-overlapping-filters",
+   "category": "set operation",
+   "label": "different",
+   "sibling": "fb-union-all-complementary-filters",
+   "why": "a holding of exactly 10 is in both branches",
+   "left": "SELECT HOLDINGID FROM HOLDING WHERE HASCOUNT >= 10 UNION ALL SELECT HOLDINGID FROM HOLDING WHERE HASCOUNT <= 10",
+   "right": "SELECT HOLDINGID FROM HOLDING WHERE HASCOUNT IS NOT NULL",
+   "witness": {
+    "HOLDING": [
+     {
+      "HOLDINGID": 1,
+      "HASCOUNT": 10.0
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-union-all-commutes",
+   "category": "set operation",
+   "label": "equivalent",
+   "why": "bag union is commutative",
+   "left": "SELECT PERSONID AS id FROM PERSON UNION ALL SELECT CORPORATIONID AS id FROM CORPORATION",
+   "right": "SELECT CORPORATIONID AS id FROM CORPORATION UNION ALL SELECT PERSONID AS id FROM PERSON"
+  },
+  {
+   "id": "fb-in-subquery-vs-join-on-key",
+   "category": "subquery",
+   "label": "equivalent",
+   "why": "the subquery returns a key: the join cannot repeat a listed security",
+   "left": "SELECT l.LISTEDSECURITYID FROM LISTEDSECURITY AS l WHERE l.HASLASTTRADEDVALUE IN (SELECT m.MONETARYAMOUNTID FROM MONETARYAMOUNT AS m WHERE m.HASAMOUNT > 100)",
+   "right": "SELECT l.LISTEDSECURITYID FROM LISTEDSECURITY AS l JOIN MONETARYAMOUNT AS m ON l.HASLASTTRADEDVALUE = m.MONETARYAMOUNTID WHERE m.HASAMOUNT > 100"
+  },
+  {
+   "id": "fb-in-subquery-vs-join-on-foreign-key",
+   "category": "subquery",
+   "label": "different",
+   "sibling": "fb-in-subquery-vs-join-on-key",
+   "why": "a security held several times is repeated by the join",
+   "left": "SELECT l.LISTEDSECURITYID FROM LISTEDSECURITY AS l WHERE l.LISTEDSECURITYID IN (SELECT h.REFERSTO FROM HOLDING AS h)",
+   "right": "SELECT l.LISTEDSECURITYID FROM LISTEDSECURITY AS l JOIN HOLDING AS h ON h.REFERSTO = l.LISTEDSECURITYID",
+   "witness": "real"
+  },
+  {
+   "id": "fb-exists-vs-in",
+   "category": "subquery",
+   "label": "equivalent",
+   "why": "as a filter, IN and EXISTS agree even when the subquery column has NULLs",
+   "left": "SELECT l.LISTEDSECURITYID FROM LISTEDSECURITY AS l WHERE EXISTS (SELECT 1 FROM HOLDING AS h WHERE h.REFERSTO = l.LISTEDSECURITYID)",
+   "right": "SELECT l.LISTEDSECURITYID FROM LISTEDSECURITY AS l WHERE l.LISTEDSECURITYID IN (SELECT h.REFERSTO FROM HOLDING AS h)"
+  },
+  {
+   "id": "fb-scalar-subquery-vs-left-join",
+   "category": "subquery",
+   "label": "equivalent",
+   "why": "the correlated key is unique: at most one row, NULL when none",
+   "left": "SELECT l.LISTEDSECURITYID, (SELECT m.HASAMOUNT FROM MONETARYAMOUNT AS m WHERE m.MONETARYAMOUNTID = l.HASLASTTRADEDVALUE) AS amount FROM LISTEDSECURITY AS l",
+   "right": "SELECT l.LISTEDSECURITYID, m.HASAMOUNT AS amount FROM LISTEDSECURITY AS l LEFT JOIN MONETARYAMOUNT AS m ON m.MONETARYAMOUNTID = l.HASLASTTRADEDVALUE"
+  },
+  {
+   "id": "fb-derived-table-flattening",
+   "category": "subquery",
+   "label": "equivalent",
+   "why": "a derived table with a filter and a projection folds into one query",
+   "left": "SELECT x.id FROM (SELECT HOLDINGID AS id, HASCOUNT FROM HOLDING WHERE HASCOUNT > 5) AS x WHERE x.HASCOUNT < 100",
+   "right": "SELECT HOLDINGID AS id FROM HOLDING WHERE HASCOUNT > 5 AND HASCOUNT < 100"
+  },
+  {
+   "id": "fb-derived-table-with-limit",
+   "category": "subquery",
+   "label": "different",
+   "sibling": "fb-derived-table-flattening",
+   "why": "the filter after a LIMIT is not the filter before it",
+   "left": "SELECT x.id FROM (SELECT HOLDINGID AS id, HASCOUNT FROM HOLDING ORDER BY HOLDINGID LIMIT 1) AS x WHERE x.HASCOUNT > 5",
+   "right": "SELECT HOLDINGID FROM HOLDING WHERE HASCOUNT > 5 ORDER BY HOLDINGID LIMIT 1",
+   "witness": {
+    "HOLDING": [
+     {
+      "HOLDINGID": 1,
+      "HASCOUNT": 1.0
+     },
+     {
+      "HOLDINGID": 2,
+      "HASCOUNT": 9.0
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-left-join-to-unique-key",
+   "category": "outer join",
+   "label": "equivalent",
+   "why": "the right side is joined on its key: no row is repeated, none is lost",
+   "left": "SELECT s.SECURITYID FROM SECURITY AS s LEFT JOIN LISTEDSECURITY AS l ON l.LISTEDSECURITYID = s.SECURITYID",
+   "right": "SELECT SECURITYID FROM SECURITY"
+  },
+  {
+   "id": "fb-left-join-to-non-unique",
+   "category": "outer join",
+   "label": "different",
+   "sibling": "fb-left-join-to-unique-key",
+   "drop": [
+    "pk:LISTEDSECURITY"
+   ],
+   "why": "without LISTEDSECURITY's key a security may match several rows",
+   "left": "SELECT s.SECURITYID FROM SECURITY AS s LEFT JOIN LISTEDSECURITY AS l ON l.LISTEDSECURITYID = s.SECURITYID",
+   "right": "SELECT SECURITYID FROM SECURITY",
+   "witness": {
+    "SECURITY": [
+     {
+      "SECURITYID": 1
+     }
+    ],
+    "LISTEDSECURITY": [
+     {
+      "LISTEDSECURITYID": 1
+     },
+     {
+      "LISTEDSECURITYID": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-left-join-where-not-null-to-inner",
+   "category": "outer join",
+   "label": "equivalent",
+   "why": "a filter that rejects the NULL-extended rows makes the outer join inner",
+   "left": "SELECT a.FINANCIALSERVICEACCOUNTID, h.HOLDINGID FROM FINANCIALSERVICEACCOUNT AS a LEFT JOIN HOLDING AS h ON h.ISHELDBY = a.FINANCIALSERVICEACCOUNTID WHERE h.HOLDINGID IS NOT NULL",
+   "right": "SELECT a.FINANCIALSERVICEACCOUNTID, h.HOLDINGID FROM FINANCIALSERVICEACCOUNT AS a JOIN HOLDING AS h ON h.ISHELDBY = a.FINANCIALSERVICEACCOUNTID"
+  },
+  {
+   "id": "fb-left-join-on-vs-where",
+   "category": "outer join",
+   "label": "different",
+   "sibling": "fb-left-join-where-not-null-to-inner",
+   "why": "a condition in ON keeps the account with a NULL holding, the same condition in WHERE drops it",
+   "left": "SELECT a.FINANCIALSERVICEACCOUNTID, h.HOLDINGID FROM FINANCIALSERVICEACCOUNT AS a LEFT JOIN HOLDING AS h ON h.ISHELDBY = a.FINANCIALSERVICEACCOUNTID AND h.HASCOUNT > 5",
+   "right": "SELECT a.FINANCIALSERVICEACCOUNTID, h.HOLDINGID FROM FINANCIALSERVICEACCOUNT AS a LEFT JOIN HOLDING AS h ON h.ISHELDBY = a.FINANCIALSERVICEACCOUNTID WHERE h.HASCOUNT > 5",
+   "witness": {
+    "FINANCIALSERVICEACCOUNT": [
+     {
+      "FINANCIALSERVICEACCOUNTID": 1
+     }
+    ],
+    "HOLDING": [
+     {
+      "HOLDINGID": 1,
+      "ISHELDBY": 1,
+      "HASCOUNT": 1.0
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-anti-join-vs-not-exists",
+   "category": "outer join",
+   "label": "equivalent",
+   "why": "the key HOLDINGID is NULL only on the NULL-extended row",
+   "left": "SELECT a.FINANCIALSERVICEACCOUNTID FROM FINANCIALSERVICEACCOUNT AS a LEFT JOIN HOLDING AS h ON h.ISHELDBY = a.FINANCIALSERVICEACCOUNTID WHERE h.HOLDINGID IS NULL",
+   "right": "SELECT a.FINANCIALSERVICEACCOUNTID FROM FINANCIALSERVICEACCOUNT AS a WHERE NOT EXISTS (SELECT 1 FROM HOLDING AS h WHERE h.ISHELDBY = a.FINANCIALSERVICEACCOUNTID)"
+  },
+  {
+   "id": "fb-anti-join-on-nullable-marker",
+   "category": "outer join",
+   "label": "different",
+   "sibling": "fb-anti-join-vs-not-exists",
+   "why": "REFERSTO is nullable: an account whose holding refers to nothing looks unmatched",
+   "left": "SELECT a.FINANCIALSERVICEACCOUNTID FROM FINANCIALSERVICEACCOUNT AS a LEFT JOIN HOLDING AS h ON h.ISHELDBY = a.FINANCIALSERVICEACCOUNTID WHERE h.REFERSTO IS NULL",
+   "right": "SELECT a.FINANCIALSERVICEACCOUNTID FROM FINANCIALSERVICEACCOUNT AS a WHERE NOT EXISTS (SELECT 1 FROM HOLDING AS h WHERE h.ISHELDBY = a.FINANCIALSERVICEACCOUNTID)",
+   "witness": {
+    "FINANCIALSERVICEACCOUNT": [
+     {
+      "FINANCIALSERVICEACCOUNTID": 1
+     }
+    ],
+    "HOLDING": [
+     {
+      "HOLDINGID": 1,
+      "ISHELDBY": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "fb-window-row-number-on-key",
+   "category": "window",
+   "label": "equivalent",
+   "why": "partitioning by a key makes every partition one row",
+   "left": "SELECT HOLDINGID, ROW_NUMBER() OVER (PARTITION BY HOLDINGID ORDER BY HOLDINGID) AS n FROM HOLDING",
+   "right": "SELECT HOLDINGID, 1 AS n FROM HOLDING"
+  },
+  {
+   "id": "fb-window-row-number-on-foreign-key",
+   "category": "window",
+   "label": "different",
+   "sibling": "fb-window-row-number-on-key",
+   "why": "an account holds several holdings, numbered 1, 2, ...",
+   "left": "SELECT HOLDINGID, ROW_NUMBER() OVER (PARTITION BY ISHELDBY ORDER BY HOLDINGID) AS n FROM HOLDING",
+   "right": "SELECT HOLDINGID, 1 AS n FROM HOLDING",
+   "witness": "real"
+  }
+ ]
+}

@@ -1774,6 +1774,7 @@ def rewrite_cases(job: tuple[str, list[str], bool]) -> list[dict]:
 
     name, query_ids, optimizer = job
     adapter = ADAPTERS[name]
+    timeout_before = es.QUERY_TIMEOUT_S
     if adapter.query_timeout_s is not None:
         es.QUERY_TIMEOUT_S = adapter.query_timeout_s  # a big database: its queries take longer than the 5 s default
     wanted = set(query_ids)
@@ -1903,6 +1904,7 @@ def rewrite_cases(job: tuple[str, list[str], bool]) -> list[dict]:
             out.append(_case_row(adapter, query, case, "optimizer"))
     finally:
         con.close()
+        es.QUERY_TIMEOUT_S = timeout_before
     return out
 
 

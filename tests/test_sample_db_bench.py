@@ -61,7 +61,11 @@ SUBSET = {
 }
 
 
-@pytest.mark.parametrize("name", sorted(bench.ADAPTERS))
+# databases downloaded at run time (IBM FIBEN) have a test file of their own: they need the network and 400 MB of cache
+LOCAL = sorted(n for n, a in bench.ADAPTERS.items() if not a.downloads)
+
+
+@pytest.mark.parametrize("name", LOCAL)
 def test_database_loads_as_upstream_declares_it(name):
     adapter = bench.ADAPTERS[name]
     report = bench.check_database(adapter)
@@ -89,6 +93,7 @@ def test_the_upstream_workload_is_upstream():
                 "upstream-procedure",
                 "upstream-test",
                 "upstream-readme",
+                "upstream-query",
                 "authored",
             )
             assert query["origin"] == "authored" or query["adaptation"], query["id"]
@@ -188,7 +193,7 @@ def test_readers_handle_the_sample_dialects():
 
 
 def test_every_pair_is_decided_without_a_wrong_answer():
-    rows = bench.run_pairs(list(bench.ADAPTERS.values()))
+    rows = bench.run_pairs([bench.ADAPTERS[n] for n in LOCAL])
     summary = bench.summarize_pairs(rows)["all"]
     assert summary["wrong"] == 0, [r for r in rows if r["wrong"]]
     assert summary["labels_unverified"] == 0, [
