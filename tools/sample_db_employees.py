@@ -365,6 +365,13 @@ def make_adapter(b):
             """The record counts and checksums upstream's test scripts publish, recomputed from the loaded rows."""
 
             problems = []
+            # the database file is built once and opened read-only, so a file that already passed (same size and
+            # modification time as when the marker was written) is not hashed again: the chains read every row
+            path = Path(con.execute("SELECT database_name, path FROM duckdb_databases() WHERE path IS NOT NULL").fetchone()[1])
+            stamp = f"{path.stat().st_size}:{path.stat().st_mtime_ns}"
+            marker = path.with_suffix(".verified")
+            if marker.exists() and marker.read_text() == stamp:
+                return problems
             expected = published_checksums()
             for table in TABLES:
                 records, md5, sha = expected[table]
@@ -375,6 +382,8 @@ def make_adapter(b):
                     problems.append(f"{table}: MD5 chain {got[1]} is not the published {md5}")
                 if got[2] != sha:
                     problems.append(f"{table}: SHA-256 chain {got[2]} is not the published {sha}")
+            if not problems:
+                marker.write_text(stamp)
             return problems
 
     return Employees()

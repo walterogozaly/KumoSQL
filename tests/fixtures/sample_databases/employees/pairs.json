@@ -614,7 +614,16 @@
       "why": "a department whose assignments have all ended is a group with count 0 in one query and no group in the other",
       "left": "SELECT dept_no, COUNT(*) AS n FROM dept_emp WHERE to_date = DATE '9999-01-01' GROUP BY dept_no",
       "right": "SELECT dept_no, COUNTIF(to_date = DATE '9999-01-01') AS n FROM dept_emp GROUP BY dept_no",
-      "witness": "real"
+      "witness": {
+        "dept_emp": [
+          {
+            "emp_no": 10100,
+            "dept_no": "d001",
+            "from_date": "1990-01-01",
+            "to_date": "1991-01-01"
+          }
+        ]
+      }
     },
     {
       "id": "emp-filter-pushdown-through-group",
@@ -731,14 +740,14 @@
       "witness": {
         "salaries": [
           {
-            "emp_no": 10100,
+            "emp_no": 10001,
             "from_date": "1990-01-01",
             "to_date": "1991-01-01"
           }
         ],
         "titles": [
           {
-            "emp_no": 10100,
+            "emp_no": 10001,
             "title": "Engineer",
             "from_date": "1990-01-01",
             "to_date": null
@@ -849,22 +858,21 @@
       "label": "different",
       "sibling": "emp-intersect-to-in-on-not-null",
       "why": "INTERSECT treats two NULLs as equal and IN does not: titles.to_date is nullable",
-      "left": "SELECT to_date FROM titles INTERSECT DISTINCT SELECT to_date FROM salaries",
-      "right": "SELECT DISTINCT t.to_date FROM titles AS t WHERE t.to_date IN (SELECT to_date FROM salaries)",
+      "left": "SELECT to_date FROM titles WHERE emp_no < 10100 INTERSECT DISTINCT SELECT to_date FROM titles WHERE emp_no >= 10100",
+      "right": "SELECT DISTINCT t.to_date FROM titles AS t WHERE t.emp_no < 10100 AND t.to_date IN (SELECT to_date FROM titles WHERE emp_no >= 10100)",
       "witness": {
         "titles": [
+          {
+            "emp_no": 10001,
+            "title": "Engineer",
+            "from_date": "1990-01-01",
+            "to_date": null
+          },
           {
             "emp_no": 10100,
             "title": "Engineer",
             "from_date": "1990-01-01",
             "to_date": null
-          }
-        ],
-        "salaries": [
-          {
-            "emp_no": 10100,
-            "from_date": "1990-01-01",
-            "to_date": "1991-01-01"
           }
         ]
       }
