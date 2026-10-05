@@ -5041,11 +5041,12 @@ def _prove_algebraic_levels(left_sql: str, right_sql: str, search: bool, **kwarg
     ) or string_number_compare.problem(original[1], kwargs.get("dialect", "bigquery"), kwargs.get("types"), plain_ok=True)
     if compared:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {compared}")
-    result = _prove_algebraic(left_sql, right_sql, 0, **kwargs)
+    normalization_cache = {}
+    result = _prove_algebraic(left_sql, right_sql, 0, _normalization_cache=normalization_cache, **kwargs)
     for level in (1, 2):
         if result.proven or (level == 1 and not (kwargs.get("constraints") or {})):
             continue
-        retry = _prove_algebraic(left_sql, right_sql, level, **kwargs)
+        retry = _prove_algebraic(left_sql, right_sql, level, _normalization_cache=normalization_cache, **kwargs)
         if retry.proven:
             return retry
     if result.status is SmtStatus.NOT_PROVEN:
@@ -5077,7 +5078,7 @@ def _prove_algebraic_levels(left_sql: str, right_sql: str, search: bool, **kwarg
     return result
 
 
-def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, **kwargs) -> SmtEquivalenceResult:
+def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, *, _normalization_cache=None, **kwargs) -> SmtEquivalenceResult:
     dialect = kwargs.get("dialect", "bigquery")
     types = kwargs.get("types")
     constants = kwargs.get("group_by_constants", False)
@@ -5087,12 +5088,25 @@ def _prove_algebraic(left_sql: str, right_sql: str, keyed_distinct: int, **kwarg
         not_null = {t: c.not_null for t, c in (kwargs.get("constraints") or {}).items()}
         keys = {t.lower(): [tuple(k) for k in c.keys] for t, c in (kwargs.get("constraints") or {}).items()}
         fks = {t.lower(): list(c.foreign_keys) for t, c in (kwargs.get("constraints") or {}).items() if c.foreign_keys}
-        left = normalize(left_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants, keyed_distinct=keyed_distinct, foreign_keys=fks, _assumptions=normalization_assumptions)
-        right = normalize(right_sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants, keyed_distinct=keyed_distinct, foreign_keys=fks, _assumptions=normalization_assumptions)
-        if keyed_distinct and (left, right) == tuple(
-            normalize(sql, schema=kwargs.get("schema"), dialect=dialect, not_null=not_null, keys=keys, types=types, group_by_constants=constants, foreign_keys=fks, _assumptions=normalization_assumptions)
-            for sql in (left_sql, right_sql)
-        ):
+        # This cache belongs to one pair and one immutable proof context. Never share
+        # it with recursive or conditional proofs, whose constraints may differ.
+        cache = {} if _normalization_cache is None else _normalization_cache
+
+        def normalized(sql, level):
+            key = (sql, level)
+            if key not in cache:
+                assumptions = set()
+                text = normalize(sql, schema=kwargs.get("schema"), dialect=dialect,
+                                 not_null=not_null, keys=keys, types=types,
+                                 group_by_constants=constants, keyed_distinct=level,
+                                 foreign_keys=fks, _assumptions=assumptions)
+                cache[key] = (text, frozenset(assumptions))
+            text, assumptions = cache[key]
+            normalization_assumptions.update(assumptions)
+            return text
+
+        left, right = normalized(left_sql, keyed_distinct), normalized(right_sql, keyed_distinct)
+        if keyed_distinct and (left, right) == (normalized(left_sql, 0), normalized(right_sql, 0)):
             return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, "no keyed DISTINCT to drop", assumptions=tuple(sorted(normalization_assumptions)))
     except sqlglot.errors.SqlglotError as error:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"parse error: {error}", assumptions=tuple(sorted(normalization_assumptions)))
