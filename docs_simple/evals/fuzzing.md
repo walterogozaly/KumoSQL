@@ -33,3 +33,13 @@ Run from a development checkout. The full guide supplies unsafe and composition 
 The suite checks proofs against small DuckDB databases and replays counterexamples. It distinguishes false proofs, counterexamples that fail to show a difference, bugs in generated labels, and behavior-changing rule steps.
 
 Finding no difference on the generated databases is executed evidence. It does not establish unbounded equivalence. Coverage and wrong-answer counts are separate so an unknown answer is not mistaken for a false proof.
+
+## Tautologies and duplicates nobody reads
+
+Two small simplifications let the prover finish cases it used to leave unknown.
+
+- A test that can only be true or false, such as `(a IS NOT NULL) IS NULL`, is never NULL, so asking whether it is NULL always answers "no". `NOT NOT p` is just `p`, and a leftover `WHERE TRUE` filters nothing. Removing them makes two queries that differ only by such noise look identical. Example: `WHERE NOT NOT (a IS NOT NULL) OR (a IS NOT NULL) IS NULL` is the same filter as `WHERE a IS NOT NULL`. A comparison such as `(a = 1) IS NULL` is left alone, because a comparison can be NULL.
+- `x IN (subquery)` only asks which values the subquery contains, not how often. So a `UNION DISTINCT` (duplicate removal) inside it can be read as `UNION ALL`. This stops as soon as something counts or picks rows: a `LIMIT`, an aggregate, a window or a join.
+
+Limits of the evidence: the rules are checked by tests with near misses that must not be proved, and by a random run on small DuckDB databases. That shows no difference on those databases, not a proof for every query shape. See the [full reference](../../docs/evals/fuzzing.md) for the exact conditions.
+
