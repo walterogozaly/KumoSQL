@@ -240,5 +240,32 @@ MORE = [
 TEMPLATES += MORE
 
 
+# Templates that need p.tid to be a NOT NULL foreign key to t.id (the schema draws that only now and then, so these
+# cases force it): the foreign-key joins, with the child null-extended by an earlier or later outer join and ON
+# clauses that say more than the key.
+FK_ON = "{p.tid = par.id|p.tid = par.id AND par.x > 0|p.tid = par.x AND p.tid = par.id|p.tid = par.id AND p.tid = par.x|p.tid = par.id AND p.id = par.id|p.tid = par.id AND p.tid = par.id|par.id = p.tid|p.tid = par.id OR par.x = 1}"
+FK_TEMPLATES = [
+    f"SELECT p.id FROM p {{JOIN|LEFT JOIN}} t AS par ON {FK_ON}",
+    f"SELECT p.id, par.x FROM p {{JOIN|LEFT JOIN}} t AS par ON {FK_ON}",
+    f"SELECT p.id FROM t AS par {{JOIN|LEFT JOIN}} p ON {FK_ON}",
+    f"SELECT a.id FROM t AS a {{LEFT JOIN|JOIN}} p ON p.tid = a.id {{JOIN|LEFT JOIN}} t AS par ON {FK_ON}",
+    f"SELECT a.id, par.x FROM t AS a {{LEFT JOIN|JOIN}} p ON p.tid = a.id {{JOIN|LEFT JOIN}} t AS par ON {FK_ON}",
+    f"SELECT a.id FROM p {{RIGHT JOIN|FULL JOIN|LEFT JOIN}} t AS a ON p.tid = a.id JOIN t AS par ON {FK_ON}",
+    f"SELECT a.id FROM t AS a {{LEFT JOIN|JOIN}} p ON p.tid = a.id JOIN t AS par ON {FK_ON} WHERE {{p.id IS NOT NULL|p.tid IS NOT NULL|a.x > 0|p.id IS NULL}}",
+    f"SELECT a.id FROM t AS a LEFT JOIN p ON p.tid = a.id {{RIGHT JOIN|FULL JOIN}} u ON u.k = a.id JOIN t AS par ON {FK_ON}",
+    f"SELECT a.id FROM t AS a LEFT JOIN p ON p.tid = a.id JOIN t AS par ON {FK_ON} {{RIGHT JOIN|FULL JOIN|LEFT JOIN}} u ON u.k = a.id",
+    f"SELECT p.id, COUNT(*) AS c FROM p {{JOIN|LEFT JOIN}} t AS par ON {FK_ON} GROUP BY p.id",
+    f"SELECT par.id, COUNT(p.id) AS c FROM t AS par {{LEFT JOIN|JOIN}} p ON {FK_ON} GROUP BY par.id",
+    f"SELECT p.id FROM p {{JOIN|LEFT JOIN}} t AS par ON {FK_ON} {{JOIN|LEFT JOIN}} t AS par2 ON p.tid = par2.id",
+    f"SELECT p.id FROM p {{LEFT JOIN|JOIN}} (SELECT id, x FROM t {{|WHERE x > 0}}) AS par ON p.tid = par.id",
+    f"SELECT DISTINCT par.id FROM t AS par {{LEFT JOIN|JOIN|RIGHT JOIN}} p ON {FK_ON}",
+]
+
+
 def cases(seed: int, count: int) -> list[dict]:
-    return expand(TEMPLATES, seed, count, "outer_joins")
+    general = expand(TEMPLATES, seed, count - count // 5, "outer_joins")
+    forced = expand(FK_TEMPLATES, seed + 1, count // 5, "outer_joins_fk")
+    for case in forced:
+        case["constraints"]["p"]["foreign_keys"] = [[["tid"], "t", ["id"]]]
+        case["constraints"]["p"]["not_null"] = sorted(set(case["constraints"]["p"]["not_null"]) | {"tid"})
+    return general + forced
