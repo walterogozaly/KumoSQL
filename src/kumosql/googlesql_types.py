@@ -1501,13 +1501,22 @@ def supertype(ts: list[T]) -> T | None:
         if candidates is None:
             return None
         for candidate in candidates:  # most specific first
-            if all(coercible(lit, candidate) for lit in literals):
+            if _allowed_supertype(candidate, typed) and all(coercible(lit, candidate) for lit in literals):
                 return T(candidate)
         return None
     candidates = _common_supertypes([t.type for t in literals])
+    candidates = [c for c in candidates or [] if _allowed_supertype(c, typed)]
     if not candidates:
         return None
     return T(candidates[0])
+
+
+def _allowed_supertype(candidate: GType, inputs: list[T]) -> bool:
+    """GoogleSQL (``GetCommonSuperTypeImpl``) accepts FLOAT64 as a supertype only when an input is floating point
+    (a float literal counts), NUMERIC only when an input is NUMERIC, BIGNUMERIC only when one is BIGNUMERIC."""
+
+    required = {"FLOAT64": {"FLOAT32", "FLOAT64"}, "NUMERIC": {"NUMERIC"}, "BIGNUMERIC": {"BIGNUMERIC"}}.get(candidate.kind)
+    return required is None or any(t.type.kind in required for t in inputs)
 
 
 def _common_supertypes(types: list[GType]) -> list[GType] | None:
