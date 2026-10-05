@@ -248,3 +248,49 @@ def test_a_timestamp_shift_runs_in_duckdb_whichever_sqlglot_prints_it(call, expe
     db.execute("INSERT INTO t VALUES (TIMESTAMP '2020-01-01 00:00:00')")
     sql = spell_for_duckdb(sqlglot.parse_one(f"SELECT {call} AS v FROM t", read="bigquery")).sql(dialect="duckdb")
     assert str(db.execute(sql).fetchall()[0][0]) == expected
+
+
+def nested_schema():
+    # a column the encoding does not model (ARRAY or STRUCT), as schema_from_bigquery marks a REPEATED or RECORD field
+    return be.schema_from_bigquery([("p", "d", "t", {"schema": [
+        {"name": "id", "type": "INTEGER"},
+        {"name": "tags", "type": "STRING", "mode": "REPEATED"},
+        {"name": "info", "type": "RECORD", "fields": [{"name": "k", "type": "STRING"}]},
+    ]})])
+
+
+def nested_check(left, right):
+    return check_bounded(left, right, nested_schema(), rows=3, dialect="bigquery")
+
+
+@pytest.mark.parametrize("left,right", [
+    # the two queries differ only in the nested cells that SELECT * carries (rows with the same id hold different arrays)
+    ("select x.* from p.d.t x join p.d.t y on x.id = y.id", "select y.* from p.d.t x join p.d.t y on x.id = y.id"),
+    ("select x.* from p.d.t x left join p.d.t y on x.id = y.id and y.id > 1", "select y.* from p.d.t x left join p.d.t y on x.id = y.id and y.id > 1"),
+    # even two queries that read the same cells cannot be compared: the encoding carries no value for them
+    ("select * from p.d.t where id > 1", "select * from p.d.t where id > 1"),
+])
+def test_nested_cells_reached_through_star_are_never_a_proof_of_equality(left, right):
+    result = nested_check(left, right)
+    assert result.status is BoundedStatus.UNKNOWN
+    assert result.reason.startswith("unsupported")
+
+
+def test_a_difference_in_the_modeled_columns_is_still_refuted_through_star():
+    # the counterexample is replayed on a real database, where the nested cells are NULL on both sides
+    result = nested_check("select distinct * from p.d.t", "select * from p.d.t")
+    assert result.status is BoundedStatus.DIFFERENT
+    result = nested_check("select * from p.d.t where id > 1", "select * from p.d.t where id > 2")
+    assert result.status is BoundedStatus.DIFFERENT
+
+
+def test_nested_cells_that_are_not_part_of_the_output_do_not_block_a_verdict():
+    same = nested_check("select id from (select * from p.d.t) where id > 1", "select id from p.d.t where id >= 2")
+    assert same.status is BoundedStatus.BOUNDED_EQUIVALENT
+    different = nested_check("select id from (select * from p.d.t) where id > 1", "select id from p.d.t where id >= 1")
+    assert different.status is BoundedStatus.DIFFERENT
+
+
+def test_reading_a_nested_column_in_an_expression_is_unknown():
+    assert nested_check("select id from p.d.t where array_length(tags) > 0", "select id from p.d.t").status is BoundedStatus.UNKNOWN
+    assert nested_check("select id from p.d.t where info.k = 'a'", "select id from p.d.t").status is BoundedStatus.UNKNOWN

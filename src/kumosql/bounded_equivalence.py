@@ -35,6 +35,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from decimal import Decimal
+from contextvars import ContextVar
 from enum import Enum
 from fractions import Fraction
 from typing import Callable, Mapping, Sequence
@@ -290,7 +291,7 @@ def _sort(kind: str):
 
 
 def _default(kind: str):
-    return {
+    table = {
         "int": z3.IntVal(0),
         "date": z3.IntVal(0),
         "time": z3.IntVal(0),
@@ -299,7 +300,10 @@ def _default(kind: str):
         "str": z3.StringVal(""),
         "bool": z3.BoolVal(False),
         "null": z3.IntVal(0),
-    }[kind]
+    }
+    if kind not in table:
+        raise Unsupported(f"type {kind}")  # e.g. a column the encoding does not model, padded with NULL by an outer join
+    return table[kind]
 
 
 @dataclass(frozen=True)
@@ -416,12 +420,23 @@ def unify(a: V, b: V) -> tuple[V, V]:
     raise Unsupported(f"cannot compare {a.kind} with {b.kind}")
 
 
+_opaque_compared: ContextVar[list | None] = ContextVar("opaque_compared", default=None)
+
+
 def same(a: V, b: V):
     """Null-safe equality (NULLs equal each other): row identity for DISTINCT, GROUP BY and bags."""
 
     a, b = unify(a, b)
     if a.kind == "null":
         return _true()
+    if a.kind == "unsupported":
+        # A cell of a column the encoding does not model (ARRAY, STRUCT, BYTES, JSON...) carries no value, so the two
+        # cells are read as equal. That can only hide a difference, never invent one: a counterexample is still
+        # replayed on a real database, but "no counterexample" is no longer an answer (see _opaque_compared).
+        log = _opaque_compared.get()
+        if log is None:
+            raise Unsupported("comparing a column whose type is not modeled")
+        log.append(True)
     return z3.Or(z3.And(a.null, b.null), z3.And(z3.Not(a.null), z3.Not(b.null), a.val == b.val))
 
 
@@ -2212,6 +2227,8 @@ def _check_bounded(
     done = 0
     unconfirmed = 0
     restrictions: list[str] = []
+    opaque: list = []  # filled when the encoding compared cells it has no value for (see ``same``)
+    opaque_token = _opaque_compared.set(opaque)
     try:
         if replay is None:
             from .bigquery_on_duckdb import Unfaithful
@@ -2223,6 +2240,7 @@ def _check_bounded(
         for bound in range(start, rows + 1):
             outcome = None
             for attempt in range(3):
+                opaque.clear()
                 database = SymbolicDatabase(schema, bound, restrict=restrictions)
                 compiler = Compiler(database, dialect, nulls_first=nulls_first, group_constants=group_constants)
                 left = compiler.compile(left_sql)
@@ -2233,6 +2251,8 @@ def _check_bounded(
                 solver.add(bag_difference(left, right))
                 verdict = solver.check()
                 if verdict == z3.unsat:
+                    if opaque:
+                        raise Unsupported("comparing a column whose type is not modeled (ARRAY, STRUCT, BYTES, JSON)")
                     outcome = "same"
                     break
                 if verdict != z3.sat:
@@ -2265,6 +2285,8 @@ def _check_bounded(
         return BoundedResult(BoundedStatus.UNKNOWN, f"parse error: {str(error)[:80]}", 0, None, time.time() - began)
     except RecursionError:
         return BoundedResult(BoundedStatus.UNKNOWN, "query too deeply nested", 0, None, time.time() - began)
+    finally:
+        _opaque_compared.reset(opaque_token)
 
 
 @serialized

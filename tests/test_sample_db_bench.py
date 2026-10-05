@@ -34,9 +34,9 @@ DATABASE_FLOORS = {
     "oracle_co": {"proven": 18, "refuted": 27},
 }
 # Siblings the bounded checker cannot decide: Oracle CO's stores has a BYTES column (logo) and the checker has no NULL
-# padding for that type in a LEFT JOIN, so it raises KeyError (a crash is counted as unknown, not as a refutation).
+# padding for that type in a LEFT JOIN, so it answers unknown (never a refutation).
 UNDECIDED_SIBLINGS = {
-    "co-left-join-elimination-without-key": "bounded checker crashed: KeyError"
+    "co-left-join-elimination-without-key": "no row-preserving mapping between the queries was found"
 }
 # workload queries the pipeline and lift_subqueries change; upstream and authored, both databases
 SUBSET = {

@@ -72,11 +72,71 @@ def cache_tag() -> str:
     return "fetch" if enabled() else "nofetch"
 
 
-def _column_type(field: dict) -> str:
+_PLAIN_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*$")
+_RESERVED = frozenset(
+    "ALL AND ANY ARRAY AS ASC ASSERT_ROWS_MODIFIED AT BETWEEN BY CASE CAST COLLATE CONTAINS CREATE CROSS CUBE "
+    "CURRENT DEFAULT DEFINE DESC DISTINCT ELSE END ENUM ESCAPE EXCEPT EXCLUDE EXISTS EXTRACT FALSE FETCH FOLLOWING "
+    "FOR FROM FULL GROUP GROUPING GROUPS HASH HAVING IF IGNORE IN INNER INTERSECT INTERVAL INTO IS JOIN LATERAL LEFT "
+    "LIKE LIMIT LOOKUP MERGE NATURAL NEW NO NOT NULL NULLS OF ON OR ORDER OUTER OVER PARTITION PRECEDING PROTO RANGE "
+    "RECURSIVE RESPECT RIGHT ROLLUP ROWS SELECT SET SOME STRUCT TABLESAMPLE THEN TO TREAT TRUE UNBOUNDED UNION UNNEST "
+    "USING WHEN WHERE WINDOW WITH WITHIN".split()
+)
+
+
+def _field_name(name: str) -> str:
+    """A STRUCT field name as BigQuery spells it: backticked unless it is a plain, unreserved identifier."""
+
+    if _PLAIN_NAME.match(name) and name.upper() not in _RESERVED:
+        return name
+    return "`" + name.replace("\\", "\\\\").replace("`", "\\`") + "`"
+
+
+def _base_type(field: dict) -> str | None:
+    """The type of one schema field ignoring its mode, as a BigQuery type string; None when it cannot be spelled."""
+
     kind = str(field.get("type") or "").upper()
     kind = _TYPES.get(kind, kind)
-    if str(field.get("mode") or "").upper() == "REPEATED":
-        kind = f"ARRAY<{kind}>" if kind and kind != "STRUCT" else "ARRAY"
+    if not kind:
+        return None
+    if kind == "STRUCT":
+        children = field.get("fields")
+        if not children:
+            return "STRUCT"  # a record whose fields the metadata does not list
+        parts = []
+        for child in children:
+            name = child.get("name") if isinstance(child, dict) else None
+            inner = _field_type(child) if name else None
+            if inner is None:
+                return None  # one field that cannot be spelled makes the whole record unknown: nothing is guessed
+            parts.append(f"{_field_name(str(name))} {inner}")
+        return f"STRUCT<{', '.join(parts)}>"
+    if kind == "RANGE":
+        element = field.get("rangeElementType")
+        inner = _base_type({"type": element.get("type")}) if isinstance(element, dict) else None
+        return f"RANGE<{inner}>" if inner else None
+    return kind
+
+
+def _field_type(field: dict) -> str | None:
+    """The type of a schema field with its mode: ``REPEATED`` wraps it in ``ARRAY<...>``."""
+
+    kind = _base_type(field)
+    if kind is None:
+        return None
+    return f"ARRAY<{kind}>" if str(field.get("mode") or "").upper() == "REPEATED" else kind
+
+
+def _column_type(field: dict) -> str:
+    """A column's BigQuery type string, nested types included, e.g. ``ARRAY<STRUCT<k STRING, v INT64>>``.
+
+    ``field`` is one entry of a BigQuery table schema (``name``, ``type``, ``mode``, nested ``fields``). A
+    REPEATED field is an ARRAY of its type; a RECORD is a STRUCT of its fields, recursively. ``UNKNOWN`` when the
+    type is missing or a part of it cannot be read.
+    """
+
+    if not isinstance(field, dict):
+        return "UNKNOWN"
+    kind = _field_type(field)
     if not kind:
         return "UNKNOWN"
     try:

@@ -103,7 +103,7 @@ Provers, in order: the structural prover (`prove_equivalent`), the algebraic/SMT
 Unknown (6):
 
 - not proved: the nullable-foreign-key join read as `WHERE fk IS NOT NULL` (Chinook and Northwind; "no row-preserving mapping"), the window filter on the partition column, and the UNION ALL of two complementary filters on a NOT NULL column ("UNION shapes differ");
-- not refuted: `nw-filter-vs-conditional-count` (its witness needs a category whose products are all discontinued) and `nw-self-left-join-to-reports`, where the bounded checker raises `KeyError: 'unsupported'` (`Employees` has a `BYTES` column, and the LEFT JOIN's NULL padding has no default for that type; a crash is counted as unknown). `ch-filter-vs-conditional-count` is refuted in the latest run; the executed counterexample search is time-limited and ran out in the first recorded run on a machine with a load average above 20.
+- not refuted: `nw-filter-vs-conditional-count` (its witness needs a category whose products are all discontinued) and `nw-self-left-join-to-reports`, where the bounded checker used to raise `KeyError: 'unsupported'` (`Employees` has a `BYTES` column, and the LEFT JOIN's NULL padding has no default for that type; the crash was counted as unknown, and it now answers unknown with the reason "unsupported type"). `ch-filter-vs-conditional-count` is refuted in the latest run; the executed counterexample search is time-limited and ran out in the first recorded run on a machine with a load average above 20.
 
 ## Sakila
 

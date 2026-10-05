@@ -274,3 +274,87 @@ def test_cli_flag_is_the_opt_in(monkeypatch, tmp_path):
     monkeypatch.delenv("KUMOSQL_SCHEMA_FETCH")
     assert pipeline_main([str(tmp_path), "--fetch-schema", "-o", str(tmp_path / "r.json")]) == 0
     assert schema_fetch.enabled() is True
+
+
+def _col(name, kind, mode="NULLABLE", fields=None):
+    field = {"name": name, "type": kind, "mode": mode}
+    if fields is not None:
+        field["fields"] = fields
+    return field
+
+
+@pytest.mark.parametrize("field,expected", [
+    (_col("a", "INTEGER"), "INT64"),
+    (_col("a", "FLOAT"), "FLOAT64"),
+    (_col("a", "BOOLEAN", "REQUIRED"), "BOOL"),
+    (_col("a", "STRING", "REPEATED"), "ARRAY<STRING>"),
+    (_col("a", "INTEGER", "REPEATED"), "ARRAY<INT64>"),
+    (_col("a", "INT64", "REPEATED"), "ARRAY<INT64>"),
+    (_col("a", "TIMESTAMP", "repeated"), "ARRAY<TIMESTAMP>"),
+    (_col("a", "RECORD", fields=[_col("x", "INTEGER"), _col("y", "STRING", "REQUIRED")]), "STRUCT<x INT64, y STRING>"),
+    (_col("a", "STRUCT", fields=[_col("x", "FLOAT")]), "STRUCT<x FLOAT64>"),
+    # REPEATED RECORD: an array of structs, element type kept
+    (_col("a", "RECORD", "REPEATED", [_col("k", "STRING"), _col("v", "INTEGER")]), "ARRAY<STRUCT<k STRING, v INT64>>"),
+    # the GA4 shape: a struct inside a repeated record
+    (
+        _col("event_params", "RECORD", "REPEATED", [
+            _col("key", "STRING"),
+            _col("value", "RECORD", fields=[_col("string_value", "STRING"), _col("int_value", "INTEGER")]),
+        ]),
+        "ARRAY<STRUCT<key STRING, value STRUCT<string_value STRING, int_value INT64>>>",
+    ),
+    # an array inside a struct
+    (_col("a", "RECORD", fields=[_col("tags", "STRING", "REPEATED"), _col("n", "INTEGER")]), "STRUCT<tags ARRAY<STRING>, n INT64>"),
+    # three levels, arrays at two of them
+    (
+        _col("a", "RECORD", "REPEATED", [_col("b", "RECORD", fields=[_col("c", "FLOAT", "REPEATED")])]),
+        "ARRAY<STRUCT<b STRUCT<c ARRAY<FLOAT64>>>>",
+    ),
+    # field names that need quoting
+    (_col("a", "RECORD", fields=[_col("select", "INTEGER"), _col("two words", "STRING"), _col("1st", "STRING")]), "STRUCT<`select` INT64, `two words` STRING, `1st` STRING>"),
+    # a record the metadata lists no fields for
+    (_col("a", "RECORD"), "STRUCT"),
+    (_col("a", "RECORD", "REPEATED"), "ARRAY<STRUCT>"),
+    # a part that cannot be read makes the whole type unknown
+    (_col("a", "RECORD", fields=[_col("x", "INTEGER"), {"name": "y"}]), "UNKNOWN"),
+    (_col("a", "RECORD", fields=[{"type": "INTEGER"}]), "UNKNOWN"),
+    (_col("a", "RECORD", "REPEATED", [_col("x", "")]), "UNKNOWN"),
+    ({"name": "a"}, "UNKNOWN"),
+])
+def test_column_type_spells_nested_types_the_way_bigquery_does(field, expected):
+    assert schema_fetch._column_type(field) == expected
+
+
+def test_nested_type_strings_parse_back_as_nested_types():
+    import sqlglot
+
+    field = _col("p", "RECORD", "REPEATED", [_col("k", "STRING"), _col("v", "RECORD", fields=[_col("s", "STRING"), _col("i", "INTEGER", "REPEATED")])])
+    kind = sqlglot.exp.DataType.build(schema_fetch._column_type(field), dialect="bigquery")
+    assert kind.this == sqlglot.exp.DataType.Type.ARRAY
+    (struct,) = kind.expressions
+    assert struct.this == sqlglot.exp.DataType.Type.STRUCT
+    assert [c.name for c in struct.expressions] == ["k", "v"]
+    assert schema_fetch._column_type(field) == kind.sql("bigquery")  # round trip: the string is canonical
+
+
+def test_columns_of_keeps_nested_types():
+    metadata = {"schema": [
+        _col("id", "INTEGER", "REQUIRED"),
+        _col("params", "RECORD", "REPEATED", [_col("key", "STRING"), _col("value", "RECORD", fields=[_col("n", "INTEGER")])]),
+        _col("user", "RECORD", fields=[_col("tags", "STRING", "REPEATED")]),
+    ]}
+    assert schema_fetch.columns_of(metadata) == {
+        "id": "INT64",
+        "params": "ARRAY<STRUCT<key STRING, value STRUCT<n INT64>>>",
+        "user": "STRUCT<tags ARRAY<STRING>>",
+    }
+
+
+def test_nested_columns_come_through_a_fetch(monkeypatch):
+    monkeypatch.setenv("KUMOSQL_SCHEMA_FETCH", "1")
+    monkeypatch.setattr(bigquery_catalog, "_token_cached", lambda: "token")
+    monkeypatch.setattr(bigquery_catalog, "get_table", lambda project, dataset, table: {"id": table, "schema": [
+        _col("id", "INTEGER"), _col("e", "RECORD", "REPEATED", [_col("k", "STRING"), _col("v", "RECORD", fields=[_col("s", "STRING")])]),
+    ]})
+    schema, _ = schema_fetch.resolve(["p.ext.events"])
+    assert schema == {"p.ext.events": {"id": "INT64", "e": "ARRAY<STRUCT<k STRING, v STRUCT<s STRING>>>"}}
