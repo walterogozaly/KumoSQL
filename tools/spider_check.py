@@ -67,6 +67,18 @@ def differs(schema: spider_data.Schema, sql1: str, sql2: str, **options) -> str:
     )
 
 
+def prove(schema: spider_data.Schema, sql1: str, sql2: str) -> bool:
+    """The algebraic prover's proof under Spider's comparison: no keys, lists under ORDER BY, no text-number comparisons."""
+
+    if solver.mixed_type_comparison(sql1, schema.tables) or solver.mixed_type_comparison(sql2, schema.tables):
+        return False
+    if solver.ordered(sql1):
+        if not solver.ordered(sql2):
+            return False
+        sql1, sql2 = solver.for_prover(sql1), solver.for_prover(sql2)
+    return solver.prove(sql1, sql2, schema.tables) == "proven"
+
+
 def refute(schema: spider_data.Schema, sql1: str, sql2: str, witness: dict | None = None) -> str:
     """"differs" (random), "targeted", "bounded", "agree" or "error"; the database goes into ``witness``."""
 
