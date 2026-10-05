@@ -91,17 +91,24 @@ class Term:
 class Ctx:
     """What normalization may assume: declared constraints and the tuples known to be in their table."""
 
-    def __init__(self, catalog: Catalog, exact: bool, known: frozenset = frozenset(), cache: dict | None = None):
+    def __init__(self, catalog: Catalog, exact: bool, known: frozenset = frozenset(), cache: dict | None = None, facts: tuple = ()):
         self.catalog = catalog
         self.exact = exact
         self.known = known
         self.cache = cache if cache is not None else {}
+        self.facts = facts  # conditions on scalar variables that hold wherever an inner term is evaluated
 
     def with_known(self, more) -> "Ctx":
         more = frozenset(more)
         if more <= self.known:
             return self
-        return Ctx(self.catalog, self.exact, self.known | more, self.cache)
+        return Ctx(self.catalog, self.exact, self.known | more, self.cache, self.facts)
+
+    def with_facts(self, more) -> "Ctx":
+        more = tuple(f for f in more if f not in self.facts)
+        if not more:
+            return self
+        return Ctx(self.catalog, self.exact, self.known, self.cache, self.facts + more)
 
 
 MAX_TERMS = 4000
@@ -274,7 +281,7 @@ def simplify_term(t: Term, ctx: Ctx) -> list:
             if isinstance(f, NInd):
                 conjs.extend(_conjuncts(f.f))
         members = {c.tup for c in conjs if isinstance(c, InRel)}
-        inner = ctx.with_known(known | members)
+        inner = ctx.with_known(known | members).with_facts(c for c in conjs if _scalar_fact(c))
         # 1. simplify the conditions (a membership condition is not used to simplify itself)
         new_conjs = []
         for c in conjs:
@@ -285,7 +292,7 @@ def simplify_term(t: Term, ctx: Ctx) -> list:
             if s == FALSE:
                 return []
             new_conjs.extend(_conjuncts(s))
-        new_conjs = _dedup(new_conjs)
+        new_conjs = _dedup(new_conjs + _propagated_facts(new_conjs, t, inner))
         others = []
         for f in t.factors:
             if isinstance(f, NInd):
@@ -332,6 +339,46 @@ def simplify_term(t: Term, ctx: Ctx) -> list:
         if isinstance(v, SVar) and not any(v in free_vars(f) for f in t.factors):
             raise Unsupported("an unconstrained scalar variable (an infinite sum)")
     return [Term(_ordered_vars(t), t.coef, t.factors)]
+
+
+def _scalar_fact(c) -> bool:
+    """A comparison of one scalar variable with constants (no tuple variable, no inner term)."""
+
+    if not isinstance(c, (Cmp, IsNull, Not)):
+        return False
+    fv = free_vars(c)
+    if len(fv) != 1 or not isinstance(next(iter(fv)), SVar):
+        return False
+    return not any(isinstance(x, (Exists, Agg, Scalar, Gt)) for x in walk(c))
+
+
+def _propagated_facts(conjs: list, t: Term, ctx: Ctx) -> list:
+    """Conditions on an outside value ``o`` rewritten onto the inside value ``e`` it equals.
+
+    An inner term inside ``[o > c]·...`` sees ``[o = e]·[o > c]``, which implies ``[e > c]``; stating it
+    inside lets ``Σx.[o = x.k]·R(x)`` under ``[o > c]`` and ``Σx.[x.k > c]·[o = x.k]·R(x)`` agree.
+    """
+
+    if not ctx.facts:
+        return []
+    bound = set(t.vars)
+    out = []
+    for c in conjs:
+        if isinstance(c, Same):
+            pairs = [(c.a, c.b), (c.b, c.a)]
+        elif isinstance(c, Cmp) and c.op == "=":
+            pairs = [(c.a, c.b), (c.b, c.a)]
+        else:
+            continue
+        for o, e in pairs:
+            if not isinstance(o, Ref) or o.var in bound or o.var in free_vars(e) or not (free_vars(e) & bound):
+                continue
+            for f in ctx.facts:
+                if free_vars(f) == {o.var}:
+                    g = simplify_formula(subst(f, {o.var: e}), ctx)
+                    if g != TRUE:
+                        out.extend(_conjuncts(g))
+    return out
 
 
 def _ordered_vars(t: Term) -> tuple:
@@ -730,7 +777,7 @@ def _canonical_agg(v: Agg, ctx: Ctx):
 
     from .ir import fresh_id, nmul
 
-    key = ("agg", v, ctx.known)
+    key = ("agg", v, ctx.known, ctx.facts)
     hit = ctx.cache.get(key)
     if hit is not None:
         return hit
@@ -760,7 +807,7 @@ def _mul(a, b):
 def exists_formula(term, ctx: Ctx):
     """``term > 0`` for a multiplicity term, as a formula."""
 
-    key = ("exists", term, ctx.known)
+    key = ("exists", term, ctx.known, ctx.facts)
     hit = ctx.cache.get(key)
     if hit is not None:
         return hit
@@ -773,7 +820,7 @@ def exists_formula(term, ctx: Ctx):
     result = disj(*parts)
     ctx.cache[key] = result
     if isinstance(result, Exists):
-        ctx.cache[("exists", result.term, ctx.known)] = result
+        ctx.cache[("exists", result.term, ctx.known, ctx.facts)] = result
     return result
 
 

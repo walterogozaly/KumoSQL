@@ -51,3 +51,15 @@ def test_average_is_sum_over_count_of_a_keyed_column():
         "SELECT name, AVG(deptno) FROM dept GROUP BY name",
         "SELECT name, SUM(deptno) / COUNT(*) + 1 FROM dept GROUP BY name",
     )
+
+
+def test_having_on_a_group_key_is_the_same_as_filtering_before_grouping():
+    # the condition on the group key reaches the rows through the group equality
+    assert proves(
+        "SELECT name FROM dept WHERE name > 'b' GROUP BY name HAVING name > 'c' AND (COUNT(*) > 3 OR name < 'z')",
+        "SELECT t.name FROM (SELECT name FROM dept WHERE name > 'b') AS t WHERE t.name > 'c' GROUP BY t.name HAVING COUNT(*) > 3 OR t.name < 'z'",
+    )
+    assert not proves(
+        "SELECT name FROM dept WHERE name > 'b' GROUP BY name HAVING name > 'c' AND (COUNT(*) > 3 OR name < 'z')",
+        "SELECT t.name FROM (SELECT name FROM dept WHERE name > 'b') AS t WHERE t.name > 'd' GROUP BY t.name HAVING COUNT(*) > 3 OR t.name < 'z'",
+    )
