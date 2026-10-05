@@ -94,6 +94,7 @@ class Ctx:
         self.exact = exact
         self.known = known
         self.cache = cache if cache is not None else {}
+        self.has_truths = any(isinstance(k, tuple) and k[0] == "true" for k in known)
 
     def with_known(self, more) -> "Ctx":
         more = frozenset(more)
@@ -264,6 +265,7 @@ def _conjuncts(f) -> list:
 def simplify_term(t: Term, ctx: Ctx) -> list:
     """The term after substitution, key elimination and formula simplification (``[]`` if 0)."""
 
+    passes = 0
     for _ in range(64):
         rels = [f for f in t.factors if isinstance(f, NRel)]
         known = {f.tup for f in rels}
@@ -272,18 +274,30 @@ def simplify_term(t: Term, ctx: Ctx) -> list:
             if isinstance(f, NInd):
                 conjs.extend(_conjuncts(f.f))
         members = {c.tup for c in conjs if isinstance(c, InRel)}
-        inner = ctx.with_known(known | members)
-        # 1. simplify the conditions (a membership condition is not used to simplify itself)
+        nonnull = {_NN(c.a.a) for c in conjs if isinstance(c, Not) and isinstance(c.a, IsNull)}
+        truths = {
+            _TRUE(c) for c in conjs if isinstance(c, (Exists, Or, Gt)) or (isinstance(c, Not) and not isinstance(c.a, IsNull))
+        }
+        inner = ctx.with_known(known | members | nonnull | truths)
+        # 1. simplify the conditions (a membership, non-NULL or other condition that nested
+        # subterms may assume is not used to simplify itself)
         new_conjs = []
         for c in conjs:
             if isinstance(c, InRel) and c.tup not in known and c.tup not in ctx.known:
-                s = simplify_formula(c, ctx.with_known(known | (members - {c.tup})))
+                s = simplify_formula(c, ctx.with_known(known | (members - {c.tup}) | nonnull | truths))
+            elif isinstance(c, Not) and isinstance(c.a, IsNull):
+                s = simplify_formula(c, ctx.with_known(known | members | (nonnull - {_NN(c.a.a)}) | truths))
+            elif _TRUE(c) in truths:
+                s = simplify_formula(c, ctx.with_known(known | members | nonnull | (truths - {_TRUE(c)})))
             else:
                 s = simplify_formula(c, inner)
             if s == FALSE:
                 return []
             new_conjs.extend(_conjuncts(s))
         new_conjs = _dedup(new_conjs)
+        propagated = _propagate_equalities(new_conjs, set(t.vars))
+        if propagated is not None:
+            new_conjs = propagated
         others = []
         for f in t.factors:
             if isinstance(f, NInd):
@@ -320,11 +334,26 @@ def simplify_term(t: Term, ctx: Ctx) -> list:
         if changed is not None:
             t = changed
             continue
+        # 4. conditions simplified against each other: once more, until they settle
+        if passes < 3 and not _settled(new_conjs, conjs):
+            passes += 1
+            continue
         break
     for v in t.vars:
         if isinstance(v, SVar) and not any(v in free_vars(f) for f in t.factors):
             raise Unsupported("an unconstrained scalar variable (an infinite sum)")
     return [Term(_ordered_vars(t), t.coef, t.factors)]
+
+
+def _settled(new: list, old: list) -> bool:
+    """The conditions did not change (an aggregate's bound variables are renamed on every pass, so
+    compare up to those names)."""
+
+    if set(new) == set(old):
+        return True
+    from .canon import canon
+
+    return {canon(c) for c in new} == {canon(c) for c in old}
 
 
 def _ordered_vars(t: Term) -> tuple:
@@ -406,7 +435,9 @@ def _equalities(conjs: list) -> dict:
 
 
 def _eliminate_keyed(t: Term, ctx: Ctx) -> Term | None:
-    tvars = [v for v in t.vars if isinstance(v, TVar)]
+    # eliminate in table-name order, so that two joins of the same rows through different keys
+    # (``e.empno = d.deptno`` with both sides keyed) reach one form whichever side was written first
+    tvars = sorted((v for v in t.vars if isinstance(v, TVar)), key=lambda v: v.table)
     if not tvars:
         return None
     conjs = [f.f for f in t.factors if isinstance(f, NInd)]
@@ -473,6 +504,22 @@ def _tuple_mentions(tup, y) -> bool:
 
 
 def simplify_formula(f, ctx: Ctx):
+    result = _simplify_formula(f, ctx)
+    if ctx.has_truths:
+        if isinstance(result, And):
+            return conj(*[a for a in result.args if not _is_known(a, ctx)])
+        if _is_known(result, ctx):
+            return TRUE
+    return result
+
+
+def _is_known(f, ctx: Ctx) -> bool:
+    if isinstance(f, Not) and isinstance(f.a, IsNull):
+        return _NN(f.a.a) in ctx.known
+    return isinstance(f, (Exists, Or, Gt, Not)) and _TRUE(f) in ctx.known
+
+
+def _simplify_formula(f, ctx: Ctx):
     if isinstance(f, FConst):
         return f
     if isinstance(f, And):
@@ -480,7 +527,10 @@ def simplify_formula(f, ctx: Ctx):
     if isinstance(f, Or):
         return disj(*[simplify_formula(a, ctx) for a in f.args])
     if isinstance(f, Not):
-        return neg(simplify_formula(f.a, ctx))
+        inner = simplify_formula(f.a, ctx)
+        if isinstance(inner, Cmp) and _never_null(inner.a, ctx) and _never_null(inner.b, ctx):
+            return Cmp(_NEGATED_CMP[inner.op], inner.a, inner.b)
+        return neg(inner)
     if isinstance(f, IsNull):
         v = simplify_value(f.a, ctx)
         return _is_null(v, ctx)
@@ -581,7 +631,62 @@ def _fold_cmp(op, a, b):
     return TRUE if res else FALSE
 
 
+def _TRUE(f) -> tuple:
+    """The marker in ``Ctx.known`` for a condition that holds wherever the enclosing product is non-zero
+    (up to the names of its bound variables)."""
+
+    from .canon import canon
+
+    return ("true", canon(f))
+
+
+def _propagate_equalities(conjs: list, bound: set):
+    """The conditions with each bound column that equals an outside value replaced by that value
+    (``[s = y.a]·[∃z (z.b = y.a)]`` becomes ``[s = y.a]·[∃z (z.b = s)]``); ``None`` if nothing changes."""
+
+    eq = _equalities(conjs)
+    if not eq:
+        return None
+    mapping = {}
+    seen = set()
+    for members in eq.values():
+        if id(members) in seen:
+            continue
+        seen.add(id(members))
+        outer = [m for m in members if not _bound_in(m, bound)]
+        if not outer:
+            continue
+        outer.sort(key=lambda m: (0 if isinstance(m, Lit) and m.value is not None else 1 if isinstance(m, Ref) else 2, repr(m)))
+        if isinstance(outer[0], Lit) and outer[0].value is None:
+            continue
+        for m in members:
+            if isinstance(m, Col) and _bound_in(m, bound):
+                mapping[m] = outer[0]
+    if not mapping:
+        return None
+    from .ir import replace
+
+    out = []
+    for c in conjs:
+        if (isinstance(c, Same) or (isinstance(c, Cmp) and c.op == "=")) and c.a in eq and c.b in eq and eq[c.a] is eq[c.b]:
+            out.append(c)
+        else:
+            out.append(replace(c, mapping))
+    return None if out == conjs else _dedup(out)
+
+
+_NEGATED_CMP = {"=": "<>", "<>": "=", "<": ">=", "<=": ">", ">": "<=", ">=": "<"}
+
+
+def _NN(v) -> tuple:
+    """The marker in ``Ctx.known`` for a value that an enclosing condition makes non-NULL."""
+
+    return ("non-null", v)
+
+
 def _never_null(v, ctx: Ctx) -> bool:
+    if _NN(v) in ctx.known:
+        return True
     if isinstance(v, Lit):
         return v.value is not None
     if isinstance(v, Col):
@@ -684,6 +789,9 @@ def _empty_aggregate(v: Agg):
     return Lit(None, None)
 
 
+_DISTINCT_AS_SQUASH = frozenset({"COUNT", "SUM", "AVG", "MIN", "MAX"})
+
+
 def _canonical_agg(v: Agg, ctx: Ctx):
     """The aggregate over its bag of argument values.
 
@@ -705,7 +813,14 @@ def _canonical_agg(v: Agg, ctx: Ctx):
         w = SVar(fresh_id(), None)
         body = nmul(v.body, NInd(Same(Ref(w), v.arg)))
         terms = normalize(NSum(tuple(v.vars), body) if v.vars else body, ctx)
-        result = _empty_aggregate(v) if not terms else Agg(v.func, v.distinct, (w,), rebuild(terms), Ref(w))
+        if not terms:
+            result = _empty_aggregate(v)
+        elif v.distinct and v.func in _DISTINCT_AS_SQUASH:
+            # F(DISTINCT w | V(w)) = F(w | [∃ V(w)]): each value counted once, which is the squashed bag
+            squashed = exists_formula(rebuild(terms), ctx)
+            result = Agg(v.func, False, (w,), rebuild(normalize(NInd(squashed), ctx)), Ref(w))
+        else:
+            result = Agg(v.func, v.distinct, (w,), rebuild(terms), Ref(w))
     ctx.cache[key] = result
     return result
 
@@ -733,12 +848,35 @@ def exists_formula(term, ctx: Ctx):
     for t in terms:
         if t.coef < 0:
             raise Unsupported("existence of a signed term")
-        parts.append(_exists_term(t, ctx))
+        for u in _flatten_exists(t, ctx):
+            parts.append(_exists_term(u, ctx))
     result = disj(*parts)
     ctx.cache[key] = result
     if isinstance(result, Exists):
         ctx.cache[("exists", result.term, ctx.known)] = result
     return result
+
+
+def _flatten_exists(t: Term, ctx: Ctx, depth: int = 0) -> list:
+    """The terms equal to ``t`` as far as existence goes, with a nested ``∃`` merged into it.
+
+    ``∃x (A·[∃y B])`` holds exactly when ``∃x,y (A·B)`` does, so inside an existence test a nested
+    ``∃`` over a single product is just more summed variables (and may now eliminate some).
+    """
+
+    if depth < 8:
+        for f in t.factors:
+            if not (isinstance(f, NInd) and isinstance(f.f, Exists)):
+                continue
+            sub = normalize(f.f.term, ctx)
+            if len(sub) != 1 or sub[0].coef < 0 or not all(isinstance(g, (NRel, NInd)) for g in sub[0].factors):
+                continue
+            rest = Term(t.vars, t.coef, tuple(g for g in t.factors if g is not f))
+            out = []
+            for u in simplify_term(product(rest, sub[0]), ctx):
+                out.extend(_flatten_exists(u, ctx, depth + 1))
+            return out
+    return [t]
 
 
 def _exists_term(t: Term, ctx: Ctx):
@@ -764,11 +902,103 @@ def _exists_term(t: Term, ctx: Ctx):
         else:
             outside.append(p)
     body_factors = tuple(NRel(f.tup) for f in t.factors if isinstance(f, NRel) and (f.tup in bound or _tuple_bound(f.tup, bound)))
-    inner_conds = [p for p in inside if not (isinstance(p, InRel) and any(NRel(p.tup) == r for r in body_factors))]
     from .ir import nmul, nsum
 
-    inner = nsum(t.vars, nmul(*body_factors, *[NInd(c) for c in inner_conds]))
-    return conj(*outside, Exists(inner))
+    extra, inside = _pull_equalities(inside, bound)
+    inner_conds = [p for p in inside if not (isinstance(p, InRel) and any(NRel(p.tup) == r for r in body_factors))]
+    items = [*body_factors, *[NInd(c) for c in inner_conds]]
+    atoms = [Exists(nsum(vs, nmul(*its))) for vs, its in _components(t.vars, items, bound)]
+    return conj(*outside, *[c for c in extra if c not in outside], *atoms)
+
+
+def _bound_in(n, bound: set) -> set:
+    found = free_vars(n) & bound
+    return found | {b for b in bound if isinstance(b, TVar) and _mentions_tuple(n, b)}
+
+
+def _components(vars_: tuple, items: list, bound: set) -> list:
+    """The summed variables and factors of a product, split into groups that share no variable
+    (``∃x,y A(x)·B(y)`` is ``∃x A(x) ∧ ∃y B(y)``). One group when the product does not split."""
+
+    parent = {v: v for v in vars_}
+
+    def find(a):
+        while parent[a] != a:
+            a = parent[a]
+        return a
+
+    used = []
+    for item in items:
+        mine = [v for v in vars_ if v in _bound_in(item.f if isinstance(item, NInd) else item, bound)]
+        used.append(mine)
+        for v in mine[1:]:
+            ra, rb = find(mine[0]), find(v)
+            if ra != rb:
+                parent[ra] = rb
+    groups: dict = {}
+    for v in vars_:
+        groups.setdefault(find(v), ([], []))[0].append(v)
+    for item, mine in zip(items, used):
+        if mine:
+            groups[find(mine[0])][1].append(item)
+    if len(groups) == 1:
+        return [(tuple(vars_), list(items))]
+    return [(tuple(vs), its) for vs, its in groups.values()]
+
+
+def _pull_equalities(inside: list, bound: set) -> tuple:
+    """Equalities between outside values that the conditions inside an ``∃`` force, and the inside
+    conditions with each equality class that reaches outside re-expressed against one outside member.
+
+    ``∃y [x = y.a][y.a = 10]`` implies ``x = 10``. Values equal under the inside conjuncts (``=`` TRUE
+    or ``≡``) form union-find classes. A class with any ``=`` link is all non-NULL and equal, otherwise
+    all ``≡``; so two outside members of it are equal (and non-NULL), and the inside links of the class
+    are the same as one link from each inside member to an outside member.
+    """
+
+    parent: dict = {}
+
+    def find(a):
+        while parent.get(a, a) != a:
+            a = parent[a]
+        return a
+
+    links = [c for c in inside if isinstance(c, Same) or (isinstance(c, Cmp) and c.op == "=")]
+    for c in links:
+        ra, rb = find(c.a), find(c.b)
+        if ra != rb:
+            parent[ra] = rb
+    strict = {find(c.a) for c in links if isinstance(c, Cmp)}
+    classes: dict = {}
+    for c in links:
+        for a in (c.a, c.b):
+            members = classes.setdefault(find(a), [])
+            if a not in members:
+                members.append(a)
+
+    def is_outside(v) -> bool:
+        return not _bound_in(v, bound)
+
+    extra = []
+    rewritten = set()
+    stars = []
+    for root, members in classes.items():
+        outer = [m for m in members if is_outside(m)]
+        if not outer:
+            continue
+        outer.sort(key=lambda m: (0 if isinstance(m, Lit) else 1 if isinstance(m, Ref) else 2, repr(m)))
+        rep = outer[0]
+        rewritten.add(root)
+        make = (lambda m, r: Cmp("=", m, r)) if root in strict else (lambda m, r: Same(m, r))
+        for m in members:
+            if m is not rep and m != rep:
+                (extra if is_outside(m) else stars).append(make(m, rep))
+        if root in strict and not (isinstance(rep, Lit)):
+            extra.append(neg(IsNull(rep)))
+    if not rewritten:
+        return [], inside
+    kept = [c for c in inside if not (c in links and find(c.a) in rewritten)]
+    return extra, kept + stars
 
 
 def _tuple_bound(tup, bound) -> bool:
