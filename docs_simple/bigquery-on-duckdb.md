@@ -8,7 +8,7 @@ KumoSQL runs many result checks locally in DuckDB after translating BigQuery SQL
 
 It sets BigQuery-style NULL ordering and UTC timestamps, fixes supported translation differences, and handles supported result representation differences.
 
-For example, BigQuery NUMERIC keeps more decimal precision than DuckDB's default DECIMAL. Week numbering, substring positions, NULL-sensitive functions, and array indexing also need care. A “safe” array access and one that should raise an error are different operations.
+For example, BigQuery NUMERIC keeps more decimal precision than DuckDB's default DECIMAL. BigQuery also rounds FLOAT64-to-INT64 halfway cases away from zero, while DuckDB rounds ties to even; the compatibility layer adjusts those casts. Week numbering, substring positions, NULL-sensitive functions, and array indexing also need care. A “safe” array access and one that should raise an error are different operations.
 
 The layer applies to BigQuery-dialect execution paths, including counterexample replay, random checks, synthetic comparisons, and incremental simulation. Other input dialects retain their own execution handling.
 

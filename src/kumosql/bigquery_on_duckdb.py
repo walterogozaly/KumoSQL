@@ -7,8 +7,9 @@ is a wrong answer. This module is the one place that closes those gaps, in three
 
 * **session settings** (:func:`configure`): timestamps are read in UTC (sqlglot already spells out
   BigQuery's NULL order, ``NULLS FIRST`` ascending, against DuckDB's default);
-* **translation fixes** (:func:`faithful`), each checked against BigQuery itself:
+* **translation fixes** (:func:`faithful`) for documented GoogleSQL differences:
   ``NUMERIC`` is ``DECIMAL(38, 9)`` (sqlglot writes a bare ``DECIMAL``, which is ``DECIMAL(18, 3)``),
+  ``FLOAT64`` to ``INT64`` rounds halfway values away from zero (DuckDB rounds to even),
   ``EXTRACT(DAYOFWEEK)`` counts Sunday as 1, ``EXTRACT(WEEK)`` is Sunday-based (DuckDB's is ISO),
   ``SUBSTR`` reads a position of 0 or past the left end as 1, ``REGEXP_EXTRACT`` returns ``NULL``
   without a match, and ``CAST(NUMERIC AS STRING)`` drops trailing zeros;
@@ -87,6 +88,15 @@ _MACRO_DEFINITIONS = (
     "ELSE a >> b END",
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_finite(x) AS CASE WHEN isinf(x) OR isnan(x) THEN {_fail('floating point overflow')} "
     "ELSE x END",
+    # GoogleSQL FLOAT64 -> INT64 rounds ties away from zero; DuckDB's DOUBLE cast uses ties-to-even.
+    f"CREATE OR REPLACE TEMP MACRO kumo_bq_cast_int64(x) AS CASE WHEN typeof(x) IN ('DOUBLE', 'FLOAT') THEN "
+    "CAST(CASE WHEN abs(TRY_CAST(x AS DOUBLE) - trunc(TRY_CAST(x AS DOUBLE))) >= 0.5 "
+    "THEN trunc(TRY_CAST(x AS DOUBLE)) + CASE WHEN TRY_CAST(x AS DOUBLE) < 0 THEN -1 ELSE 1 END "
+    "ELSE trunc(TRY_CAST(x AS DOUBLE)) END AS BIGINT) ELSE CAST(x AS BIGINT) END",
+    f"CREATE OR REPLACE TEMP MACRO kumo_bq_safe_cast_int64(x) AS CASE WHEN typeof(x) IN ('DOUBLE', 'FLOAT') THEN "
+    "TRY_CAST(CASE WHEN abs(TRY_CAST(x AS DOUBLE) - trunc(TRY_CAST(x AS DOUBLE))) >= 0.5 "
+    "THEN trunc(TRY_CAST(x AS DOUBLE)) + CASE WHEN TRY_CAST(x AS DOUBLE) < 0 THEN -1 ELSE 1 END "
+    "ELSE trunc(TRY_CAST(x AS DOUBLE)) END AS BIGINT) ELSE TRY_CAST(x AS BIGINT) END",
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_int64(x) AS CASE WHEN typeof(x) = 'HUGEINT' "
     f"AND (x > 9223372036854775807 OR x < -9223372036854775808) THEN {_fail('INT64 overflow')} ELSE x END",
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_string(x) AS CASE WHEN typeof(x) IN ('DOUBLE', 'FLOAT') "
@@ -604,6 +614,20 @@ def _rewrite(node: exp.Expression) -> exp.Expression | None:
         form = _READ_FORMS.get(target)
         if form is not None and not (isinstance(node.this, exp.Literal) and not node.this.is_string):
             node.set("this", _call("kumo_bq_read", node.this, exp.Literal.string(_STRING_FORMS[form])))
+        if target == exp.DataType.Type.BIGINT:
+            # GoogleSQL decimal/exponent literals are FLOAT64. DuckDB parses such bare literals as DECIMAL,
+            # whose native cast can preserve digits BigQuery rounded away before the cast.
+            value = node.this
+            literal = value
+            while isinstance(literal, (exp.Neg, exp.Paren)):
+                literal = literal.this
+            if (
+                isinstance(literal, exp.Literal)
+                and not literal.is_string
+                and ("." in literal.this or "e" in literal.this.lower())
+            ):
+                value = exp.Cast(this=value, to=exp.DataType.build("DOUBLE"))
+            return _call("kumo_bq_safe_cast_int64" if isinstance(node, exp.TryCast) else "kumo_bq_cast_int64", value)
         return None
     return None
 

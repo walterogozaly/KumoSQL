@@ -8,11 +8,12 @@ It does three things.
 
 **Session settings** (`configure(connection)`): timestamps are read in UTC whatever the machine's zone. NULL order needs no setting: sqlglot writes BigQuery's (`NULL` first ascending, last descending) against DuckDB's default, spelling `NULLS FIRST` where the two differ and leaving `ASC NULLS LAST` bare, so a session default would flip the keys it leaves bare.
 
-**Translation fixes** (`faithful(tree)`), each checked against BigQuery itself:
+**Translation fixes** (`faithful(tree)`) for documented GoogleSQL differences:
 
 | BigQuery | DuckDB before | Now |
 | --- | --- | --- |
 | `NUMERIC` keeps 9 decimal digits | sqlglot writes `DECIMAL`, which DuckDB reads as `DECIMAL(18, 3)`: `CAST(0.0001 AS NUMERIC)` was 0 | `DECIMAL(38, 9)` |
+| `CAST`/`SAFE_CAST(FLOAT64 AS INT64)` round halfway values away from zero | DuckDB rounds ties to even | round from the truncated value and fractional part |
 | `EXTRACT(DAYOFWEEK)` is 1 for Sunday | 0 for Sunday | plus one |
 | `EXTRACT(WEEK)` counts Sunday weeks (week 0 before the first Sunday) | ISO weeks: 2016-01-01 is 53 | `strftime(.., '%U')`, `WEEK(MONDAY)` is `%W` |
 | `DATE_TRUNC(.., WEEK)` and `DATE_DIFF(.., WEEK)` start weeks on Sunday | sqlglot 26 writes Monday weeks | built from Monday weeks shifted a day |
@@ -44,7 +45,7 @@ A database on which a guard fires is one BigQuery fails on: the searches skip it
 - The standalone search (`kumosql.counterexample`) and the bounded check's replay reverse and rotate every table before their random shuffles, so a difference that rests on which of two rows comes first is dropped (random shuffles alone kept a two-row table in order one time in eight). Shuffling cannot move a pick that follows DuckDB's hash order, so the standalone search also reruns a candidate with every `ANY_VALUE`, `first`, `last` and `arbitrary` call guarded (it fails unless the group holds one value, or only NULLs) and with every output column added to a top-level `LIMIT`'s `ORDER BY`, ascending and descending. A pair that picks as a window function, or inside an ordered call, stays unknown ([the checks](evals/verieql.md#counterexample-generator)).
 - The bounded check reads a key's columns as NOT NULL, matches a foreign key only to a non-NULL parent value, and keeps `NUMERIC` values within BigQuery's range and 9 decimal digits (`BIGNUMERIC` within its own; replay loads `NUMERIC` as `DECIMAL(38, 9)`).
 
-Not acted on: comparisons BigQuery rejects at compile time (`1 = TRUE`, `1 = '1.1'`, `ARRAY` equality or ordering, nested arrays). BigQuery has no result for such a query, so there is nothing for a DuckDB difference to contradict. `CAST(TIMESTAMP AS STRING)` with fractional seconds and decimal literals (exact in DuckDB, `FLOAT64` in BigQuery) are also left as they were; the second matches how the provers read literals.
+Not acted on: comparisons BigQuery rejects at compile time (`1 = TRUE`, `1 = '1.1'`, `ARRAY` equality or ordering, nested arrays). BigQuery has no result for such a query, so there is nothing for a DuckDB difference to contradict. `CAST(TIMESTAMP AS STRING)` with fractional seconds is also left as it was. Decimal/exponent literals in general arithmetic remain a known gap (DuckDB keeps decimal precision while BigQuery uses `FLOAT64`); the provers model their own literal rules.
 
 The rows of Google's [GoogleSQL compliance tests](evals/googlesql-expected-results.md) check this layer from outside: each supported query's expected rows against what the translation returns. They found the milliseconds, `LIKE`, `SPLIT`, set-operation and most of the refusals above.
 

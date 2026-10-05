@@ -57,7 +57,7 @@ sqlglot reads some names BigQuery does not have (`LEN`, `HEX`, `CHARINDEX`...) a
 First run (`--random 3000 --seed 0`, 6,149 queries): 4,715 answered by the evaluator, 2,950 compared, 2,847 agree, 103 differ (28 in value, 75 only in type), 53 distinct repros after shrinking. Findings for the BigQuery-vs-DuckDB guards workstream (#487), each with the evaluator believed right from BigQuery's documentation (not re-checked against live BigQuery):
 
 - `FROM UNNEST(SPLIT(...))` and other macro calls in a table-function argument return the lambda variable's name as text.
-- `CAST(FLOAT64 AS INT64)` rounds halves to even in DuckDB; BigQuery rounds them away from zero.
+- `CAST(FLOAT64 AS INT64)` rounds halves to even in DuckDB; BigQuery rounds them away from zero. The #487 BigQuery-on-DuckDB adapter now translates this cast to BigQuery's rounding rule.
 - `ROUND`/`TRUNC` of NUMERIC leaks DuckDB's narrow `DECIMAL` type into `IFNULL`, `COALESCE` and `GREATEST`, changing values.
 - `CAST(DATE_ADD(...) AS STRING)` gains `00:00:00`; `%e` and `%c` lose their space padding in `FORMAT_DATE`/`FORMAT_TIMESTAMP`; `BIT_COUNT` of a small literal counts 32 or 8 bits.
 - `CAST(FLOAT64 AS NUMERIC)` is imprecise for large magnitudes; decimal literals are `DECIMAL` in DuckDB but FLOAT64 in BigQuery (`0.1 + 0.2` differs); `SIGN` returns an integer; some NUMERIC quotients come back as DOUBLE.
