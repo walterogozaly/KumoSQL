@@ -71,6 +71,8 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tools"))
 logging.getLogger("sqlglot").setLevel(logging.CRITICAL)
 
+import sample_db_fiben as fiben  # noqa: E402  (IBM FIBEN: the download, the load and the query adaptation)
+
 FIXTURES = ROOT / "tests" / "fixtures" / "sample_databases"
 HOLDOUT_MODULUS = 5
 
@@ -537,6 +539,11 @@ class Adapter:
     #: complete a NOT NULL foreign key column a counterexample leaves out with a fresh value (and a parent row
     #: for it) instead of the type's default, which can coincide with a value the counterexample uses elsewhere
     fresh_foreign_key_values: bool = False
+    #: the data is too big (or too restrictively licensed) to commit and is downloaded at run time from the pinned
+    #: commit; ``available()`` says whether it can be had, and tests that need it skip when it cannot
+    downloads: bool = False
+    #: seconds one query may run before the engine-suites harness interrupts it (``None``: its default of 5 seconds)
+    query_timeout_s: float | None = None
 
     @property
     def folder(self) -> Path:
@@ -564,6 +571,21 @@ class Adapter:
         """The views the upstream script creates, by name (a database whose script reads differently overrides this)."""
 
         return read_views(self.upstream_text())
+
+    def upstream_row_counts(self) -> dict[str, int]:
+        """Rows per upstream table (a database whose rows are too many to hold as Python tuples overrides this)."""
+
+        return {table: len(rows) for table, rows in self.upstream_rows().items()}
+
+    def available(self) -> bool:
+        """Whether the data can be loaded here (always, unless it is downloaded at run time)."""
+
+        return True
+
+    def check_extra(self, con) -> list[str]:
+        """Problems of the adapter's own checks on the loaded database (none by default)."""
+
+        return []
 
     def omitted(self, table: str, column: str, index: int) -> Raw:
         """The value of a column an INSERT leaves out (``index``: the row's place among the table's rows): NULL by default."""
@@ -1478,9 +1500,74 @@ class OracleCO(OracleSample):
     identity = {"inventory": "inventory_id"}  # the only INSERTs that leave the identity column to the database
 
 
+class FIBEN(Adapter):
+    """IBM FIBEN (Apache-2.0): 152 tables, 11.7 million rows in an 80 MB ``data.zip`` downloaded at run time.
+
+    What is specific to it (download, load, query adaptation) is in ``tools/sample_db_fiben.py``.
+    """
+
+    name = "fiben"
+    title = "IBM FIBEN"
+    results_order = 362
+    docs_page = "docs/evals/sample-databases-fiben.md"
+    downloads = True
+    query_timeout_s = 120.0
+    ddl_file = "upstream/FIBEN.sql"
+    data_file = "upstream/FIBEN.sql"
+    _REPO, _COMMIT = fiben.REPO, fiben.COMMIT
+    _LICENCE = "Apache-2.0, Copyright IBM (upstream/LICENSE)"
+    upstream = (
+        Upstream("upstream/FIBEN.sql", _REPO, _COMMIT, "FIBEN.sql", "0bc2c0e29d3e596fa931786d217abaacd7105ea24689f772e716a1cff5c5dbb9", _LICENCE),
+        Upstream("upstream/FIBEN_Queries.json", _REPO, _COMMIT, "FIBEN_Queries.json", "871207309dc7bd3b6c793b9b098a8fc95714f08dd02af2816d8ae02cbaf460df", _LICENCE),
+        Upstream("upstream/tablelist.txt", _REPO, _COMMIT, "tablelist.txt", "58a17e064157c8d79a5fa6be6a9f4b6dc4126ec9b07fd844bd23516c21067953", _LICENCE),
+        Upstream("upstream/LICENSE", _REPO, _COMMIT, "LICENSE", "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08", "the licence itself"),
+    )
+    # upstream publishes no row counts: these are the rows of each pinned CSV file (data_manifest.json, checked by an
+    # independent line count on every run)
+    published_counts = {t: f["rows"] for t, f in fiben.manifest().items()}
+    published_counts_source = "counted from the pinned CSV files of data.zip (upstream publishes no counts)"
+    workload_note = (
+        "FIBEN's own SQL targets (the benchmark's 237 distinct queries, 170 of them nested) are adapted from Db2 SQL to BigQuery "
+        "(each adaptation recorded in the workload file; the adapted query returns the same rows as the original on the data, checked by digest). "
+        "The data (80 MB data.zip, 400 MB of CSV, SHA-256 pinned per file) is downloaded at run time from the pinned commit and never committed. "
+        "Upstream's archive is a data release and has no published counts; 108 of the 152 tables are empty in it"
+    )
+    baseline_note = "See the docs page for the baseline"
+
+    def upstream_rows(self):
+        return {}
+
+    def inserted_rows(self):
+        return {}
+
+    def rows(self):
+        return {}
+
+    def upstream_row_counts(self) -> dict[str, int]:
+        folder = fiben.data_dir()
+        return {t: fiben.line_count(folder / f"{t}.csv") for t in fiben.manifest()}
+
+    def available(self) -> bool:
+        return fiben.available()
+
+    def connect(self, rows=None):
+        import duckdb
+
+        tables = list(self.schema().values())
+        con = duckdb.connect(":memory:")
+        con.execute("SET threads=1")
+        for table in tables:
+            con.execute(create_table_sql(table))
+        fiben.load_data(con, tables)
+        return con
+
+    def check_extra(self, con) -> list[str]:
+        return fiben.check_workload(self, con)
+
+
 ADAPTERS: dict[str, Adapter] = {
     a.name: a
-    for a in (Chinook(), Northwind(), Sakila(), Pagila(), OracleHR(), OracleCO())
+    for a in (Chinook(), Northwind(), Sakila(), Pagila(), OracleHR(), OracleCO(), FIBEN())
 }
 
 
@@ -1531,8 +1618,8 @@ def check_database(adapter: Adapter, con=None) -> dict:
         declared["foreign_keys"] += len(table.foreign_keys)
         declared["not_null"] += len(table.not_null)
     inserted = Counter()
-    for upstream_table, rows in adapter.upstream_rows().items():
-        inserted[adapter.renames.get(upstream_table, upstream_table)] += len(rows)
+    for upstream_table, count in adapter.upstream_row_counts().items():
+        inserted[adapter.renames.get(upstream_table, upstream_table)] += count
     for table, added in adapter.trigger_rows(adapter.inserted_rows()).items():
         inserted[table] += len(added)  # rows an upstream trigger adds while loading
     upstream_views = adapter.upstream_views()
@@ -1597,6 +1684,7 @@ def check_database(adapter: Adapter, con=None) -> dict:
                 problems.append(
                     f"upstream asserts {expected} for {sql[:70]!r}, got {got[:3]}"
                 )
+        problems += adapter.check_extra(con)
     finally:
         if own:
             con.close()
@@ -1686,6 +1774,8 @@ def rewrite_cases(job: tuple[str, list[str], bool]) -> list[dict]:
 
     name, query_ids, optimizer = job
     adapter = ADAPTERS[name]
+    if adapter.query_timeout_s is not None:
+        es.QUERY_TIMEOUT_S = adapter.query_timeout_s  # a big database: its queries take longer than the 5 s default
     wanted = set(query_ids)
     queries = [q for q in adapter.workload() if q["id"] in wanted]
     con = adapter.connect()
@@ -2616,6 +2706,12 @@ def main(argv: list[str] | None = None) -> int:
 
     quiet()
     adapters = [ADAPTERS[n] for n in (args.database or sorted(ADAPTERS))]
+    if not args.database:
+        # a database downloaded at run time is skipped, with a note, when its data cannot be had (name it to require it)
+        skipped = [a.name for a in adapters if a.downloads and not a.available()]
+        adapters = [a for a in adapters if a.name not in skipped]
+        for name in skipped:
+            print(f"{name}: skipped, its data cannot be downloaded here")
     failed = False
     reports = []
     for adapter in adapters:
