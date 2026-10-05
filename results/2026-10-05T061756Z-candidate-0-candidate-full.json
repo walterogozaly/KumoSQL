@@ -1,0 +1,29 @@
+{
+  "job": "candidate-0",
+  "kind": "candidate",
+  "ref": "codex/nested-sql-robustness",
+  "sha": "b90700fd9d9e516733fdebdec01ab5e7afc3fdeb",
+  "leg": "candidate-full",
+  "mode": "full",
+  "status": "finished",
+  "exit": 1,
+  "seconds": 2401.3,
+  "workers": 6,
+  "notes": [],
+  "finished": "2026-10-05T06:17:55Z",
+  "machine": {
+    "system": "Linux",
+    "release": "6.18.40.1-microsoft-standard-WSL2",
+    "cpus": 6,
+    "python": "3.12.3"
+  },
+  "passed": 11640,
+  "failed": [
+    "tests/test_scoreboard.py::test_every_test_file_that_loads_an_eval_script_is_marked_eval"
+  ],
+  "errors": [],
+  "skipped": 108,
+  "tests": 11749,
+  "known_failed": [],
+  "tail": "tests/test_conditional_benchmark.py::test_verieql_sample\ntests/test_conditional_benchmark.py::test_verieql_sample\ntests/test_conditional_benchmark.py::test_verieql_sample\ntests/test_conditional_benchmark.py::test_verieql_sample\ntests/test_conditional_benchmark.py::test_verieql_sample\ntests/test_conditional_benchmark.py::test_verieql_sample\ntests/test_sqlfluff_refusals_bench.py::test_refusal_cases\ntests/test_sqlfluff_refusals_bench.py::test_refusal_cases\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=395492) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\ntests/test_conditional_benchmark.py: 6 warnings\ntests/test_sqlfluff_fixtures_bench.py: 4 warnings\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=395501) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\ntests/test_arcwise_bench.py: 147 warnings\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=395489) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\ntests/test_sample_db_oracle.py::test_the_date_key_pairs_are_refuted_with_counterexamples_that_replay\ntests/test_sample_db_oracle.py::test_the_date_key_pairs_are_refuted_with_counterexamples_that_replay\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=395495) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\ntests/test_quite_bench.py::test_pinned_sample_has_no_wrong_proof\ntests/test_sqlfluff_fixtures_bench.py::test_semantic_fixes\ntests/test_sqlfluff_fixtures_bench.py::test_semantic_fixes\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=395486) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\ntests/test_singh_bedathur_benchmark.py: 6 warnings\ntests/test_spider2_bench.py: 4 warnings\n  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=395498) is multi-threaded, use of fork() may lead to deadlocks in the child.\n    self.pid = os.fork()\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED tests/test_scoreboard.py::test_every_test_file_that_loads_an_eval_script_is_marked_eval\n1 failed, 11640 passed, 1 skipped, 107 xfailed, 180 warnings in 2197.31s (0:36:37)"
+}
