@@ -309,7 +309,7 @@ TEMPLATES = [
     f"SELECT t.id, g.c FROM t {{LEFT JOIN|JOIN}} (SELECT u.k, COUNT(*) AS c, MAX(u.w) AS m FROM u GROUP BY u.k) AS g ON g.k = t.y",
     f"SELECT t.id, g.c, g.m FROM t {{LEFT JOIN|JOIN}} (SELECT d.a AS k, COUNT(u.w) AS c, MAX(u.w) AS m FROM (SELECT DISTINCT t3.y AS a FROM t AS t3) AS d LEFT JOIN u ON d.a IS NOT DISTINCT FROM u.k GROUP BY d.a) AS g ON g.k = t.y",
     f"SELECT t.id, g.c FROM t JOIN (SELECT d.a AS k, COUNT(u.w) AS c FROM (SELECT t3.y AS a FROM t AS t3 GROUP BY t3.y) AS d LEFT JOIN (SELECT u.k, COUNT(*) AS c FROM u GROUP BY u.k) AS u ON u.k = d.a GROUP BY d.a) AS g ON g.k = t.y",
-    f"SELECT t.id, g.c FROM t JOIN (SELECT t3.y AS k FROM t AS t3 GROUP BY t3.y) AS g ON g.k = t.y",
+    f"SELECT t.id, g.k FROM t JOIN (SELECT t3.y AS k FROM t AS t3 GROUP BY t3.y) AS g ON g.k = t.y",
     f"SELECT t.id, g.k FROM t JOIN (SELECT DISTINCT t3.x AS k FROM t AS t3) AS g ON g.k = t.x",
     f"SELECT t.id, g.k FROM t JOIN (SELECT t3.x AS k FROM t AS t3 GROUP BY t3.x) AS g ON g.k IS NOT DISTINCT FROM t.x",
     f"SELECT t.id, g.k FROM t LEFT JOIN (SELECT t3.x AS k FROM t AS t3 GROUP BY t3.x) AS g ON g.k = t.x",
@@ -330,6 +330,11 @@ TEMPLATES = [
     f"SELECT t.id FROM t WHERE t.x IN (SELECT u.w FROM u WHERE CAST(u.w AS STRING) = '1' AND u.w IN (1))",
     f"SELECT t.id FROM t WHERE t.f IN (SELECT u.w FROM u WHERE u.w > 0 AND u.w IN (SELECT p.tid FROM p))",
     f"SELECT t.id FROM t WHERE t.x IN (SELECT u.w FROM u WHERE u.w IN (SELECT p.tid FROM p WHERE p.id = u.k))",
+    # the outer value and the subquery column of different numeric types (a double past 2**53 meets several integers)
+    f"SELECT t.id FROM t WHERE {{t.f|t.x}} IN (SELECT u.w FROM u WHERE u.w {{=|>|<>|<=}} {{9007199254740993|9007199254740992|1}} {{|AND u.w IN (SELECT p.id FROM p)}})",
+    f"SELECT t.id FROM t WHERE t.f IN (SELECT u.w FROM u WHERE u.w IN (SELECT p.tid FROM p) AND u.w {{=|<>}} {{9007199254740993|2}})",
+    f"SELECT p.id FROM p WHERE p.n IN (SELECT u.w FROM u WHERE u.w {{=|>|<>}} {{9007199254740993|1|2}} {{|AND u.w IN (SELECT t.x FROM t)}})",
+    f"SELECT t.id FROM t WHERE t.x IN (SELECT p.n FROM p WHERE p.n {{=|>}} {{9007199254740993|2}} AND p.n IN (SELECT u.w FROM u))",
 ]
 
 

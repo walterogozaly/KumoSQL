@@ -120,7 +120,7 @@ def query_constants(sql: str, dialect: str) -> dict[str, set]:
             value = Fraction(literal.this)
         except (ValueError, ZeroDivisionError):
             continue
-        if value.denominator == 1 and abs(value) < 10**6:
+        if value.denominator == 1 and (abs(value) < 10**6 or 2**53 <= abs(value) < 2**63):
             found["INT64"].add(int(value))
         elif abs(value) < 10**6:
             found["FLOAT64"].add(float(value))
@@ -147,9 +147,11 @@ _LARGE_INTS = [2**53, 2**53 + 1, -(2**53) - 1, 2**62, 1, 0]
 def _domain(kind: str, constants: dict[str, set]) -> list:
     values = list(_BASE_VALUES[kind])
     if kind == "INT64":
-        values += sorted({c + d for c in constants.get("INT64", ()) for d in (-1, 0, 1) if abs(c + d) < 10**6})
+        values += sorted({c + d for c in constants.get("INT64", ()) for d in (-1, 0, 1) if abs(c + d) < 10**6 or 2**53 - 1 <= abs(c + d) < 2**63})
     elif kind == "FLOAT64":
-        values += sorted(constants.get("FLOAT64", ())) + [float(c) for c in sorted(constants.get("INT64", ()))[:4]]
+        # a literal past 2**53 is a double that several integers share: keep the double and its integer neighbours' double
+        values += sorted(constants.get("FLOAT64", ())) + [float(c + d) for c in sorted(constants.get("INT64", ()))[:4] for d in (0,)]
+        values += [float(c + d) for c in sorted(constants.get("INT64", ())) if abs(c) >= 2**53 for d in (-1, 0, 1)]
     elif kind == "STRING":
         values += sorted(constants.get("STRING", ()))
     return list(dict.fromkeys(values))
@@ -226,6 +228,9 @@ def build_databases(case: dict, seed: int = 0, randoms: int = 6) -> list[dict]:
                         value = domain[i % len(domain)]
                     elif mode == "large" and kind == "INT64":
                         value = rng.choice(_LARGE_INTS)
+                    elif mode == "large" and kind == "FLOAT64":
+                        # the doubles of those integers, so an INT64 column and a FLOAT64 one can meet past 2**53
+                        value = rng.choice([float(x) for x in _LARGE_INTS] + domain)
                     else:
                         value = rng.choice(domain + ([None, None] if lname not in required else []))
                     if value is None and lname in required:

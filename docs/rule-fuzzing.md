@@ -15,8 +15,8 @@ runs, each rewrite that fires is checked on its own, on the exact query it saw.
    twice: a cheap probe pass fingerprints each call, then a record pass snapshots only the calls that changed the
    tree. A firing is the whole query just before and just after that rewrite.
 2. Both queries run on DuckDB databases built for the case's typed schema and constraints (keys, NOT NULL, foreign
-   keys): seeded random ones, NULL-heavy, duplicate-heavy, empty, one-row, tie-heavy, large-integer ones, using the
-   query's own constants.
+   keys): seeded random ones, NULL-heavy, duplicate-heavy, empty, one-row, tie-heavy, large-integer ones (FLOAT64 columns get the doubles of the
+   same large integers, so an INT64 and a FLOAT64 column can meet past 2^53), using the query's own constants.
 3. A difference counts only if all of these hold:
    - `kumosql.duckdb_load.run_unoptimized` gives the same bags (DuckDB's optimizer bug, #347);
    - the bags stay the same with every table's rows reversed (no dependence on row order);
