@@ -1215,6 +1215,14 @@ class Translator:
             return neg(s), s
         if isinstance(e, exp.Is):
             target = e.expression
+            if isinstance(target, exp.Null):
+                inner = e.this
+                while isinstance(inner, exp.Paren):
+                    inner = inner.this
+                if isinstance(inner, tuple(_CMP)) and not isinstance(inner.expression, (exp.Any, exp.All, exp.Subquery)) and not isinstance(inner.this, (exp.Any, exp.All, exp.Tuple)) and not isinstance(inner.expression, exp.Tuple):
+                    # A comparison is UNKNOWN exactly when one of its operands is NULL.
+                    isn = disj(IsNull(self.value(inner.this, scope)), IsNull(self.value(inner.expression, scope)))
+                    return isn, neg(isn)
             v = self.value(e.this, scope) if not isinstance(e.this, (exp.EQ, exp.And, exp.Or, exp.Not)) else None
             if isinstance(target, exp.Null):
                 if v is None:

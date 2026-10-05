@@ -126,13 +126,33 @@ def test_widening_cast_is_seen_through_a_derived_table():
     )
 
 
+def test_not_null_test_is_implied_by_a_comparison_of_the_same_value():
+    assert prove("SELECT id FROM t WHERE x > 1 AND x IS NOT NULL", "SELECT id FROM t WHERE x > 1")
+    assert prove("SELECT id FROM t WHERE x * 2 > 1 AND x IS NOT NULL", "SELECT id FROM t WHERE x * 2 > 1")
+    assert not prove("SELECT id FROM t WHERE x > 1 OR x IS NOT NULL", "SELECT id FROM t WHERE x > 1")
+
+
+def test_a_semi_join_applied_twice_equals_once():
+    once = "SELECT t.id FROM t LEFT SEMI JOIN (SELECT x FROM u GROUP BY x HAVING SUM(id) > 3) AS g ON t.x = g.x"
+    twice = f"SELECT s.id FROM ({once}) AS s LEFT SEMI JOIN (SELECT x FROM u GROUP BY x HAVING SUM(id) > 3) AS g ON s.id = g.x"
+    assert not prove(once, twice)  # a different join condition: never merged
+    same = "SELECT t.id FROM t LEFT SEMI JOIN (SELECT x FROM u GROUP BY x HAVING SUM(id) > 3) AS g ON t.x = g.x LEFT SEMI JOIN (SELECT x FROM u GROUP BY x HAVING SUM(id) > 3) AS h ON t.x = h.x"
+    assert prove(once, same)
+
+
+def test_comparison_is_null_means_an_operand_is_null():
+    assert prove("SELECT id FROM t WHERE (x = d) IS NULL", "SELECT id FROM t WHERE x IS NULL OR d IS NULL")
+    assert not prove("SELECT id FROM t WHERE (x = d) IS NULL", "SELECT id FROM t WHERE x IS NULL")
+    assert prove("SELECT id FROM t WHERE (x = id) IS NULL", "SELECT id FROM t WHERE x IS NULL")  # id is a key, never NULL
+
+
 # ---- a few TPC-H pairs, end to end -----------------------------------------------------------------------
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import uexpr_bench  # noqa: E402
 import sqlsolver_bench as bench  # noqa: E402
 
-TPCH_PROVED = [3, 4, 14, 16, 17]  # INTERVAL, SEMI/ANTI and the OR-factoring shapes
+TPCH_PROVED = [3, 4, 14, 16, 17, 1, 15]  # INTERVAL, SEMI/ANTI, OR-factoring, key-elimination order and widening casts
 
 
 @pytest.mark.parametrize("index", TPCH_PROVED)

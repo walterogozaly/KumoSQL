@@ -294,7 +294,7 @@ def simplify_term(t: Term, ctx: Ctx) -> list:
             if s == FALSE:
                 return []
             new_conjs.extend(_conjuncts(s))
-        new_conjs = _dedup(new_conjs)
+        new_conjs = _drop_implied_not_null(_dedup(new_conjs))
         propagated = _propagate_equalities(new_conjs, set(t.vars))
         if propagated is not None:
             new_conjs = propagated
@@ -363,12 +363,41 @@ def _ordered_vars(t: Term) -> tuple:
     return tuple(v for v in t.vars if v in used or isinstance(v, TVar))
 
 
+def _drop_implied_not_null(conjs: list) -> list:
+    """Without ``[¬a IS NULL]`` where another conjunct ``[a op b]`` (a comparison, TRUE only for non-NULL operands,
+    possibly through arithmetic, which is NULL when an operand is) already requires ``a`` to be non-NULL."""
+
+    from .canon import canon
+
+    strict = set()
+
+    def operands(v):
+        strict.add(canon(v))
+        if isinstance(v, Arith):
+            operands(v.a)
+            operands(v.b)
+
+    for c in conjs:
+        if isinstance(c, Cmp):
+            operands(c.a)
+            operands(c.b)
+    if not strict:
+        return conjs
+    return [c for c in conjs if not (isinstance(c, Not) and isinstance(c.a, IsNull) and canon(c.a.a) in strict)]
+
+
 def _dedup(items: list) -> list:
+    """The items without repeats, where two conjuncts that differ only in the names of their bound variables
+    (the same condition from two semi joins) count as one: [P]*[P] = [P]."""
+
+    from .canon import canon
+
     seen = set()
     out = []
     for i in items:
-        if i not in seen:
-            seen.add(i)
+        key = canon(i)
+        if key not in seen:
+            seen.add(key)
             out.append(i)
     return out
 
