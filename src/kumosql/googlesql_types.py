@@ -418,7 +418,7 @@ def infer(sql_or_tree, catalog: Catalog | None = None, dialect: str = "bigquery"
         return TypedQuery(tree, None, (), {}, {}, "not a query")
     if any(_TEMPLATE_MASK.search(i.name) for i in tree.find_all(exp.Identifier)):
         return TypedQuery(tree, None, (), {}, {}, "Dataform placeholder in the query")  # a mask can stand for anything
-    typer = _Typer(catalog, text if text is not None else tree.sql(dialect))
+    typer = _Typer(catalog, text if text is not None else tree.sql(dialect), exact_text=text is not None)
     try:
         rel = typer.query(tree, None, {})
     except _Unsupported as exc:
@@ -432,6 +432,7 @@ def infer(sql_or_tree, catalog: Catalog | None = None, dialect: str = "bigquery"
 
 
 _TEMPLATE_MASK = re.compile(r"__sqlx_token_\d+__")
+_FORMAT_CAST = re.compile(r"\bAS\s+(TIMESTAMP|DATETIME|TIME)\s+FORMAT\b", re.I)
 
 
 def _without_strings(sql: str) -> str:
@@ -556,9 +557,11 @@ class _Scope:
 
 
 class _Typer:
-    def __init__(self, catalog: Catalog, text: str):
+    def __init__(self, catalog: Catalog, text: str, exact_text: bool = False):
         self.catalog = catalog
         self.text = text
+        self.exact_text = exact_text  # ``text`` is the SQL the caller wrote, not regenerated from a tree
+        self._format_casts: dict[int, dict[int, GType]] = {}
         self.types: dict[int, tuple[exp.Expression, GType | None]] = {}
         self.relations: dict[int, tuple[exp.Expression, tuple[Column, ...] | None]] = {}
         self.findings: list[Finding] = []
@@ -588,6 +591,35 @@ class _Typer:
 
     def finding(self, code: str, message: str, node: exp.Expression | None = None) -> None:
         self.findings.append(Finding(code, message, node))
+
+    def format_cast_type(self, node: exp.Expression) -> GType | None:
+        """The target type of ``CAST(x AS TIMESTAMP | DATETIME | TIME FORMAT ..)``: sqlglot reads all three as the same
+        StrToTime node and keeps no sign of which, so it is read back from the query text. That works when every such
+        cast in the query has the same target type, or when they are all select-list items, which the text and the
+        tree list in the same order. Anything else, and any tree not parsed from the text here, is unknown."""
+
+        if not self.exact_text:
+            return None
+        root = node.root()
+        found = self._format_casts.get(id(root))
+        if found is None:
+            found = self._format_casts[id(root)] = self._read_format_casts(root)
+        return found.get(id(node))
+
+    def _read_format_casts(self, root: exp.Expression) -> dict[int, GType]:
+        nodes = [n for n in root.find_all(exp.StrToTime) if not (n.meta if n._meta is not None else {}).get("name")]  # noqa: SLF001
+        written = [m.upper() for m in _FORMAT_CAST.findall(_without_strings(self.text))]
+        if not nodes or len(written) != len(nodes):
+            return {}
+        if len(set(written)) == 1:
+            return {id(n): GType(written[0]) for n in nodes}
+        if not isinstance(root, exp.Select) or root.args.get("with") or root.args.get("with_"):
+            return {}
+        items = [i.this if isinstance(i, exp.Alias) else i for i in root.expressions]
+        direct = [i for i in items if isinstance(i, exp.StrToTime) and any(i is n for n in nodes)]
+        if len(direct) != len(nodes):
+            return {}
+        return {id(n): GType(w) for n, w in zip(direct, written)}
 
     def datatype(self, node) -> GType | None:
         return from_datatype(node, self.ambiguous, self.renames)

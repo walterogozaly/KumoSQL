@@ -357,6 +357,9 @@ def type_call(typer, node: exp.Expression, scope, ctes) -> T:
         return _named(typer, node.expression, ".".join(path + [name]), scope, ctes)
     if isinstance(node, exp.Extract):
         return extract(typer, node, scope, ctes)
+    if isinstance(node, exp.StrToTime) and not (node.meta if node._meta is not None else {}).get("name"):  # noqa: SLF001
+        _visit_children(typer, node, scope, ctes)  # CAST(x AS TIMESTAMP | DATETIME | TIME FORMAT ..)
+        return known(typer.format_cast_type(node))
     if isinstance(node, exp.Flatten) and isinstance(node.this, exp.Expression) and not node.args.get("expression"):
         flat = typer.array_path(node.this, scope, ctes)  # FLATTEN(arr.field): the array path, flattened
         if flat.type is not None and flat.type.kind == "ARRAY" and flat.type.element is not None and \
