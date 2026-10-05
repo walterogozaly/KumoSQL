@@ -152,7 +152,7 @@ class _Contracts:
         self.reads = pipeline.table_reads()
         self.lineage: dict[str, dict[str, tuple[str, tuple[str, ...]]]] = {}
         for ref, record in pipeline.explain_lineage().items():
-            sources = tuple(sorted(f"{s.table}.{s.column}" for s in record.sources))
+            sources = tuple(sorted({str(s) for s in record.sources}))
             self.lineage.setdefault(ref.table, {})[ref.column] = (record.status, sources)
 
     def of(self, key: str) -> dict[str, object]:

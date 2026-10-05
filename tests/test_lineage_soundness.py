@@ -60,7 +60,13 @@ def build(case: dict, root: Path) -> tuple[Pipeline, str, str | None]:
 
 
 def split(ref: str) -> tuple[str, str]:
+    """Table and column of ``table.column``; a struct field path stays with the column (``src.rec.a`` is ``src`` and ``rec.a``)."""
+
     table, _, column = ref.rpartition(".")
+    if table not in SCHEMAS and "." in table:
+        shorter, _, root = table.rpartition(".")
+        if shorter in SCHEMAS:
+            return shorter, f"{root}.{column}"
     return table, column
 
 

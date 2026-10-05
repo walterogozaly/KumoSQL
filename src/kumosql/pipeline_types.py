@@ -25,11 +25,50 @@ class Target:
 
 @dataclass(frozen=True, order=True)
 class ColumnRef:
+    """A column of a table or model, optionally narrowed to a field inside a STRUCT column.
+
+    ``column`` is always the root column the table stores. ``path`` names the struct fields read below it, outermost
+    first: ``widget.asset.id`` is ``ColumnRef(t, "widget", ("asset", "id"))``. An empty path is the whole column, which is
+    also the coarse answer when the field a query reads cannot be resolved.
+    """
+
     table: str
     column: str
+    path: tuple[str, ...] = ()
+
+    @property
+    def root(self) -> "ColumnRef":
+        """The whole root column, with no field path."""
+
+        return ColumnRef(self.table, self.column) if self.path else self
+
+    @property
+    def dotted(self) -> str:
+        """The column with its field path, ``widget.asset.id``."""
+
+        return ".".join((self.column, *self.path))
+
+    def overlaps(self, other: "ColumnRef") -> bool:
+        """Whether the two read the same stored value: same column, and one field path is a prefix of the other.
+
+        ``a.b`` overlaps ``a.b.c`` and ``a`` as a whole, never ``a.d``. Names compare case-insensitively.
+        """
+
+        return (
+            self.table == other.table
+            and self.column.lower() == other.column.lower()
+            and path_overlap(self.path, other.path)
+        )
 
     def __str__(self) -> str:
-        return f"{self.table}.{self.column}"
+        return f"{self.table}.{self.dotted}"
+
+
+def path_overlap(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
+    """Whether one struct field path is a prefix of the other (an empty path is the whole column)."""
+
+    shorter = min(len(left), len(right))
+    return [part.lower() for part in left[:shorter]] == [part.lower() for part in right[:shorter]]
 
 
 @dataclass(frozen=True)

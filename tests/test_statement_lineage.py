@@ -62,10 +62,13 @@ def test_decorated_schema_lookup_asks_for_base_table(monkeypatch):
     assert asked == [{"p.d.source"}]
 
 
-def test_physical_struct_field_keeps_honest_root_lineage():
+def test_physical_struct_field_lineage_names_the_field():
     src, dst = Target("p", "d", "source"), Target("p", "d", "result")
     pl = Pipeline({dst.key: Model(dst, "table", "SELECT rec.a AS value FROM p.d.source")}, {src.key: src}, {src.key: {"rec": "STRUCT<a INT64, b INT64>"}})
-    assert pl.column_lineage()[ColumnRef(dst.key, "value")] == {ColumnRef(src.key, "rec")}
+    # The edge names the field the SQL reads (it used to stop at the root column ``rec``); the root column is still the stored column.
+    edge = ColumnRef(src.key, "rec", ("a",))
+    assert pl.column_lineage()[ColumnRef(dst.key, "value")] == {edge}
+    assert edge.root == ColumnRef(src.key, "rec")
 
 
 def test_pre_post_operations_retain_targets():
