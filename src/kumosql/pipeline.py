@@ -1540,6 +1540,7 @@ class _Analysis:
                         schema=sqlglot_schema,
                         dialect="bigquery",
                         validate_qualify_columns=False,
+                        infer_schema=True,
                         quote_identifiers=False,
                     )
                 except Exception as exc:

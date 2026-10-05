@@ -1446,6 +1446,17 @@ def _routine_name(statement: str) -> str:
     return match.group(1).replace("`", "").split(".")[-1].strip().casefold() if match else ""
 
 
+def _rename_routine_calls(text: str, names: set[str]) -> str:
+    """``text`` with each call of a function the script defines renamed, so a function that shares a built-in's name parses.
+
+    ``cosine_distance(embedding)`` is a call of the script's own function, but sqlglot reads it as the built-in
+    ``COSINE_DISTANCE(a, b)`` and rejects the one argument. The renamed text is only read for the tables and columns it
+    names; it is tried only after the statement as written failed to parse."""
+
+    pattern = re.compile(r"(?<![\w.`$])(" + "|".join(re.escape(name) for name in sorted(names)) + r")(\s*\()", re.I)
+    return pattern.sub(lambda m: f"{m.group(1)}__udf{m.group(2)}", text)
+
+
 def collect_table_functions(texts: Iterable[str]) -> dict[str, TableFunction]:
     """Table functions defined in ``texts``, by lower-cased name as written and by bare name when that is unambiguous."""
 
@@ -1554,6 +1565,7 @@ class _Run:
         self.external = dict(external)
         self.functions = dict(functions)
         self.function_reads: dict[str, dict[str, exp.Table]] = {}  # routine defined in this script -> the tables its body reads
+        self.routine_names: set[str] = set()  # every function this script defines, lower-cased
         self.temps: dict[str, _Temp] = {}
         self.versions: dict[str, int] = {}
         self.variables: dict[str, _Variable] = {}
@@ -1971,6 +1983,8 @@ class _Run:
         """The statement as a tree, with every call of a table function this project defines replaced by its query."""
 
         tree = _parse_one(text_)
+        if tree is None and self.routine_names:
+            tree = _parse_one(_rename_routine_calls(text_, self.routine_names))
         if tree is not None and (self.default_dataset or self.default_project):
             self.qualify_defaults(tree, text_)
         return self.expand_functions(tree) if tree is not None and self.functions else tree
@@ -2108,6 +2122,8 @@ class _Run:
                 body = tree.args.get("expression") if isinstance(tree, exp.Create) else None  # not the routine's own name
                 params = set()
             found = {k: v for k, v in self.reads_of(body)[0].items() if k not in params} if body is not None else {}
+            if "FUNCTION" in head and _routine_name(text_):
+                self.routine_names.add(_routine_name(text_))
             if not found:
                 statement = Statement(index, line, "create_function", IGNORED, "defines a routine; read when called", conditional)
                 statement.definition = True

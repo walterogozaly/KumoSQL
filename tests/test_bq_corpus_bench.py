@@ -149,3 +149,37 @@ def test_a_js_publish_with_a_computed_dataset_is_listed_so_its_refs_resolve(tmp_
     # A different computed dataset may or may not be that one: unresolved, not guessed.
     assert ("p.d.other", "unsupported_ref") in codes
     assert not pipeline.upstream["p.d.other"]
+
+
+def _lineage(pipeline, node):
+    return {c["column"]: (c["status"], c.get("reason"), {(s["node"], s["column"]) for s in c["sources"]})
+            for c in pipeline.report()["column_lineage"] if c["node"] == node}
+
+
+def test_a_bare_column_comes_from_the_one_table_whose_columns_are_unknown(tmp_path):
+    # mimic-code's kdigo_uo: ``charttime`` is bare, one table of the join has known columns and none called that, the
+    # other is read from outside the project. A valid query gets the column from the second. With two tables of unknown
+    # columns the bare name stays unresolved, because either could own it.
+    pipeline = _project(tmp_path, {
+        "workflow_settings.yaml": "defaultProject: p\ndefaultDataset: d\n",
+        "definitions/src.sqlx": 'config { type: "declaration" }',
+        "definitions/known.sqlx": 'config { type: "view" }\nSELECT a, b FROM ${ref("src")}',
+        "definitions/one.sqlx": 'config { type: "view" }\nSELECT k.a, charttime FROM ${ref("known")} k JOIN `x.y.outside` o ON k.b = o.id',
+        "definitions/two.sqlx": 'config { type: "view" }\nSELECT k.a, charttime FROM ${ref("known")} k JOIN `x.y.o1` o ON k.b = o.id JOIN `x.y.o2` q ON q.id = o.id',
+    })
+    assert _lineage(pipeline, "p.d.one")["charttime"] == ("traced", None, {("x.y.outside", "charttime")})
+    assert _lineage(pipeline, "p.d.two")["charttime"][:2] == ("unknown", "unresolved_column")
+
+
+def test_a_script_function_named_like_a_builtin_does_not_stop_the_statement_parsing():
+    # google/patents-public-data defines ``cosine_distance(patent)`` itself; sqlglot reads the call as the built-in
+    # COSINE_DISTANCE(a, b) and rejects the one argument.
+    script = (
+        'CREATE TEMPORARY FUNCTION cosine_distance(v ARRAY<FLOAT64>) RETURNS FLOAT64 LANGUAGE js AS """return v[0];""";\n'
+        "SELECT cosine_distance(t.embedding) AS d FROM `p.d.t` t WHERE cosine_distance(t.embedding) < 0.5"
+    )
+    analysis = analyse_script(script)
+    assert [(s.kind, s.disposition) for s in analysis.statements] == [("create_function", "ignored"), ("select", "kept")]
+    assert list(analysis.reads) == ["p.d.t"]
+    # With no such function defined the call is the built-in's, so a one-argument call still does not parse.
+    assert analyse_script("SELECT cosine_distance(t.embedding) FROM `p.d.t` t").statements[0].disposition != "kept"

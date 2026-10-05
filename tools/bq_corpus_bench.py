@@ -112,7 +112,7 @@ def run_project(root: Path, *, stages: bool = True, reads: bool = False) -> dict
     for diagnostic in pipeline.all_diagnostics():
         if diagnostic.code == "missing_ref":
             missing.setdefault(diagnostic.model, set()).update(_MISSING_REF.findall(diagnostic.message))
-    stages: dict[str, Counter] = {"cleanup": Counter(), "format": Counter()}
+    stage_counts: dict[str, Counter] = {"cleanup": Counter(), "format": Counter()}
     handled: Counter = Counter()  # True: read with no gap, cleaned up and formatted with no gap either
     held = Counter()
     for path in files:
@@ -137,7 +137,7 @@ def run_project(root: Path, *, stages: bool = True, reads: bool = False) -> dict
         clean = model is None or model.key not in gapped
         for stage, run in (("cleanup", stage_cleanup), ("format", stage_format)) if stages else ():
             status, detail = run(text, PASS)
-            stages[stage][status] += 1
+            stage_counts[stage][status] += 1
             clean = clean and status == PASS
             if status == FAIL:
                 out["failures"].append(f"{relative}: {stage}: {detail}")
@@ -150,7 +150,7 @@ def run_project(root: Path, *, stages: bool = True, reads: bool = False) -> dict
     out["dependencies"] = deps
     if reads:
         out["table_reads"] = table_reads
-    out["stages"] = {stage: dict(counts) for stage, counts in stages.items()}
+    out["stages"] = {stage: dict(counts) for stage, counts in stage_counts.items()}
     out["handled"] = handled[True]
     return out
 
