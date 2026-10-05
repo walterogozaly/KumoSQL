@@ -227,11 +227,11 @@ def _unknown_typed_arrays(sql: str, dialect: str) -> str | None:
     spans: list[tuple[int, int, str]] = []
     n = len(tokens)
     for i, t in enumerate(tokens[:-1]):
-        if t.upper not in ("ARRAY", "STRUCT") or tokens[i + 1].type != "LT":
+        if t.upper not in ("ARRAY", "STRUCT") or (tokens[i + 1].type != "LT" and tokens[i + 1].text != "<>"):
             continue
         depth = 0
         j = i + 1
-        while j < n:
+        while j < n and tokens[i + 1].text != "<>":
             if tokens[j].type == "LT":
                 depth += 1
             elif tokens[j].type == "GT":
@@ -257,7 +257,7 @@ def _unknown_typed_arrays(sql: str, dialect: str) -> str | None:
         type_text = sql[t.start:tokens[j].end]
         if close is None or not _unparsable_type(type_text, dialect):
             continue
-        body = sql[opener.start:tokens[close].end]
+        body = sql[opener.start:tokens[close].end] if opener.type == "L_BRACKET" else sql[opener.end:tokens[close].start]
         spans.append((t.start, tokens[close].end, f"{UNKNOWN_FUNCTION}({body})"))
     return _cut(sql, spans) if spans else None
 
@@ -296,9 +296,49 @@ def _quantified_unnest(sql: str, dialect: str) -> str | None:
     return _cut(sql, spans) if spans else None
 
 
+_SELECT_LIST_END = frozenset({"FROM", "WHERE", "GROUP", "HAVING", "QUALIFY", "WINDOW", "ORDER", "LIMIT", "UNION",
+                              "INTERSECT", "EXCEPT"})
+
+
+def _recursion_depth(sql: str, dialect: str) -> str | None:
+    """``WITH RECURSIVE t AS (...) WITH DEPTH AS d BETWEEN 1 AND 4``: the depth modifier makes ``t`` one column wider,
+    an INT64 named ``d`` (``depth`` by default) after the others. It becomes that column in each branch of the CTE."""
+
+    tokens = _tokens(sql, dialect)
+    pairs = _pairs(tokens) if tokens is not None else None
+    if tokens is None or pairs is None:
+        return None
+    opening = {close: open_ for open_, close in pairs.items()}
+    spans: list[tuple[int, int, str]] = []
+    n = len(tokens)
+    for k in range(n - 2):
+        if tokens[k].type != "R_PAREN" or tokens[k + 1].upper != "WITH" or tokens[k + 2].upper != "DEPTH":
+            continue
+        at = k + 3
+        name = "depth"
+        if at + 1 < n and tokens[at].upper == "AS" and re.fullmatch(r"[A-Za-z_]\w*", tokens[at + 1].text):
+            name, at = tokens[at + 1].text, at + 2
+        if at + 3 < n and tokens[at].upper == "BETWEEN" and tokens[at + 1].type == "NUMBER" \
+                and tokens[at + 2].upper == "AND" and tokens[at + 3].type == "NUMBER":
+            at += 4
+        elif at + 1 < n and tokens[at].upper == "MAX" and tokens[at + 1].type == "NUMBER":
+            at += 2
+        body_open = opening[k]
+        branches = [i for i in _direct(tokens, pairs, body_open, k) if tokens[i].upper == "SELECT"]
+        if not branches or tokens[body_open + 1].upper != "SELECT" or any(tokens[i + 1].upper == "AS" for i in branches):
+            return None
+        for i in branches:
+            end = next((j for j in _direct(tokens, pairs, i, k) if tokens[j].upper.split(" ")[0] in _SELECT_LIST_END), k)
+            comma = "" if tokens[end - 1].type == "COMMA" else ","
+            spans.append((tokens[end - 1].end, tokens[end - 1].end, f"{comma} CAST(0 AS INT64) AS {name}"))
+        spans.append((tokens[k + 1].start, tokens[at - 1].end, ""))
+    return _cut(sql, spans) if spans else None
+
+
 _REWRITES = (
     ("privacy clause", _privacy_clause),
     ("aggregate filter or group", _aggregate_clauses),
+    ("recursion depth column", _recursion_depth),
     ("quantified comparison over an array", _quantified_unnest),
     ("unknown cast type", _unknown_casts),
     ("unknown typed constructor", _unknown_typed_arrays),
