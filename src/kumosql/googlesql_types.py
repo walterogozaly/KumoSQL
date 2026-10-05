@@ -233,11 +233,13 @@ class _TypeReader:
         return GType(kind)
 
 
-def from_datatype(datatype: exp.DataType, ambiguous: frozenset[str] = frozenset()) -> GType | None:
+def from_datatype(datatype: exp.DataType, ambiguous: frozenset[str] = frozenset(),
+                  renames: Mapping[str, str] | None = None) -> GType | None:
     """A sqlglot DataType (as parsed from BigQuery SQL) as a GType; None when sqlglot's type does not fix one.
 
     ``ambiguous`` names sqlglot types that stand for more than one GoogleSQL type in the query being typed (sqlglot
-    reads both ``INT`` and GoogleSQL's ``INT32`` as INT).
+    reads both ``INT`` and GoogleSQL's ``INT32`` as INT). ``renames`` maps a sqlglot type to the GoogleSQL kind it
+    certainly means in the query being typed (INT is INT32 when INT32 is the only spelling of it the query uses).
     """
 
     if not isinstance(datatype, exp.DataType):
@@ -248,26 +250,26 @@ def from_datatype(datatype: exp.DataType, ambiguous: frozenset[str] = frozenset(
         return None
     if name == "ARRAY":
         inner = datatype.expressions[0] if datatype.expressions else None
-        element = from_datatype(inner, ambiguous) if isinstance(inner, exp.DataType) else None
+        element = from_datatype(inner, ambiguous, renames) if isinstance(inner, exp.DataType) else None
         return GType.array(element) if element is not None else None
     if name == "RANGE":
         inner = datatype.expressions[0] if datatype.expressions else None
-        element = from_datatype(inner, ambiguous) if isinstance(inner, exp.DataType) else None
+        element = from_datatype(inner, ambiguous, renames) if isinstance(inner, exp.DataType) else None
         return GType.range(element) if element is not None else None
     if name == "STRUCT":
         fields = []
         for item in datatype.expressions:
             if isinstance(item, exp.ColumnDef) and isinstance(item.args.get("kind"), exp.DataType):
-                inner = from_datatype(item.args["kind"], ambiguous)
+                inner = from_datatype(item.args["kind"], ambiguous, renames)
                 fields.append(StructField(item.name, inner))
             elif isinstance(item, exp.DataType):
-                fields.append(StructField(None, from_datatype(item, ambiguous)))
+                fields.append(StructField(None, from_datatype(item, ambiguous, renames)))
             else:
                 return None
             if fields[-1].type is None:
                 return None
         return GType.struct(fields)
-    kind = _SQLGLOT_KINDS.get(name)
+    kind = (renames or {}).get(name) or _SQLGLOT_KINDS.get(name)
     return GType(kind) if kind else None
 
 
@@ -297,15 +299,53 @@ class Column:
 
 class Catalog:
     """Table schemas, found under each spelling of their name (``project.dataset.table``, ``dataset.table``,
-    ``table``); a spelling two tables share finds neither. ``functions`` are user-defined functions: a call to one has
-    an unknown type even if its name matches a built-in function. A table the catalog does not list is an
-    ``unknown_table`` finding only when ``complete`` says the catalog lists every table; otherwise it is just unknown."""
+    ``table``); a spelling two tables share finds neither. ``functions`` are user-defined functions: a call to one is
+    never typed as the built-in function of the same name. It is an iterable of names (the result type is unknown) or
+    a mapping from name to return type (a :class:`GType`, type text, or ``None`` for unknown); ``add_function`` and
+    ``add_function_sql`` add one, the latter from its ``CREATE FUNCTION`` statement. A table the catalog does not
+    list is an ``unknown_table`` finding only when ``complete`` says the catalog lists every table; otherwise it is
+    just unknown."""
 
-    def __init__(self, functions: Iterable[str] = (), complete: bool = False):
+    def __init__(self, functions: Iterable[str] | Mapping[str, object] = (), complete: bool = False):
         self._tables: dict[str, tuple[Column, ...]] = {}
-        self.functions = {f.lower() for f in functions}
+        self.functions: set[str] = set()
+        self.function_types: dict[str, GType | None] = {}
+        self.table_functions: dict[str, tuple[Column, ...] | None] = {}
+        for name in functions:
+            self.add_function(name, functions[name] if isinstance(functions, Mapping) else None)
         # True only when the catalog lists every table the query can read: only then is a missing table an error.
         self.complete = complete
+
+    def add_function(self, name: str, returns: "GType | str | None" = None) -> None:
+        """Register a user-defined function; ``returns`` is its result type (None when not known)."""
+
+        key = name.strip("`").lower()
+        self.functions.add(key)
+        self.function_types[key] = returns if isinstance(returns, GType) else parse_type(returns)
+
+    def add_table_function(self, name: str, columns: "Iterable[Column] | None" = None) -> None:
+        """Register a table-valued function; ``columns`` is its result schema (None when not known)."""
+
+        key = name.strip("`").lower()
+        self.functions.add(key)
+        self.table_functions[key] = tuple(columns) if columns is not None else None
+
+    def function_type(self, name: str) -> "GType | None":
+        """The return type of the user-defined function ``name`` (a dotted path is tried whole, then by its last
+        part), or None when it is not known."""
+
+        key = name.strip("`").lower()
+        if key in self.function_types:
+            return self.function_types[key]
+        return self.function_types.get(key.split(".")[-1])
+
+    def add_function_sql(self, statement: str) -> bool:
+        """Register the function a ``CREATE [TEMP] [AGGREGATE | TABLE] FUNCTION`` statement defines, with the return type
+        its ``RETURNS`` clause declares or, when it has none, its SQL body gives for the declared parameter types.
+        Functions that take ``ANY TYPE`` parameters have no body type. Returns False when the statement is not one this
+        reads (nothing is registered)."""
+
+        return add_function_sql(self, statement)
 
     @classmethod
     def from_types(cls, tables: Mapping[str, object], functions: Iterable[str] = (), complete: bool = False) -> "Catalog":
@@ -354,6 +394,176 @@ def field_type(f) -> GType | None:
     if (getattr(f, "mode", "") or "").upper() == "REPEATED":
         return GType.array(base) if base is not None else None
     return base
+
+
+# --- user-defined functions ---------------------------------------------------------------------------------------
+
+_CREATE_FUNCTION = re.compile(
+    r"(?is)^\s*create\s+(?:or\s+replace\s+)?(?:(?:temp|temporary|public|private)\s+)?(aggregate\s+|table\s+)?function\s+"
+    r"(?:if\s+not\s+exists\s+)?((?:`[^`]+`|[\w\-]+)(?:\s*\.\s*(?:`[^`]+`|[\w\-]+))*)\s*\("
+)
+_RETURNS = re.compile(r"(?is)^\s*returns\s+")
+_AFTER_RETURNS = {"DETERMINISTIC", "NOT", "LANGUAGE", "OPTIONS", "AS", "REMOTE"}
+_SIGNATURE_TOKEN = re.compile(r"[A-Za-z_]\w*|\S")
+
+
+def _masked(text: str) -> str:
+    """``text`` with the inside of strings, backticked names and comments blanked, so brackets and keywords found in
+    it are structure (same length, so positions carry over)."""
+
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            end = n if end < 0 else end + 2
+            out.append(" " * (end - i))
+            i = end
+        elif text.startswith("--", i) or c == "#":
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+            out.append(" " * (end - i))
+            i = end
+        elif c in "\"'`":
+            quote = c * 3 if c != "`" and text.startswith(c * 3, i) else c
+            j = i + len(quote)
+            while j < n and not text.startswith(quote, j):
+                j += 2 if text[j] == "\\" else 1
+            end = min(n, j + len(quote))
+            out.append(" " * (end - i))  # the quotes too: a masked string is blank, not text
+            i = end
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def _closing(masked: str, open_index: int) -> int:
+    """The index of the bracket closing the one at ``open_index`` of a masked text; -1 when unbalanced."""
+
+    depth = 0
+    for i in range(open_index, len(masked)):
+        if masked[i] in "([":
+            depth += 1
+        elif masked[i] in ")]":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _split_top(text: str, masked: str) -> list[str]:
+    parts, start, depth = [], 0, 0
+    for i, c in enumerate(masked):
+        if c in "([<":
+            depth += 1
+        elif c in ")]>":
+            depth -= 1
+        elif c == "," and depth == 0:
+            parts.append(text[start:i].strip())
+            start = i + 1
+    parts.append(text[start:].strip())
+    return [p for p in parts if p]
+
+
+def _declared_type(text: str) -> GType | None:
+    """A type written in a function signature; None when it is not one this reads. ``FLOAT`` is GoogleSQL's 32-bit
+    float but BigQuery's spelling of FLOAT64 in schemas, so it is left unknown."""
+
+    if re.search(r"(?i)\bfloat\b", text):
+        return None
+    return parse_type(re.sub(r"\s+", " ", text.strip()))
+
+
+def _table_columns(text: str) -> tuple[Column, ...] | None:
+    """The columns of a ``TABLE<a INT64, ..>`` type; None when it is not one or a column type is not known."""
+
+    m = re.match(r"(?is)^\s*table\s*<(.*)>\s*$", text)
+    if not m:
+        return None
+    struct = _declared_type("STRUCT<" + m.group(1) + ">")
+    if struct is None or struct.kind != "STRUCT" or not struct.complete or any(f.name is None for f in struct.fields):
+        return None
+    return tuple(Column(f.name, f.type) for f in struct.fields)
+
+
+def add_function_sql(catalog: Catalog, statement: str) -> bool:
+    """See :meth:`Catalog.add_function_sql`."""
+
+    m = _CREATE_FUNCTION.match(statement)
+    if not m:
+        return False
+    kind = (m.group(1) or "").strip().lower()
+    name = ".".join(part.strip().strip("`") for part in m.group(2).split("."))
+    masked = _masked(statement)
+    open_index = m.end() - 1
+    close = _closing(masked, open_index)
+    if close < 0:
+        return False
+    params_text, params_masked = statement[open_index + 1:close], masked[open_index + 1:close]
+    params: list[tuple[str, GType | None]] = []
+    for text in _split_top(params_text, params_masked):
+        mm = re.match(r"(?s)^\s*(`[^`]+`|\w+)\s+(.*)$", text)
+        if not mm:
+            params.append(("", None))
+            continue
+        declared = re.split(r"(?i)\s+(?:not\s+aggregate|default)\b", mm.group(2).strip())[0]
+        params.append((mm.group(1).strip("`"), _declared_type(declared)))
+    rest, rest_masked = statement[close + 1:], masked[close + 1:]
+    returns_text = None
+    r = _RETURNS.match(rest_masked)
+    if r:
+        depth, end = 0, len(rest)
+        for token in _SIGNATURE_TOKEN.finditer(rest_masked, r.end()):
+            word = token.group(0)
+            if word in "<(":
+                depth += 1
+            elif word in ">)":
+                depth -= 1
+            elif depth == 0 and word.upper() in _AFTER_RETURNS:
+                end = token.start()
+                break
+        returns_text = rest[r.end():end].strip()
+    if kind == "table":
+        catalog.add_table_function(name, _table_columns(returns_text) if returns_text else None)
+        return True
+    returns = _declared_type(returns_text) if returns_text else None
+    if returns is None and returns_text is None:
+        returns = _sql_body_type(catalog, params, rest, rest_masked)
+    catalog.add_function(name, returns if returns is not None and returns.complete else None)
+    return True
+
+
+def _sql_body_type(catalog: Catalog, params: list[tuple[str, GType | None]], rest: str, rest_masked: str) -> GType | None:
+    """The type of a SQL function's body when it declares no return type: its expression typed over the parameters.
+    Unknown when a parameter is templated (``ANY TYPE``), the function is not SQL, or the body type is not certain."""
+
+    language = re.search(r"(?i)\blanguage\s+(\w+)", rest_masked)
+    if (language and language.group(1).lower() != "sql") or any(not n or t is None or not t.complete for n, t in params):
+        return None
+    a = re.search(r"(?i)\bas\s*\(", rest_masked)
+    if not a:
+        return None
+    start = a.end() - 1
+    end = _closing(rest_masked, start)
+    if end < 0:
+        return None
+    body = rest[start + 1:end].strip()
+    inner = Catalog()
+    inner.functions, inner.function_types, inner.table_functions = catalog.functions, catalog.function_types, \
+        catalog.table_functions
+    names = [n.lower() for n, _ in params]
+    if len(set(names)) != len(names):
+        return None
+    if params:
+        inner.add("__udf_params", [Column(n, t) for n, t in params])
+        query = f"SELECT {body}\nFROM __udf_params"
+    else:
+        query = f"SELECT {body}"
+    typed = infer(query, inner)
+    if typed.columns is None or len(typed.columns) != 1 or typed.findings:
+        return None
+    return typed.columns[0].type
 
 
 # --- results ------------------------------------------------------------------------------------------------------
@@ -413,9 +623,14 @@ def infer(sql_or_tree, catalog: Catalog | None = None, dialect: str = "bigquery"
                 return TypedQuery(None, None, (), {}, {}, "pipe syntax is not typed")
             parse_text, pipes = prepared
         try:
-            tree = sqlglot.parse_one(parse_text, read=dialect)
+            statements = [s for s in sqlglot.parse(parse_text, read=dialect) if s is not None]
         except Exception as exc:  # noqa: BLE001 - an unparsed query has no types
             return TypedQuery(None, None, (), {}, {}, f"parse error: {exc}"[:200])
+        # A trailing `;` followed only by a comment is parsed as a second, empty statement.
+        statements = [s for s in statements if not isinstance(s, exp.Semicolon)]
+        if len(statements) != 1:
+            return TypedQuery(None, None, (), {}, {}, "not a single statement")
+        tree = statements[0]
     else:
         tree = sql_or_tree
         if any(re.fullmatch(r"__tmp\d+", t.name) for t in tree.find_all(exp.Table)):
@@ -427,7 +642,7 @@ def infer(sql_or_tree, catalog: Catalog | None = None, dialect: str = "bigquery"
         return TypedQuery(tree, None, (), {}, {}, "Dataform placeholder in the query")  # a mask can stand for anything
     if text is not None and _KEYWORD_FIELD.search(_without_strings(text)):
         return TypedQuery(tree, None, (), {}, {}, "a type keyword after a dot is read differently by older sqlglot")
-    typer = _Typer(catalog, text if text is not None else tree.sql(dialect))
+    typer = _Typer(catalog, text if text is not None else tree.sql(dialect), exact_text=text is not None)
     typer.pipes = pipes
     try:
         rel = typer.query(tree, None, {})
@@ -460,6 +675,9 @@ def _is_plain_name(node) -> bool:
     """An identifier, or (sqlglot 26 reads the UNPIVOT name column so) a column with no qualifier."""
 
     return isinstance(node, exp.Identifier) or (isinstance(node, exp.Column) and not node.table)
+
+
+_FORMAT_CAST = re.compile(r"\bAS\s+(TIMESTAMP|DATETIME|TIME)\s+FORMAT\b", re.I)
 
 
 def _without_strings(sql: str) -> str:
@@ -584,19 +802,30 @@ class _Scope:
 
 
 class _Typer:
-    def __init__(self, catalog: Catalog, text: str):
+    def __init__(self, catalog: Catalog, text: str, exact_text: bool = False):
         self.catalog = catalog
         self.text = text
+        self.exact_text = exact_text  # ``text`` is the SQL the caller wrote, not regenerated from a tree
+        self._format_casts: dict[int, dict[int, GType]] = {}
+        self.with_variables: list[dict[str, T]] = []  # the variables of the enclosing WITH(..) expressions
         self.types: dict[int, tuple[exp.Expression, GType | None]] = {}
         self.relations: dict[int, tuple[exp.Expression, tuple[Column, ...] | None]] = {}
         self.findings: list[Finding] = []
         self.select_aliases: frozenset[str] = frozenset()  # select-list aliases HAVING or QUALIFY may name
         self.pipes: dict = {}  # pipe chains by the placeholder table that stands for each (googlesql_pipe_types)
         clean = _without_strings(text).upper()
-        ambiguous = set()
+        ambiguous, renames = set(), {}
         if re.search(r"\bINT32\b", clean):
-            ambiguous.add("INT")
+            # sqlglot reads INT, INTEGER, INT4, BYTEINT and INT32 all as INT; the first four are GoogleSQL's INT64.
+            if re.search(r"\b(?:INT|INTEGER|INT4|BYTEINT)\b", clean):
+                ambiguous.add("INT")
+            else:
+                renames["INT"] = "INT32"
+            # INT32 is not a BigQuery type, so the query is GoogleSQL as the engine reads it, where FLOAT is FLOAT32
+            # (BigQuery has no FLOAT in queries; its schemas spell FLOAT64 that way).
+            renames["FLOAT"] = "FLOAT32"
         self.ambiguous = frozenset(ambiguous)
+        self.renames = renames
         from . import googlesql_signatures
 
         self.signatures = googlesql_signatures
@@ -613,8 +842,43 @@ class _Typer:
     def finding(self, code: str, message: str, node: exp.Expression | None = None) -> None:
         self.findings.append(Finding(code, message, node))
 
+    def format_cast_type(self, node: exp.Expression) -> GType | None:
+        """The target type of ``CAST(x AS TIMESTAMP | DATETIME | TIME FORMAT ..)``: sqlglot reads all three as the same
+        StrToTime node and keeps no sign of which, so it is read back from the query text. That works when every such
+        cast in the query has the same target type, or when they are all select-list items, which the text and the
+        tree list in the same order. Anything else, and any tree not parsed from the text here, is unknown."""
+
+        if not self.exact_text:
+            return None
+        root = node.root()
+        found = self._format_casts.get(id(root))
+        if found is None:
+            found = self._format_casts[id(root)] = self._read_format_casts(root)
+        return found.get(id(node))
+
+    def _read_format_casts(self, root: exp.Expression) -> dict[int, GType]:
+        nodes = [n for n in root.find_all(exp.StrToTime) if not (n.meta if n._meta is not None else {}).get("name")]  # noqa: SLF001
+        written = [m.upper() for m in _FORMAT_CAST.findall(_without_strings(self.text))]
+        if not nodes or len(written) != len(nodes):
+            return {}
+        if len(set(written)) == 1:
+            return {id(n): GType(written[0]) for n in nodes}
+        if not isinstance(root, exp.Select) or root.args.get("with") or root.args.get("with_"):
+            return {}
+        items = [i.this if isinstance(i, exp.Alias) else i for i in root.expressions]
+        direct = [i for i in items if isinstance(i, exp.StrToTime) and any(i is n for n in nodes)]
+        if len(direct) != len(nodes):
+            return {}
+        return {id(n): GType(w) for n, w in zip(direct, written)}
+
+    def with_variable(self, name: str) -> T:
+        for env in reversed(self.with_variables):
+            if name.strip("`").lower() in env:
+                return env[name.strip("`").lower()]
+        return UNKNOWN
+
     def datatype(self, node) -> GType | None:
-        return from_datatype(node, self.ambiguous)
+        return from_datatype(node, self.ambiguous, self.renames)
 
     # ---- queries
 
@@ -680,6 +944,7 @@ class _Typer:
 
         if not isinstance(body, exp.Union):
             return _Rel(None)
+        ctes = self.with_clause(body, outer, ctes)  # a WITH on the whole union is visible to both terms
         base = self.query(body.this, outer, ctes)
         if base is None or base.columns is None:
             return _Rel(None)
@@ -700,6 +965,10 @@ class _Typer:
             return _Rel(None)
         if mode is not None:
             return self.by_name(node, rels, mode)
+        if all(r.value is not None for r in rels):
+            return self.set_operation_values(node, rels)
+        if any(r.value is not None for r in rels) or any(r.as_struct for r in rels) != all(r.as_struct for r in rels):
+            return _Rel(None)
         widths = {len(r.columns) for r in rels}
         if len(widths) > 1:
             self.finding("set_operation_width", f"set operation branches have {sorted(widths)} columns", node)
@@ -708,7 +977,16 @@ class _Typer:
         for position, first in enumerate(rels[0].columns):
             label = first.name or f"#{position + 1}"
             columns.append(_Col(first.name, self._set_output([r.columns[position].t for r in rels], label, node)))
-        return _Rel(columns)
+        return _Rel(columns, as_struct=all(r.as_struct for r in rels))
+
+    def set_operation_values(self, node: exp.SetOperation, rels: list[_Rel]) -> _Rel | None:
+        """UNION of value tables (SELECT AS VALUE): the rows are combined as values, so the output is a value table of
+        their common type."""
+
+        common = self._set_output([r.value for r in rels], "value", node)
+        if common.type is None:
+            return _Rel(None)
+        return _Rel([_Col(None, common)], value=common)
 
     def _set_output(self, branch: list[T], label: str, node) -> T:
         """One output column of a set operation: the supertype of its branches, no longer a literal."""
@@ -853,10 +1131,26 @@ class _Typer:
         return scope
 
     def add_item(self, item: exp.Expression, scope: _Scope, outer, ctes, join: exp.Join | None) -> None:
+        if isinstance(item, exp.Subquery) and isinstance(item.this, exp.Table) and not item.args.get("alias") \
+                and not item.args.get("pivots"):
+            item = item.this  # (S JOIN T ON ..): a parenthesized join
+        if isinstance(item, exp.Table) and item.args.get("joins") and not item.args.get("pivots") and \
+                isinstance(item.this, exp.Identifier) and not any(j.args.get("using") for j in item.args["joins"]) and \
+                not (join is not None and join.args.get("using")):
+            # R JOIN (S JOIN T ON ..) ON ..: the nested tables take part in the join like the others. The nested ON
+            # conditions are not typed.
+            self.add_item_range(item, scope, outer, ctes, join, nested=True)
+            for nested in item.args["joins"]:
+                self.add_item(nested.this, scope, outer, ctes, nested)
+            return
+        self.add_item_range(item, scope, outer, ctes, join)
+
+    def add_item_range(self, item: exp.Expression, scope: _Scope, outer, ctes, join: exp.Join | None,
+                       nested: bool = False) -> None:
         before = list(scope.star) if scope.star is not None else None
         new = self.range_of(item, scope, outer, ctes)
-        if isinstance(item, (exp.Table, exp.Subquery)) and item.args.get("joins"):
-            new = [_Range(None, None, node=item)]  # a parenthesized join
+        if isinstance(item, (exp.Table, exp.Subquery)) and item.args.get("joins") and not nested:
+            new = [_Range(None, None, node=item)]  # a parenthesized join this typer does not model
         if item.args.get("pivots"):
             new = [self.pivoted(new, item.args["pivots"], outer, ctes, item)]
         for r in new:
@@ -1003,8 +1297,8 @@ class _Typer:
         merged_star: list[_Col] = []
         for name in names:
             key = name.lower()
-            left = self._unique(left_ranges, scope.merged, key)
-            right = self._unique(new, {}, key)
+            left = self._unique(left_ranges, scope.merged, key, name)
+            right = self._unique(new, {}, key, name)
             if left is None or right is None:
                 t = UNKNOWN
                 col_name = name
@@ -1030,7 +1324,7 @@ class _Typer:
         ]
 
     @staticmethod
-    def _unique(ranges: list[_Range], merged: dict, key: str) -> _Col | None:
+    def _unique(ranges: list[_Range], merged: dict, key: str, spelling: str | None = None) -> _Col | None:
         if key in merged:
             return merged[key]
         found = []
@@ -1039,6 +1333,9 @@ class _Typer:
             if cols is None:
                 return None
             found.extend(c for c in cols if c.name and c.name.lower() == key)
+            if r.value is not None and r.value.type is not None and r.value.type.kind != "STRUCT" and r.display \
+                    and r.display == spelling:
+                found.append(_Col(r.display, r.value))  # UNNEST(arr) AS a: the column is named a, like the range
         return found[0] if len(found) == 1 else None
 
     def range_of(self, item: exp.Expression, scope: _Scope, outer, ctes) -> list[_Range]:
@@ -1060,18 +1357,34 @@ class _Typer:
             return [_Range(name, columns, node=item)]
         if isinstance(item, exp.Unnest):
             return self.unnest_range(item, scope, ctes)
+        if isinstance(item, exp.Lateral) and not item.args.get("view") and isinstance(item.this, exp.Subquery) \
+                and isinstance(item.this.this, exp.Query):
+            # LATERAL (SELECT ..): a subquery that may read the FROM items to its left
+            rel = self._rename(self.query(item.this.this, scope, ctes), alias)
+            name = alias_name.lower() if alias_name else None
+            if rel is None or rel.value is not None or rel.columns is None:
+                return [_Range(name, None, node=item)]
+            return [_Range(name, [_Col(c.name, _plain(c.t), c.required) for c in rel.columns], node=item)]
         return [_Range(alias_name.lower() if alias_name else None, None, node=item)]
 
     def table_range(self, item: exp.Table, scope: _Scope, ctes, alias_name: str | None) -> _Range:
         parts = [p.name for p in (item.args.get("catalog"), item.args.get("db"), item.this) if isinstance(p, exp.Expression)]
         if not isinstance(item.this, exp.Identifier):
+            if isinstance(item.this, exp.Anonymous) and isinstance(item.this.this, str) and len(parts) == 1:
+                # a table-valued function the catalog declares: its columns are its declared result schema
+                columns = self.catalog.table_functions.get(item.this.this.lower())
+                if columns is not None:
+                    return _Range((alias_name or item.this.this).lower(), [_Col(c.name, known(c.type)) for c in columns],
+                                  node=item)
             return _Range(alias_name.lower() if alias_name else None, None, node=item)  # a table function
         name = (alias_name or parts[-1]).lower()
         # A path whose first part is a range variable to its left is an array to unnest (FROM t, t.arr).
         if len(parts) > 1:
-            kind, target = scope.lookup(parts[0])
+            kind = self._visible(scope, parts[0])
             if kind in ("range", "column"):
-                return _Range(name, None, node=item)
+                array = self.path_value(parts, scope, item, ctes)
+                element = known(array.type.element) if array.type is not None and array.type.kind == "ARRAY" else UNKNOWN
+                return _Range(name, None, value=element, node=item, display=alias_name or parts[-1])
         if len(parts) == 1 and parts[0].lower() in ctes:
             rel = ctes[parts[0].lower()]
             if rel is None or rel.columns is None:
@@ -1092,16 +1405,14 @@ class _Typer:
         if isinstance(alias, exp.TableAlias) and alias.name and not names:
             names = [alias.name]
         exprs = item.expressions
+        if len(exprs) > 1:
+            return self.multiway_unnest(item, scope, ctes, alias)
         if len(exprs) != 1 or len(names) > 1:
             return [_Range(names[0].lower() if names else None, None, node=item)]
-        t = self.expr(exprs[0], scope, ctes)
+        t = self.array_path(exprs[0], scope, ctes) if _is_path(exprs[0]) else self.expr(exprs[0], scope, ctes)
         element: T
-        if t.lit == "empty_array":
-            element = UNKNOWN
-        elif t.type is not None and t.type.kind == "ARRAY":
+        if t.type is not None and t.type.kind == "ARRAY" and t.lit != "null":
             element = known(t.type.element)
-        elif t.lit == "null":
-            element = UNKNOWN
         else:
             element = UNKNOWN
         name = names[0] if names else None
@@ -1111,6 +1422,127 @@ class _Typer:
             off_name = offset.name if isinstance(offset, exp.Expression) else "offset"
             ranges.append(_Range(off_name.lower(), None, value=T(INT64), display=off_name))
         return ranges
+
+    def multiway_unnest(self, item: exp.Unnest, scope: _Scope, ctes, alias) -> list[_Range]:
+        """UNNEST(a, b, ..): a table with one column per array (named by a column list alias, else anonymous), and
+        the WITH OFFSET column as its own range."""
+
+        elements = []
+        for e in item.expressions:
+            t = self.array_path(e, scope, ctes) if _is_path(e) else self.expr(e, scope, ctes)
+            elements.append(known(t.type.element) if t.type is not None and t.type.kind == "ARRAY" and t.lit != "null"
+                            else UNKNOWN)
+        names = [c.name for c in alias.args.get("columns") or []] if isinstance(alias, exp.TableAlias) else []
+        if names and len(names) != len(elements):
+            return [_Range(None, None, node=item)]
+        table = alias.name.lower() if isinstance(alias, exp.TableAlias) and alias.name and not names else None
+        columns = [_Col(names[i] if names else None, _plain(t)) for i, t in enumerate(elements)]
+        ranges = [_Range(table, columns, node=item)]
+        offset = item.args.get("offset")
+        if offset:
+            off_name = offset.name if isinstance(offset, exp.Expression) else "offset"
+            ranges.append(_Range(off_name.lower(), None, value=T(INT64), display=off_name))
+        return ranges
+
+    # ---- array paths
+
+    @staticmethod
+    def _visible(scope: _Scope | None, name: str) -> str:
+        """What a name is where it is first found, looking outward through the enclosing scopes: ``range``,
+        ``column``, ``ambiguous``, ``unknown`` or ``none``."""
+
+        while scope is not None:
+            kind, _ = scope.lookup(name)
+            if kind != "none":
+                return kind
+            scope = scope.parent
+        return "none"
+
+    def path_value(self, parts: list[str], scope, node, ctes) -> T:
+        """The value a dotted name denotes before any array flattening: the column (or range) named by its first
+        parts, with the remaining parts stepped through :meth:`flatten_steps`."""
+
+        head = self.path(parts[:1], scope, node, ctes)
+        rest = parts[1:]
+        if isinstance(head, _Range):
+            if head.value is not None:
+                head = head.value
+            elif rest:
+                head = self.path(parts[:2], scope, node, ctes)
+                rest = parts[2:]
+            else:
+                head = known(head.struct_type())
+        return self.flatten_steps(_plain(head), [("field", name) for name in rest])
+
+    def array_path(self, node: exp.Expression, scope, ctes) -> T:
+        """An array path expression in a position that flattens it (``UNNEST(arr.field)``, ``FLATTEN(arr.field)``):
+        a field access on an ARRAY of STRUCTs reads the field of every element, and the result is an ARRAY of it.
+        Anything else is typed as an ordinary expression."""
+
+        steps: list[tuple] = []
+        current = node
+        while True:
+            if isinstance(current, exp.Paren):
+                current = current.this
+            elif isinstance(current, exp.Dot) and isinstance(current.expression, exp.Identifier):
+                steps.insert(0, ("field", current.expression.name))
+                current = current.this
+            elif isinstance(current, exp.Bracket) and len(current.expressions) == 1:
+                steps.insert(0, ("index", current))
+                current = current.this
+            else:
+                break
+        if not steps:
+            return self.expr(node, scope, ctes)
+        for kind, step in steps:
+            if kind == "index":
+                self.expr(step.expressions[0], scope, ctes)
+        if isinstance(current, exp.Column) and not isinstance(current.this, exp.Star):
+            parts = [p.name for p in (current.args.get("catalog"), current.args.get("db"), current.args.get("table"),
+                                      current.this) if p is not None]
+            base = self.path_value(parts, scope, current, ctes)
+            self.note(current, base)
+        else:
+            base = self.expr(current, scope, ctes)
+        return self.note(node, self.flatten_steps(base, steps))
+
+    def flatten_steps(self, base: T, steps: list[tuple]) -> T:
+        """Apply field and subscript ``steps`` to ``base`` as an array path. A field read on an ARRAY applies to each
+        element, from then on, and the value is an ARRAY of what the steps give: an array-valued field is flattened
+        into it, unless a subscript picks one element from it per element."""
+
+        current, mapped = base.type, False  # mapped: ``current`` is the type of one element's value
+        for kind, step in steps:
+            if current is None:
+                return UNKNOWN
+            if kind == "index":
+                key = step.expressions[0]
+                subscript = step.args.get("offset") is not None or (
+                    isinstance(key, exp.Anonymous) and str(key.this).upper() in ("OFFSET", "ORDINAL", "SAFE_OFFSET",
+                                                                                 "SAFE_ORDINAL"))
+                if current.kind == "JSON":
+                    continue
+                if current.kind != "ARRAY" or not subscript:
+                    return UNKNOWN
+                current = current.element
+                continue
+            if current.kind == "ARRAY":
+                current, mapped = current.element, True
+                if current is None or current.kind == "ARRAY":
+                    return UNKNOWN  # an array of arrays: not a path this models
+            if current.kind == "JSON":
+                continue
+            if current.kind != "STRUCT":
+                return UNKNOWN
+            current = current.field(step)
+        if current is None:
+            return UNKNOWN
+        if not mapped:
+            return known(current)
+        if current.kind == "ARRAY":  # an array-valued last field is flattened into the result
+            return known(GType.array(current.element)) if current.element is not None and current.element.kind != "ARRAY" \
+                else UNKNOWN
+        return known(GType.array(current))
 
     # ---- SELECT list
 
@@ -1424,11 +1856,25 @@ class _Typer:
             key = node.expressions[0]
             if isinstance(key, exp.Literal) and key.is_string:
                 return T(base.type.field(key.this)) if base.type.field(key.this) is not None else UNKNOWN
-            if isinstance(key, exp.Literal) and node.args.get("offset") in (0, 1):
-                position = int(key.this) - node.args["offset"]  # OFFSET(k) is offset 0, ORDINAL(k) offset 1
+            offset = node.args.get("offset")
+            if isinstance(key, exp.Anonymous) and offset is None and not node.args.get("safe"):
+                # sqlglot leaves OFFSET(k) / ORDINAL(k) unread in a chain of subscripts (t[OFFSET(0)][OFFSET(1)])
+                word = str(key.this).upper()
+                offset = {"OFFSET": 0, "ORDINAL": 1}.get(word) if len(key.expressions) == 1 else None
+                key = key.expressions[0] if offset is not None else key
+            if isinstance(key, exp.Literal) and not key.is_string and offset in (0, 1) and not node.args.get("safe") \
+                    and re.fullmatch(r"\d+", key.this):
+                position = int(key.this) - offset  # OFFSET(k) is offset 0, ORDINAL(k) offset 1
                 fields = base.type.fields
                 return known(fields[position].type) if 0 <= position < len(fields) else UNKNOWN
         return UNKNOWN
+
+
+def _is_path(node: exp.Expression) -> bool:
+    """Whether an expression is a field access or subscript chain (the shapes an array path can take)."""
+
+    return isinstance(node, (exp.Dot, exp.Bracket)) or (isinstance(node, exp.Paren) and _is_path(node.this)) or (
+        isinstance(node, exp.Column) and not isinstance(node.this, exp.Star) and bool(node.args.get("table")))
 
 
 def _set_mode(node: exp.SetOperation) -> str | None:
@@ -1600,6 +2046,9 @@ def _supertype(ts: list[T]) -> T | None:
         return None
     if any(t.type.kind == "STRUCT" for t in typed):
         return _struct_supertype(typed)
+    if typed and all(t.type.kind == "ARRAY" and t.lit is None for t in typed) and len({t.type for t in typed}) > 1:
+        # Arrays that differ only in struct field names are the same type to GoogleSQL (the first one's names are kept).
+        return typed[0] if all(_equivalent(t.type, typed[0].type) for t in typed) else None
     if non_literals:
         candidates = _common_supertypes([t.type for t in non_literals])
         if candidates is None:
@@ -1671,8 +2120,6 @@ def _common_supertypes(types: list[GType]) -> list[GType] | None:
     if kinds <= NUMERIC_KINDS:
         if "UINT64" in kinds and kinds & {"INT32", "INT64"}:
             return None  # documented as having no supertype; leave it unknown
-        if "FLOAT32" in kinds and kinds - {"FLOAT32", "FLOAT64"}:
-            return None
         common = set.intersection(*(_NUMERIC_SUPERTYPES[k] for k in kinds))
         if all(k in _EXACT for k in kinds):
             exact = common & _EXACT

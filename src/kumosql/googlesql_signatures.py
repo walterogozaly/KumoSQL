@@ -6,7 +6,8 @@ at d82db99): the "Return type" of each function and, for numeric functions, its 
 named as written (sqlglot keeps the written name of a call in ``meta["name"]``); a call sqlglot built itself, with no
 written name, is unknown unless its node class has a single source in BigQuery syntax.
 
-A call to a user-defined function (``Catalog.functions``) is unknown even when a built-in has the same name.
+A call to a user-defined function (``Catalog.functions``) has the type the catalog gives it (unknown when it gives none),
+never the type of a built-in of the same name.
 """
 
 from __future__ import annotations
@@ -368,11 +369,24 @@ def type_call(typer, node: exp.Expression, scope, ctes) -> T:
         if path[0] == "SAFE":  # SAFE.fn(..) has the type of fn(..); only the error becomes NULL
             path = path[1:]
         return _named(typer, node.expression, ".".join(path + [name]), scope, ctes)
+    if isinstance(node, exp.Anonymous) and node.this == "__KUMO_WITH__" and len(node.expressions) >= 2:
+        return with_expression(typer, node, scope, ctes)
     if isinstance(node, exp.Extract):
         return extract(typer, node, scope, ctes)
+    if isinstance(node, exp.StrToTime) and not (node.meta if node._meta is not None else {}).get("name"):  # noqa: SLF001
+        _visit_children(typer, node, scope, ctes)  # CAST(x AS TIMESTAMP | DATETIME | TIME FORMAT ..)
+        return known(typer.format_cast_type(node))
+    if isinstance(node, exp.Flatten) and isinstance(node.this, exp.Expression) and not node.args.get("expression"):
+        flat = typer.array_path(node.this, scope, ctes)  # FLATTEN(arr.field): the array path, flattened
+        if flat.type is not None and flat.type.kind == "ARRAY" and flat.type.element is not None and \
+                flat.type.element.kind != "ARRAY":
+            return T(flat.type)
+        return UNKNOWN
     if isinstance(node, exp.Identifier):
         return _lambda_parameter(typer, node, scope)
-    if isinstance(node, (exp.Var, exp.Star, exp.Placeholder, exp.Parameter, exp.JSONPath, exp.Lambda)):
+    if isinstance(node, exp.Var):
+        return typer.with_variable(node.name)  # a WITH expression's variable (bigquery_syntax turns its uses into Var)
+    if isinstance(node, (exp.Star, exp.Placeholder, exp.Parameter, exp.JSONPath, exp.Lambda)):
         return UNKNOWN
     if not isinstance(node, exp.Func):
         _visit_children(typer, node, scope, ctes)
@@ -382,6 +396,26 @@ def type_call(typer, node: exp.Expression, scope, ctes) -> T:
         _visit_children(typer, node, scope, ctes)
         return UNKNOWN
     return _named(typer, node, name, scope, ctes)
+
+
+def with_expression(typer, node: exp.Anonymous, scope, ctes) -> T:
+    """``WITH(a AS e1, b AS e2, result)`` (written by bigquery_syntax as ``__KUMO_WITH__(__KUMO_WITH_VARIABLE__('a', e1),
+    .., result)``): each variable has the type of its expression, seen by the ones after it and by the result, and the
+    expression has the type of the result."""
+
+    *definitions, result = node.expressions
+    env: dict[str, T] = {}
+    typer.with_variables.append(env)
+    try:
+        for definition in definitions:
+            if not (isinstance(definition, exp.Anonymous) and definition.this == "__KUMO_WITH_VARIABLE__"
+                    and len(definition.expressions) == 2 and definition.expressions[0].is_string):
+                return UNKNOWN
+            value = typer.expr(definition.expressions[1], scope, ctes)
+            env[definition.expressions[0].this.strip("`").lower()] = _plain(value)
+        return _plain(typer.expr(result, scope, ctes))
+    finally:
+        typer.with_variables.pop()
 
 
 def _namespace(node) -> list[str] | None:
@@ -424,7 +458,7 @@ def _visit_children(typer, node, scope, ctes) -> None:
 def _named(typer, node, name: str, scope, ctes) -> T:
     if name.lower() in typer.catalog.functions or name.split(".")[-1].lower() in typer.catalog.functions:
         _visit_children(typer, node, scope, ctes)
-        return UNKNOWN
+        return known(typer.catalog.function_type(name))  # a user-defined function: its declared (or body) type
     if name in ("ARRAY_TRANSFORM",) or (name in ("ARRAY_FILTER",) and _has_lambda(node)):
         return lambda_call(typer, node, name, scope, ctes)
     if name == "ARRAY_ZIP" and isinstance(node, exp.Anonymous):
@@ -462,8 +496,8 @@ def _named(typer, node, name: str, scope, ctes) -> T:
         return T(GType.array(INT64))  # an untyped NULL is INT64
     if name in ARRAY_OF_FIRST:
         first = call.first()
-        if first.type is None or first.lit == "null" or first.type.kind == "ARRAY":
-            return UNKNOWN
+        if first.type is None or first.lit == "null" or (first.type.kind == "ARRAY" and name != "ARRAY_AGG"):
+            return UNKNOWN  # ARRAY_AGG of arrays is an array of arrays (where the feature is on; else an error)
         return T(GType.array(first.type))
     if name in STRING_OR_BYTES:
         return string_or_bytes(call.first(), call.ts[1:])
@@ -544,6 +578,10 @@ def _literal_arithmetic(name: str, left: T, right: T) -> T | None:
     if lit.lit == "float" and kind in ("FLOAT64", "INT64"):
         out = table.get((F64, F64))
         return T(GType(out)) if out else None
+    if lit.lit in ("int", "float") and kind == "FLOAT32":
+        # the literal is a FLOAT32 or a FLOAT64 (a FLOAT32 operand coerces to FLOAT64): FLOAT64 either way
+        out = table.get(("FLOAT32", "FLOAT32"))
+        return T(GType(out)) if out and out == table.get(("FLOAT32", F64)) == table.get((F64, "FLOAT32")) else None
     return None
 
 
@@ -977,4 +1015,5 @@ RULES = {
     "BOOL": _bool_function,
     "GENERATE_RANGE_ARRAY": _generate_range_array,
     "CONCAT": lambda call: concat(call.ts),
+    "ERROR": lambda call: NULL_LITERAL,  # a value of any type: coerces like an untyped NULL, INT64 on its own
 }

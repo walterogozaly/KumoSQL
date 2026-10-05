@@ -534,7 +534,7 @@ def test_a_type_keyword_used_as_a_field_name_is_not_typed():
 
 def test_unnest_of_something_the_typer_cannot_type_has_unknown_columns():
     assert columns("SELECT * FROM UNNEST(NULL)") is None
-    assert columns("SELECT * FROM UNNEST([])") is None
+    assert columns("SELECT * FROM UNNEST([])") == [(None, "INT64")]  # an empty array literal defaults to ARRAY<INT64>
 
 
 def test_select_as_value_and_select_as_struct_make_value_tables():

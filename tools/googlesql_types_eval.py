@@ -9,7 +9,8 @@ that has one; a column with no such value is left unlabelled.
 Tables come from each file's ``[prepare_database]`` blocks, typed by those blocks' own printed results (a table's
 schema, as a BigQuery catalog would give it). Value tables (``SELECT AS VALUE``/``AS STRUCT``) and tables loaded from
 protos are left out of the catalog, so queries over them have unknown tables. Functions a file creates are passed as
-user-defined (their result type is unknown).
+user-defined; the typer reads the return type from each ``CREATE FUNCTION`` statement the fixture keeps
+(``function_sql``; a fixture harvested before that was recorded has only the names, and those functions are unknown).
 
 The split is fixed by file: a file whose ``sha256(stem) % 4 == 0`` is held out (63 of 285 files). Held-out cases are
 written to their own fixture and are scored only with ``--heldout``; nothing is developed against them.
@@ -374,6 +375,7 @@ def read_file(path: Path) -> tuple[dict, list[dict]]:
     text = path.read_text(encoding="utf-8", errors="replace")
     tables: dict[str, list] = {}
     functions: set[str] = set()
+    function_sql: list[str] = []
     skipped_tables: list[str] = []
     cases = []
     for options, sql, results in blocks(text):
@@ -382,6 +384,7 @@ def read_file(path: Path) -> tuple[dict, list[dict]]:
             f = _CREATE_FUNCTION.match(sql)
             if f:
                 functions.add(f.group(1).strip("`").lower())
+                function_sql.append(sql)
             if m and results:
                 name, rest = m.group(1).strip("`"), m.group(2)
                 columns = None
@@ -414,7 +417,8 @@ def read_file(path: Path) -> tuple[dict, list[dict]]:
         if columns is None:
             continue
         cases.append({"id": f"{path.stem}/{name}", "sql": sql, "options": options, "columns": columns})
-    catalog = {"tables": tables, "functions": sorted(functions), "skipped_tables": sorted(set(skipped_tables))}
+    catalog = {"tables": tables, "functions": sorted(functions), "function_sql": function_sql,
+               "skipped_tables": sorted(set(skipped_tables))}
     return catalog, cases
 
 
@@ -466,18 +470,22 @@ def is_bigquery_type(type_text: str | None) -> bool:
 
 
 def catalog_for(data: dict, case: dict):
-    """(tables, functions) visible to ``case``: its file's tables, minus the one a prepare query creates."""
+    """(tables, functions, function_sql) visible to ``case``: its file's tables, minus the one a prepare query creates,
+    the names of the functions the file creates, and their ``CREATE FUNCTION`` statements (empty in a fixture
+    harvested before they were kept)."""
 
     files = data["files"][case["file"]]
     tables = {name: cols for name, cols in files["tables"].items() if name != case.get("prepare")}
-    return tables, files["functions"]
+    return tables, files["functions"], files.get("function_sql", [])
 
 
-def typer_kumosql(sql: str, tables: dict, functions: list[str]):
+def typer_kumosql(sql: str, tables: dict, functions: list[str], function_sql: list[str] = ()):
     from kumosql.googlesql_types import Catalog, infer
 
     catalog = Catalog.from_types({name: dict(cols) if len({c for c, _ in cols}) == len(cols) else cols
                                   for name, cols in tables.items()}, functions=functions)
+    for statement in function_sql:  # names are registered first, so a body that calls a later function is not guessed
+        catalog.add_function_sql(statement)
     typed = infer(sql, catalog, dialect="bigquery")
     if typed.columns is None:
         return None
@@ -491,7 +499,7 @@ _SQLGLOT_NAMES = {
 }
 
 
-def typer_sqlglot(sql: str, tables: dict, functions: list[str]):
+def typer_sqlglot(sql: str, tables: dict, functions: list[str], function_sql: list[str] = ()):
     """The baseline: sqlglot's qualify + annotate_types, with sqlglot's type names mapped to GoogleSQL's."""
 
     import sqlglot
@@ -564,10 +572,10 @@ def score(data: dict, typer: str = "kumosql", failures: int = 0, only: str | Non
     for case in data["cases"]:
         if only and only not in case["id"]:
             continue
-        tables, functions = catalog_for(data, case)
+        tables, functions, function_sql = catalog_for(data, case)
         labels = case["columns"]
         try:
-            got = run(case["sql"], tables, functions)
+            got = run(case["sql"], tables, functions, function_sql)
         except Exception as exc:  # noqa: BLE001 - a crash is an unknown, counted apart
             counts["crashed queries"] += 1
             got = None
