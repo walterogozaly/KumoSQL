@@ -235,3 +235,9 @@ The SQLSolver stage needs a schema listing every table with columns, optionally 
 SQL-IQ's SQL Equivalence Judge, SQL Judge and Error Classification tasks are scored with these provers and hand-written rules and no language model: `python tools/sqliq_bench.py --data <SQL-IQ checkout>` (see [docs/evals/sql-iq.md](evals/sql-iq.md); the SQL Judge and Error Classification rules were tuned on SQL-IQ's own data, so those two scores are tuned-on-test).
 
 `kumosql.bounded_equivalence` is a third level between a proof and executed datasets: a z3 check that two queries agree on every database with at most N rows per table, written from the VeriEQL paper (OOPSLA 2024) and sharing none of its code. Its answer reads "bounded, N rows" and is never called a proof; every counterexample is replayed on DuckDB. See [bounded-verification.md](evals/bounded-verification.md).
+
+## Proof search performance
+
+Algebraic fallback levels reuse normalization within a single query pair and fixed proof context. The cached value includes normalization assumptions. Recursive and conditional proofs create separate caches, so different constraints, schemas, types and dialects never reuse a result from another proof. Solver calls and proof safeguards still run.
+
+Model reuse does not submit a whole-view candidate when an explicit SELECT list has a different number of output columns from the view. A projection candidate still receives the full proof. Unresolved stars and set operations retain the conservative path. This avoids proving an impossible whole-view replacement without reducing the supported rewrite search.
