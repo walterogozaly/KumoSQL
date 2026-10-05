@@ -39,6 +39,28 @@ TABLES = {
 }
 
 
+def _parses(sql: str) -> bool:
+    try:
+        sqlglot.parse_one(sql, read="bigquery")
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+# BY NAME / CORRESPONDING with modes and ON / BY lists need a sqlglot that parses them (30 does, 26.0.0 does not); a
+# query the installed sqlglot cannot parse has unknown columns, which test_unparsed_set_operation_syntax_is_unknown holds.
+SET_OPERATION_SYNTAX = {
+    "SELECT 1 AS x INNER UNION ALL BY NAME SELECT 1 AS x": None,
+    "SELECT 1 AS x UNION ALL STRICT CORRESPONDING SELECT 1 AS x": None,
+    "SELECT 1 AS x UNION ALL CORRESPONDING BY (x) SELECT 1 AS x": None,
+    "SELECT 1 AS x UNION ALL BY NAME ON (x) SELECT 1 AS x": None,
+}
+SET_OPERATION_SYNTAX_PARSES = all(_parses(sql) for sql in SET_OPERATION_SYNTAX)
+needs_set_operation_syntax = pytest.mark.skipif(
+    not SET_OPERATION_SYNTAX_PARSES, reason="the installed sqlglot cannot parse BY NAME / CORRESPONDING modes and lists"
+)
+
+
 def catalog() -> Catalog:
     return Catalog.from_types(TABLES)
 
@@ -505,6 +527,13 @@ def test_unnest_with_offset_and_value_tables():
         ("s", "STRUCT<p INT64, q STRING>"), ("p", "INT64"), ("p", "INT64")]
 
 
+def test_a_type_keyword_used_as_a_field_name_is_not_typed():
+    """sqlglot 26.0.0 reads ``j.array[0]`` as an array literal and drops ``j.``; the typer must not take that for ARRAY<INT64>."""
+
+    typed = infer("SELECT j.array[0]['f'] FROM (SELECT JSON '{}' AS j)", catalog())
+    assert typed.columns is None or typed.columns[0].type is None
+
+
 def test_unnest_of_something_the_typer_cannot_type_has_unknown_columns():
     assert columns("SELECT * FROM UNNEST(NULL)") is None
     assert columns("SELECT * FROM UNNEST([])") is None
@@ -602,14 +631,15 @@ def test_by_name_matches_columns_by_name_not_position_and_takes_the_first_branch
         "SELECT a, b FROM s UNION ALL BY NAME SELECT b FROM s",  # BY NAME is strict: both need every name
         "SELECT 1 AS x UNION ALL BY NAME SELECT 2 AS y",
         "SELECT 1, 2 UNION ALL BY NAME SELECT 3, 4",  # unnamed columns cannot be matched
-        "SELECT a, b FROM s UNION ALL STRICT CORRESPONDING SELECT b FROM s",
-        "SELECT 1 AS x, 'a' AS y UNION ALL STRICT CORRESPONDING SELECT 2.5 AS x",
+        pytest.param("SELECT a, b FROM s UNION ALL STRICT CORRESPONDING SELECT b FROM s", marks=needs_set_operation_syntax),
+        pytest.param("SELECT 1 AS x, 'a' AS y UNION ALL STRICT CORRESPONDING SELECT 2.5 AS x", marks=needs_set_operation_syntax),
     ],
 )
 def test_by_name_with_columns_that_cannot_be_matched_is_unknown_not_guessed(sql):
     assert columns(sql) is None
 
 
+@needs_set_operation_syntax
 def test_corresponding_strict_matches_like_by_name():
     assert columns("SELECT a, b FROM s UNION ALL STRICT CORRESPONDING SELECT b, a FROM s") == [
         ("a", "INT64"), ("b", "STRING")]
@@ -617,11 +647,13 @@ def test_corresponding_strict_matches_like_by_name():
         ("x", "FLOAT64"), ("y", "STRING")]
 
 
+@needs_set_operation_syntax
 def test_corresponding_without_a_mode_keeps_the_columns_every_branch_has():
     assert columns("SELECT a, b FROM s UNION ALL CORRESPONDING SELECT b, a FROM s") == [("a", "INT64"), ("b", "STRING")]
     assert columns("SELECT 1 AS x, 'a' AS y UNION ALL CORRESPONDING SELECT 2.5 AS x, 1 AS z") == [("x", "FLOAT64")]
 
 
+@needs_set_operation_syntax
 def test_set_operation_modes_inner_left_and_full():
     first, second = "SELECT 1 AS x, 'a' AS y", "SELECT 2.5 AS x, 1 AS z"
     assert columns(f"{first} INNER UNION ALL CORRESPONDING {second}") == [("x", "FLOAT64")]
@@ -635,6 +667,7 @@ def test_set_operation_modes_inner_left_and_full():
         ("x", "FLOAT64"), ("y", "STRING"), ("z", "INT64")]
 
 
+@needs_set_operation_syntax
 def test_mode_set_operations_chain_n_ary():
     assert columns("SELECT 1 AS x FULL UNION ALL BY NAME SELECT 2 AS y FULL UNION ALL BY NAME SELECT 3.5 AS x") == [
         ("x", "FLOAT64"), ("y", "INT64")]
@@ -647,6 +680,7 @@ def test_mode_set_operations_chain_n_ary():
     ) == [("x", "INT64")]
 
 
+@needs_set_operation_syntax
 def test_on_and_by_lists_choose_the_output_columns_their_order_and_their_spelling():
     assert columns("SELECT 1 AS x, 'a' AS y UNION ALL CORRESPONDING BY (y) SELECT 2.5 AS x, 'b' AS y") == [
         ("y", "STRING")]
@@ -664,6 +698,7 @@ def test_on_and_by_lists_choose_the_output_columns_their_order_and_their_spellin
         ("y", "DATE"), ("x", "INT64")]
 
 
+@needs_set_operation_syntax
 def test_a_name_in_an_on_list_that_a_strict_branch_lacks_is_unknown_not_guessed():
     assert columns("SELECT 1 AS x UNION ALL BY NAME ON (x, z) SELECT 2 AS x") is None
 
@@ -805,12 +840,29 @@ def test_set_operation_type_when_the_branches_have_no_common_type():
         "SELECT b FROM s UNION ALL SELECT a FROM s",
         "SELECT 1 UNION ALL SELECT DATE '2020-01-01' UNION ALL SELECT 2",
         "SELECT 1 AS x UNION ALL BY NAME SELECT DATE '2020-01-01' AS x",
-        "SELECT 1 AS x UNION ALL CORRESPONDING SELECT TRUE AS x",
     ):
         typed = infer(sql, catalog())
         assert "set_operation_type" in [f.code for f in typed.findings], sql
         assert typed.columns[0].type is None, sql  # the column exists; its type is not guessed
     assert codes("SELECT 1 UNION ALL SELECT 2.5") == []
+
+
+@needs_set_operation_syntax
+def test_set_operation_type_for_corresponding():
+    typed = infer("SELECT 1 AS x UNION ALL CORRESPONDING SELECT TRUE AS x", catalog())
+    assert [f.code for f in typed.findings] == ["set_operation_type"]
+    assert typed.columns[0].type is None
+
+
+@pytest.mark.parametrize("sql", list(SET_OPERATION_SYNTAX))
+def test_unparsed_set_operation_syntax_is_unknown(sql):
+    """A sqlglot that cannot parse a mode or list gives a parse error and unknown columns, never a guess."""
+
+    typed = infer(sql, catalog())
+    if _parses(sql):
+        assert typed.columns is not None and typed.error is None
+    else:
+        assert typed.columns is None and typed.error.startswith("parse error")
 
 
 def test_set_operation_branches_that_may_be_coercible_are_not_reported():
