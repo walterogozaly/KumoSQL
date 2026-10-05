@@ -782,6 +782,9 @@ class _Typer:
                 ambiguous.add("INT")
             else:
                 renames["INT"] = "INT32"
+            # INT32 is not a BigQuery type, so the query is GoogleSQL as the engine reads it, where FLOAT is FLOAT32
+            # (BigQuery has no FLOAT in queries; its schemas spell FLOAT64 that way).
+            renames["FLOAT"] = "FLOAT32"
         self.ambiguous = frozenset(ambiguous)
         self.renames = renames
         from . import googlesql_signatures
