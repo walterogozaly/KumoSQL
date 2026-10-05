@@ -197,7 +197,7 @@
  },
  "ddl/create_procedure_sql::parse": {
   "owner": "sqlglot",
-  "reason": "ParseError: Expecting ). Line 1, Col: 69."
+  "reason": "sqlglot keeps CREATE as an opaque command"
  },
  "ddl/create_property_graph::format": {
   "owner": "sqlfluff",
@@ -467,10 +467,6 @@
   "owner": "sqlfluff",
   "reason": "parse_error"
  },
- "script/assert::graph": {
-  "owner": "kumosql",
-  "reason": "reads of this DML, script or non-query statement are not extracted: kumosql.kumosql_messy.raw_users"
- },
  "script/begin_end_block::parse": {
   "owner": "sqlglot",
   "reason": "sqlglot keeps BEGIN as an opaque command"
@@ -489,7 +485,7 @@
  },
  "script/case_when::parse": {
   "owner": "sqlglot",
-  "reason": "ParseError: Required keyword: 'true' missing for <class 'sqlglot.expressions.functions.If'>. Line 3, Col: 20."
+  "reason": "sqlglot keeps CASE as an opaque command"
  },
  "script/declare_set::parse": {
   "owner": "sqlglot",
@@ -525,7 +521,7 @@
  },
  "script/labels::parse": {
   "owner": "sqlglot",
-  "reason": "ParseError: Invalid expression / Unexpected token. Line 2, Col: 7."
+  "reason": "sqlglot keeps outer_loop: as an opaque command"
  },
  "script/loop_leave_iterate::parse": {
   "owner": "sqlglot",
@@ -537,7 +533,7 @@
  },
  "script/repeat_until::parse": {
   "owner": "sqlglot",
-  "reason": "ParseError: Invalid expression / Unexpected token. Line 4, Col: 10."
+  "reason": "sqlglot keeps REPEAT as an opaque command"
  },
  "script/return::parse": {
   "owner": "sqlglot",

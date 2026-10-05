@@ -357,8 +357,9 @@ def f_ignored(rng: random.Random) -> Case:
         f"INSERT INTO {ref(out)} SELECT x FROM {ref(a)};",
         "COMMIT TRANSACTION;",
     ]
-    # Table DDL retains write targets; only the ignored ASSERT/LOAD names are phantoms.
-    return Case("ignored", "\n".join(lines), 7, {out: {a}, ph[2]: set(), ph[3]: set()}, {a}, 0, set(ph[:2]))
+    # Table DDL retains write targets and the ASSERT reads the table its query names (nothing flows from it, so it feeds no
+    # write); only the ignored LOAD DATA name is a phantom.
+    return Case("ignored", "\n".join(lines), 7, {out: {a}, ph[2]: set(), ph[3]: set()}, {a, ph[0]}, 0, {ph[1]})
 
 
 def f_merge(rng: random.Random) -> Case:

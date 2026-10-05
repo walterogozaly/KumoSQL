@@ -184,6 +184,10 @@ class Node:
     query: str = ""  # a FOR loop's query
     params: str = ""  # a procedure's parameter list
     conditions: list[str] = field(default_factory=list)  # every condition that picks a path: IF/ELSEIF, CASE and WHEN, WHILE, UNTIL
+    label: str = ""  # ``outer: LOOP`` names the block it opens, which ``LEAVE outer`` and ``ITERATE outer`` can name
+    language: str = ""  # a procedure whose body is not SQL (``LANGUAGE PYTHON``): it has no statements to read
+    after_exit: bool = False  # an earlier statement of the same block may have left it (RETURN, LEAVE, BREAK, ITERATE, RAISE): this one may not run
+    may_exit: bool = False  # something inside this block may jump out of it (a RETURN, or a LEAVE of a label further out): what follows may not run
 
 
 _CONTROL_STARTS = {"IF", "WHILE", "LOOP", "FOR", "REPEAT", "CASE"}
@@ -242,7 +246,9 @@ class _Splitter:
 
     # -- grammar
     def parse(self) -> list[Node]:
-        return self.block(set())
+        nodes = self.block(set())
+        _mark_exits(nodes)
+        return nodes
 
     def block(self, terminators: set[str]) -> list[Node]:
         nodes: list[Node] = []
@@ -260,8 +266,19 @@ class _Splitter:
 
     def statement(self, inside_block: bool) -> Node | None:
         # an optional ``label:`` before a block
+        label = ""
+        label_start = 0
         if self.peek(1) is not None and self.toks[self.i].kind == "w" and self.peek(1).text == ":" and self.word(2) in {"BEGIN", "LOOP", "WHILE", "FOR", "REPEAT"}:
+            label = self.toks[self.i].text
+            label_start = self.toks[self.i].start
             self.i += 2
+        node = self.unlabelled(inside_block)
+        if node is not None and label:
+            node.label = label
+            node.start = label_start  # the block's text starts at its label
+        return node
+
+    def unlabelled(self, inside_block: bool) -> Node | None:
         first = self.word()
         begin = self.toks[self.i].start
         if first == "BEGIN" and self.word(1) not in {"TRANSACTION", ""} and self.peek(1).kind != ";":
@@ -411,6 +428,7 @@ class _Splitter:
         k = j
         depth = 0
         params_start = j
+        language = ""
         while k < self.n:
             t = self.toks[k]
             if t.kind == "p" and t.text == "(":
@@ -418,17 +436,28 @@ class _Splitter:
             elif t.kind == "p" and t.text == ")":
                 depth -= 1
             elif t.kind == ";" and depth == 0:
-                return None  # no body here (a language other than SQL)
+                break  # no SQL body: a Spark procedure, whose body is in another language
             elif t.kind == "w" and t.up == "BEGIN" and depth == 0:
                 break
+            elif t.kind == "w" and t.up == "LANGUAGE" and depth == 0 and k + 1 < self.n:
+                language = self.toks[k + 1].text.upper()
             k += 1
-        else:
-            return None
+        name = "".join(name_parts).replace("`", "")
+        if k >= self.n or self.toks[k].kind == ";":
+            if not language:
+                return None
+            # ``CREATE PROCEDURE ... WITH CONNECTION ... OPTIONS (engine = 'SPARK') LANGUAGE PYTHON AS r"""..."""``: one
+            # definition whose body is Python, Java or Scala. It holds no statements, and calling it reads nothing.
+            node = Node("procedure", begin, begin, name=name, params=self.text_of(params_start, k), language=language)
+            self.i = k
+            node.end = self.toks[k - 1].end
+            self.skip_to_semicolon()
+            return node
         node = Node(
             "procedure",
             begin,
             begin,
-            name="".join(name_parts).replace("`", ""),
+            name=name,
             params=self.text_of(params_start, k),
         )
         self.i = k + 1
@@ -470,6 +499,58 @@ class _Splitter:
                 self.i += 1
             return None
         return Node("stmt", self.toks[start].start, self.toks[stop - 1].end, header=self.text_of(start, stop))
+
+
+_LOOPS = {"while", "loop", "for", "repeat"}
+
+
+def _exit_of(node: Node) -> frozenset[tuple[str, str]]:
+    """What a statement that leaves its block jumps to: ``("return", "")``, ``("raise", "")`` or ``("leave"|"iterate", label)``."""
+
+    words = [t for t in lex(node.header)[:2]]
+    first = words[0].up if words else ""
+    label = words[1].text.casefold() if len(words) > 1 and words[1].kind == "w" else ""
+    if first in {"RETURN", "RAISE"}:
+        return frozenset({(first.lower(), "")})
+    if first in {"BREAK", "LEAVE"}:
+        return frozenset({("leave", label)})
+    if first in {"CONTINUE", "ITERATE"}:
+        return frozenset({("iterate", label)})
+    return frozenset()
+
+
+def _mark_exits(nodes: list[Node]) -> frozenset[tuple[str, str]]:
+    """Flag every statement that an earlier statement of its block may have skipped, and return the jumps that leave the block.
+
+    ``IF x THEN RETURN; END IF; INSERT ...`` runs the ``INSERT`` only when ``x`` is false, so it is a possible statement, not a
+    certain one. A jump is consumed by what it names: ``BREAK``, ``LEAVE`` and ``ITERATE`` by their loop (or the block carrying
+    the label), ``RAISE`` by the ``EXCEPTION`` handler of the block around it, ``RETURN`` by the procedure (or the script).
+    """
+
+    escapes: set[tuple[str, str]] = set()
+    skipped = False
+    for node in nodes:
+        node.after_exit = skipped
+        if node.kind == "stmt":
+            leaving = _exit_of(node)
+        else:
+            branches = [_mark_exits(branch) for branch in node.branches]
+            leaving = set().union(*branches) if branches else set()
+            label = node.label.casefold()
+            if node.kind == "procedure":
+                leaving = set()  # the procedure's own scope: a RETURN or an unhandled error ends the call, not the caller's block
+            elif node.kind == "begin":
+                if len(branches) > 1:
+                    leaving = {e for e in branches[0] if e[0] != "raise"} | branches[1]  # the handler catches the body's RAISE
+                if label:
+                    leaving = {e for e in leaving if e != ("leave", label)}
+            elif node.kind in _LOOPS:
+                leaving = {e for e in leaving if e[0] not in {"leave", "iterate"} or (e[1] and e[1] != label)}
+        if leaving:
+            skipped = True
+            node.may_exit = node.kind != "stmt"
+            escapes |= set(leaving)
+    return frozenset(escapes)
 
 
 def parse_script(text: str) -> list[Node]:
@@ -523,6 +604,7 @@ def split_script(text: str) -> list[ScriptPart]:
 
     def walk(nodes: list[Node], conditional: bool, procedure: str) -> None:
         for node in nodes:
+            conditional = conditional or node.after_exit
             if node.kind == "stmt":
                 parts.append(ScriptPart(node.header, bisect.bisect_left(breaks, node.start) + 1, conditional, procedure))
                 continue
@@ -557,7 +639,7 @@ def is_rewriteable(statement: str) -> bool:
     return bool(words) and words[0] in _REWRITEABLE
 
 
-_BLOCK_START = re.compile(r"\s*(?:BEGIN|IF|LOOP|WHILE|REPEAT|FOR|CASE)\b", re.IGNORECASE)
+_BLOCK_START = re.compile(r"\s*(?:BEGIN|IF|LOOP|WHILE|REPEAT|FOR|CASE|[A-Za-z_]\w*\s*:\s*(?:BEGIN|LOOP|WHILE|REPEAT|FOR)|CREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE)\b", re.IGNORECASE)
 _BLOCK_WORDS = re.compile(r"\b(?:BEGIN|LOOP|WHILE|REPEAT|THEN|DO)\b", re.IGNORECASE)
 
 
@@ -1124,6 +1206,7 @@ class Procedure:
     body: list[Node]
     text: str  # the script text the body's offsets point into
     modes: tuple[str, ...] = ()  # IN, OUT or INOUT per parameter
+    language: str = ""  # PYTHON, JAVA or SCALA for a Spark procedure: its body is not SQL and is never read
 
 
 @dataclass
@@ -1486,7 +1569,7 @@ def collect_procedures(texts: Iterable[str]) -> dict[str, Procedure]:
             if node.kind == "procedure" and node.name:
                 params = _parameters(node.params)
                 body = node.branches[0] if node.branches else []
-                proc = Procedure(node.name, tuple(n for n, _m in params), body, text, tuple(m for _n, m in params))
+                proc = Procedure(node.name, tuple(n for n, _m in params), body, text, tuple(m for _n, m in params), node.language)
                 found[_norm(node.name)] = proc
                 bare.setdefault(_norm(node.name).split(".")[-1], []).append(proc)
     for name, procs in bare.items():
@@ -1509,7 +1592,7 @@ def _parameters(params: str) -> list[tuple[str, str]]:
     if inner.startswith("("):
         inner = inner[1:]
     found = []
-    depth = 0
+    depth = angle = 0
     expecting = True
     mode = "IN"
     for tok in lex(inner):
@@ -1519,7 +1602,11 @@ def _parameters(params: str) -> list[tuple[str, str]]:
             if depth == 0:
                 break
             depth -= 1
-        elif tok.kind == "p" and tok.text == "," and depth == 0:
+        elif tok.kind == "p" and tok.text == "<":
+            angle += 1  # ``STRUCT<a INT64, b STRING>``: the commas inside a type do not start another parameter
+        elif tok.kind == "p" and tok.text == ">":
+            angle = max(angle - 1, 0)
+        elif tok.kind == "p" and tok.text == "," and depth == 0 and angle == 0:
             expecting = True
             mode = "IN"
         elif expecting and depth == 0 and tok.kind in {"w", "q"}:
@@ -1571,6 +1658,7 @@ class _Run:
         self.default_dataset = ""  # SET @@dataset_id
         self.default_project = ""  # SET @@dataset_project_id
         self._loops = 0
+        self.gates = 0  # branches, loops and handlers around the current statement: a query inside one is not the script's certain output
 
     # -- driving
     def run(self, text: str) -> None:
@@ -1597,25 +1685,42 @@ class _Run:
         return bisect.bisect_left(_line_index(text), offset) + 1
 
     def nodes(self, nodes: list[Node], text: str, *, conditional: bool, top_level: bool) -> None:
-        for node in nodes:
-            self.node(node, text, conditional=conditional, top_level=top_level)
+        pushed = 0
+        try:
+            for node in nodes:
+                guard = self.node(node, text, conditional=conditional, top_level=top_level)
+                if guard:
+                    # ``IF c THEN RETURN; END IF;``: whether the rest of the block runs depends on what ``c`` reads
+                    self.control.append(guard)
+                    pushed += 1
+        finally:
+            del self.control[len(self.control) - pushed :]
 
-    def node(self, node: Node, text: str, *, conditional: bool, top_level: bool) -> None:
+    def node(self, node: Node, text: str, *, conditional: bool, top_level: bool) -> dict[str, exp.Table] | None:
+        """Run one node. Returns the tables its conditions read when something inside it may jump out of it, else None."""
+
         line = self.line_of(text, node.start)
+        conditional = conditional or node.after_exit  # an earlier RETURN, LEAVE, BREAK, ITERATE or RAISE may have skipped it
         if node.kind == "stmt":
             self.statement(node.header, line, text, conditional=conditional, top_level=top_level)
-            return
+            return None
         if node.kind == "procedure":
+            if node.language:
+                # A Spark procedure: nothing in it is SQL, so there is nothing to read until something calls it (and then it is unknown).
+                reason = f"definition; the body is {node.language.title()}, not SQL, so a call of it cannot be read"
+                self.record(Statement(len(self.a.statements), line, "create_procedure", IGNORED, reason, conditional, definition=True))
+                return None
             self.record(Statement(len(self.a.statements), line, "create_procedure", KEPT, "definition; read when called", conditional), nested=False)
             self.describe_procedure(node, text)
-            return
+            return None
         looping = node.kind in {"while", "loop", "for", "repeat"}
         statement = self.record(Statement(len(self.a.statements), line, node.kind if node.kind != "begin" else "block", IGNORED, "control flow", conditional))
         if looping:
             self.settle_loop(node, text, top_level, statement)
-        self.control_flow(node, text, conditional=conditional, top_level=top_level, statement=statement)
+        guard = self.control_flow(node, text, conditional=conditional, top_level=top_level, statement=statement)
+        return guard if node.may_exit else None
 
-    def control_flow(self, node: Node, text: str, *, conditional: bool, top_level: bool, statement: Statement | None) -> None:
+    def control_flow(self, node: Node, text: str, *, conditional: bool, top_level: bool, statement: Statement | None) -> dict[str, exp.Table]:
         """Run the branches of a block once: the tables its conditions read feed everything inside it, and names it declares end with it."""
 
         looping = node.kind in {"while", "loop", "for", "repeat"}
@@ -1635,11 +1740,17 @@ class _Run:
         self.scopes.append(hidden)
         try:
             for index, branch in enumerate(node.branches):
-                gated = conditional or node.kind in {"if", "case"} or looping or index > 0
-                self.nodes(branch, text, conditional=gated, top_level=top_level)
+                structural = node.kind in {"if", "case"} or looping or index > 0
+                gated = conditional or structural
+                self.gates += structural
+                try:
+                    self.nodes(branch, text, conditional=gated, top_level=top_level)
+                finally:
+                    self.gates -= structural
         finally:
             self.control.pop()
             self.close_scope(self.scopes.pop())
+        return guard
 
     def close_scope(self, hidden: dict[str, "_Variable | None"]) -> None:
         for name, previous in hidden.items():
@@ -1892,7 +2003,7 @@ class _Run:
         if first == "SET":
             return self.set_statement(text_, line, conditional)
         if first == "ASSERT":
-            return done("assert", IGNORED, "a check, not data flow")
+            return self.check_statement(text_, line, "assert", "a check, not data flow", conditional)
         if first == "LOAD":
             return done("load_data", IGNORED, "loads files")
         if first == "EXPORT":
@@ -1900,6 +2011,8 @@ class _Run:
         if first in _TRANSACTION or (first == "BEGIN" and len(words) > 1):
             self.transaction(first, conditional)
             return done("transaction", IGNORED, "transaction control")
+        if first == "RAISE":
+            return self.check_statement(text_, line, "flow", "control flow", conditional)
         if first in _FLOW:
             return done("flow", IGNORED, "control flow")
         if first == "CALL":
@@ -1907,6 +2020,37 @@ class _Run:
         if first == "EXECUTE":
             return self.execute_statement(text_, line, conditional, top_level)
         return self.degrade(done("other", UNKNOWN, "statement not recognised"), text_)
+
+    def check_statement(self, text_: str, line: int, kind: str, reason: str, conditional: bool) -> Statement:
+        """``ASSERT expr AS 'message'`` and ``RAISE USING MESSAGE = expr`` move no data but read what their expression reads.
+
+        The tables are reads of the script, like the tables a condition reads; they are not sources of what is written after
+        it, because the statement decides nothing about which statements run (a failed check ends the script)."""
+
+        statement = self.record(Statement(len(self.a.statements), line, kind, IGNORED, reason, conditional))
+        toks = lex(text_)
+        stop = len(toks)
+        if kind == "assert":
+            depth = 0
+            for position, tok in enumerate(toks):
+                if tok.kind == "p" and tok.text in "([{":
+                    depth += 1
+                elif tok.kind == "p" and tok.text in ")]}":
+                    depth -= 1
+                elif depth == 0 and tok.up == "AS" and position + 2 == len(toks) and toks[-1].kind == "s":
+                    stop = position  # the message that follows the expression
+            start = 1
+        else:
+            start = next((position + 1 for position, tok in enumerate(toks) if tok.text == "="), len(toks))
+        expression = text_[toks[start].start : toks[stop - 1].end] if start < stop else ""
+        if not expression.strip():
+            return statement
+        sources, ok = self.value_sources(expression)
+        self.note_reads(sources)
+        if not ok:
+            statement.disposition, statement.reason = UNKNOWN, "expression could not be read"
+            self.degrade(statement, text_)
+        return statement
 
     def transaction(self, first: str, conditional: bool) -> None:
         """BEGIN keeps the temporary tables as they are; ROLLBACK brings them back, dropping what the transaction changed."""
@@ -2089,7 +2233,7 @@ class _Run:
         node = self.rewritten(tree, temps)
         out_query = _query_of(node)
         output = _Output(
-            statement, node, out_query if out_query is not None else query, tuple(temps), merged, target, conditional, top_level and not self.nested
+            statement, node, out_query if out_query is not None else query, tuple(temps), merged, target, self.gates > 0, top_level and not self.nested
         )
         self.a._outputs.append(output)
         return output
@@ -2316,7 +2460,7 @@ class _Run:
                 else:
                     built = insert_values_query(node) if isinstance(node, exp.Insert) else None
                 if built is not None:
-                    self.a._outputs.append(_Output(statement, node, built, tuple(temps), sources, target, conditional, not self.nested))
+                    self.a._outputs.append(_Output(statement, node, built, tuple(temps), sources, target, self.gates > 0, not self.nested))
         if into_temp:
             insert_columns = None
             if kind == "insert" and isinstance(tree.this, exp.Schema):
@@ -2418,6 +2562,8 @@ class _Run:
         procedure = self.known_procedure(name)
         if procedure is None:
             return self.record(Statement(index, line, "call", UNKNOWN, "procedure is not defined in the project", conditional))
+        if procedure.language:
+            return self.record(Statement(index, line, "call", UNKNOWN, f"the procedure's body is {procedure.language.title()}, not SQL", conditional))
         if _norm(procedure.name) in self.call_stack or len(self.call_stack) >= MAX_PROCEDURE_DEPTH:
             return self.record(Statement(index, line, "call", UNKNOWN, "recursive or too deeply nested", conditional))
         statement = self.record(Statement(index, line, "call", KEPT, "expanded from its definition", conditional))

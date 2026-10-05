@@ -1,9 +1,11 @@
 {
- "about": "Hand-written expectations for the scripting examples in tests/fixtures/bq_syntax/sql/script, from the BigQuery scripting reference: leaf statement count once blocks are opened, real tables read (ASSERT and scalar DECLARE/SET reads are ignored by design except a SET or DECLARE whose value comes from a table read that later statements use; none of these examples does), tables written, and statements that must be reported unknown (CALL of an undefined procedure, EXECUTE IMMEDIATE of a variable or FORMAT).",
+ "about": "Hand-written expectations for the scripting examples in tests/fixtures/bq_syntax/sql/script, from the BigQuery scripting reference: leaf statement count once blocks are opened, real tables read (an ASSERT or RAISE reads the tables its expression names; scalar DECLARE/SET reads are ignored by design except a SET or DECLARE whose value comes from a table read that later statements use; none of these examples does that), tables written, and statements that must be reported unknown (CALL of an undefined procedure, EXECUTE IMMEDIATE of a variable or FORMAT).",
  "cases": {
   "assert": {
    "statements": 1,
-   "reads": [],
+   "reads": [
+    "raw_users"
+   ],
    "writes": [],
    "unknown": 0
   },

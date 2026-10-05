@@ -724,7 +724,22 @@ def install() -> None:
                 raise
             return list(_resolve_markers(_resolve_table_arguments(self.parser(**opts).parse(marked, sql))))
 
-    BigQuery.parse = parse_with_table_arguments
+    def parse_with_scripts(self, sql, **opts):
+        # A script sqlglot rejects (a procedure with IN/OUT parameters, a label, REPEAT ... UNTIL, the CASE statement) is split
+        # at its top-level statements, each procedural block kept as one opaque command, instead of being a ParseError.
+        try:
+            return parse_with_table_arguments(self, sql, **opts)
+        except UnclosedLiteral:
+            raise
+        except ParseError:
+            from .bigquery_scripts import script_statements
+
+            statements = script_statements(sql, lambda text: parse_with_table_arguments(self, text, **opts))
+            if statements is None:
+                raise
+            return statements
+
+    BigQuery.parse = parse_with_scripts
     # Releases differ in how a generator finds its handler (a method named after the class, a per-class table, a cache of both),
     # so every generator that exists gets the handler in its own table and any cache is dropped.
     pending = [Generator]
