@@ -211,14 +211,7 @@ def strip_distinct(sql: str) -> str | None:
 def prove(pair: Pair, sql1: str, sql2: str) -> bool:
     """LLM-SQL-Solver's proof of a Spider pair: no keys, lists under ORDER BY, no text-number comparisons."""
 
-    tables = pair.schema.tables
-    if solver.mixed_type_comparison(sql1, tables) or solver.mixed_type_comparison(sql2, tables):
-        return False
-    if solver.ordered(sql1):
-        if not solver.ordered(sql2):
-            return False
-        sql1, sql2 = solver.for_prover(sql1), solver.for_prover(sql2)
-    return solver.prove(sql1, sql2, tables) == "proven"
+    return check.prove(pair.schema, sql1, sql2)
 
 
 def decide_pair(pair: Pair) -> dict:
