@@ -19,6 +19,10 @@ Names follow GoogleSQL: a column reference or path takes the last identifier as 
 on its own is a STRUCT of its table's columns (or the row value of a value table such as ``UNNEST``), and range
 variables are looked up before columns. ``UNNEST`` of an array of structs makes the struct's fields columns.
 
+Pipe syntax (``FROM t |> WHERE ... |> SELECT ...``) is typed operator by operator by :mod:`kumosql.googlesql_pipe_types`:
+``infer`` replaces each pipe chain in the SQL text by a placeholder subquery and ``_Typer.query`` hands the placeholder to
+that module. A tree that sqlglot already rewrote from pipe syntax (its ``__tmpN`` CTEs) is left untyped.
+
 The catalog takes BigQuery schemas (``dryrun.Field``, ``schema_fetch`` column maps) and Dataform declarations; upstream
 models can be added with their inferred columns, in dependency order. The tree passed in is never modified.
 """
@@ -398,15 +402,25 @@ def infer(sql_or_tree, catalog: Catalog | None = None, dialect: str = "bigquery"
 
     catalog = catalog or Catalog()
     text = sql_or_tree if isinstance(sql_or_tree, str) else None
+    pipes: dict = {}
     if isinstance(sql_or_tree, str):
+        parse_text = sql_or_tree
         if "|>" in _without_strings(sql_or_tree):
-            return TypedQuery(None, None, (), {}, {}, "pipe syntax is not typed")
+            from . import googlesql_pipe_types
+
+            prepared = googlesql_pipe_types.prepare(sql_or_tree)
+            if prepared is None:
+                return TypedQuery(None, None, (), {}, {}, "pipe syntax is not typed")
+            parse_text, pipes = prepared
         try:
-            tree = sqlglot.parse_one(sql_or_tree, read=dialect)
+            tree = sqlglot.parse_one(parse_text, read=dialect)
         except Exception as exc:  # noqa: BLE001 - an unparsed query has no types
             return TypedQuery(None, None, (), {}, {}, f"parse error: {exc}"[:200])
     else:
         tree = sql_or_tree
+        if any(re.fullmatch(r"__tmp\d+", t.name) for t in tree.find_all(exp.Table)):
+            # sqlglot reads a pipe query as a chain of CTEs of this name, which is not the query that was written
+            return TypedQuery(tree, None, (), {}, {}, "pipe syntax is not typed")
     if not isinstance(tree, exp.Query):
         return TypedQuery(tree, None, (), {}, {}, "not a query")
     if any(_TEMPLATE_MASK.search(i.name) for i in tree.find_all(exp.Identifier)):
@@ -414,6 +428,7 @@ def infer(sql_or_tree, catalog: Catalog | None = None, dialect: str = "bigquery"
     if text is not None and _KEYWORD_FIELD.search(_without_strings(text)):
         return TypedQuery(tree, None, (), {}, {}, "a type keyword after a dot is read differently by older sqlglot")
     typer = _Typer(catalog, text if text is not None else tree.sql(dialect))
+    typer.pipes = pipes
     try:
         rel = typer.query(tree, None, {})
     except _Unsupported as exc:
@@ -576,6 +591,7 @@ class _Typer:
         self.relations: dict[int, tuple[exp.Expression, tuple[Column, ...] | None]] = {}
         self.findings: list[Finding] = []
         self.select_aliases: frozenset[str] = frozenset()  # select-list aliases HAVING or QUALIFY may name
+        self.pipes: dict = {}  # pipe chains by the placeholder table that stands for each (googlesql_pipe_types)
         clean = _without_strings(text).upper()
         ambiguous = set()
         if re.search(r"\bINT32\b", clean):
@@ -608,6 +624,12 @@ class _Typer:
             return inner
         if isinstance(node, exp.Paren):
             return self.query(node.this, outer, ctes)
+        if self.pipes:
+            from . import googlesql_pipe_types
+
+            chain = googlesql_pipe_types.chain_for(self, node)
+            if chain is not None:
+                return googlesql_pipe_types.type_chain(self, chain, outer, ctes)
         ctes = self.with_clause(node, outer, ctes)
         if isinstance(node, exp.SetOperation):
             return self.set_operation(node, outer, ctes)
@@ -624,7 +646,14 @@ class _Typer:
         for cte in with_.expressions:
             name = cte.alias_or_name.lower()
             body = cte.this
-            if recursive and self._references(body, name):
+            pipe_chain = None
+            if recursive and self.pipes:
+                from . import googlesql_pipe_types
+
+                pipe_chain = googlesql_pipe_types.chain_for(self, body)
+            if pipe_chain is not None and googlesql_pipe_types.mentions(pipe_chain, name):
+                rel = googlesql_pipe_types.recursive_chain(self, pipe_chain, name, outer, ctes)
+            elif recursive and self._references(body, name):
                 rel = self.recursive_cte(body, name, outer, ctes)
             else:
                 rel = self.query(body, outer, ctes)
