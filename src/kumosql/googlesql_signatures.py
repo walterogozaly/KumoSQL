@@ -713,16 +713,19 @@ def _approx_top_sum(call: Call) -> T:
 
 
 def _percentile_cont(call: Call) -> T:
-    value = call.first()
-    if value.type is None or value.lit is not None:
+    """PERCENTILE_CONT(value, percentile): (FLOAT64, FLOAT64) -> FLOAT64, (NUMERIC, NUMERIC) -> NUMERIC and
+    (BIGNUMERIC, BIGNUMERIC) -> BIGNUMERIC; an INT64 coerces to FLOAT64. Mixed or untyped arguments are unknown."""
+
+    if len(call.ts) != 2:
         return UNKNOWN
-    if value.type.kind in ("INT64", "FLOAT64", "INT32", "UINT32", "UINT64", "FLOAT32") and \
-            all(t.lit != "null" for t in call.ts[1:]):
-        if len(call.ts) > 1 and call.ts[1].type is not None and call.ts[1].type.kind in ("NUMERIC", "BIGNUMERIC") \
-                and call.ts[1].lit is None:
-            return UNKNOWN
-        return T(FLOAT64) if value.type.kind == "FLOAT64" or (len(call.ts) > 1 and call.ts[1].lit is None
-                                                            and call.ts[1].type == FLOAT64) else UNKNOWN
+    value, percentile = call.ts
+    if value.type is None or percentile.type is None or value.lit is not None or percentile.lit in ("null", "string"):
+        return UNKNOWN
+    a, b = value.type.kind, percentile.type.kind
+    if a in ("INT64", "FLOAT64") and b in ("INT64", "FLOAT64"):
+        return T(FLOAT64)
+    if a == b and a in ("NUMERIC", "BIGNUMERIC") and percentile.lit is None:
+        return T(value.type)
     return UNKNOWN
 
 
