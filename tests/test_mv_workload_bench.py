@@ -15,7 +15,10 @@ pytest.importorskip("z3")
 pytest.importorskip("duckdb")
 
 from kumosql import view_candidates as vc  # noqa: E402
+from kumosql import view_generalize as vg  # noqa: E402
 from kumosql.model_reuse import rewrite_over_model  # noqa: E402
+from kumosql.random_check import find_difference  # noqa: E402
+from kumosql.smt_equivalence import TableConstraints  # noqa: E402
 
 _path = Path(__file__).resolve().parent.parent / "tools" / "mv_workload_bench.py"
 _spec = importlib.util.spec_from_file_location("mv_workload_bench", _path)
@@ -60,6 +63,95 @@ def test_a_mined_view_answers_the_queries_that_share_it():
 def test_a_view_that_lacks_a_column_is_not_used():
     view = "SELECT t.id AS t_id, u.t_id AS u_t_id FROM t, u WHERE t.id = u.t_id"
     assert not rewrite_over_model(QUERIES["q1"], view, schema=SCHEMA).rewritten  # q1 reads u.z and t.x
+
+
+# -- LEFT JOIN generalization of mined views ------------------------------------------------------
+
+CONSTRAINTS = {
+    "t": TableConstraints(not_null=frozenset({"id"}), keys=(("id",),)),
+    "u": TableConstraints(not_null=frozenset({"id"}), keys=(("id",),)),
+    "w": TableConstraints(not_null=frozenset({"id"}), keys=(("id",),)),
+}
+
+
+def _general(queries=QUERIES, constraints=CONSTRAINTS):
+    graphs = {q: vc.graph_of(sql, SCHEMA) for q, sql in queries.items()}
+    return vg.generalize(vc.mine(queries, SCHEMA), constraints, graphs), graphs
+
+
+def test_a_keyed_table_becomes_an_extra_of_the_core():
+    views, _ = _general()
+    by_core = {v.core.tables: v for v in views}
+    view = by_core[("u",)]  # t.id is a key: u LEFT JOIN t ON t.id = u.t_id
+    assert [e.table for e in view.extras] == ["t"] and view.extras[0].key == "id" and view.extras[0].via_column == "t_id"
+    assert "LEFT JOIN t AS t1 ON t1.id = t0.t_id" in view.sql()
+    assert ("u", "w") in by_core or ("w",) in by_core  # w.u_id is not unique, so w is never stripped as an extra of u
+
+
+def test_no_declared_key_means_no_generalization():
+    views, _ = _general(constraints={})
+    assert all(not v.extras for v in views)
+
+
+def test_slices_list_the_core_alone_and_with_the_extra():
+    view = {v.core.tables: v for v in _general()[0]}[("u",)]
+    def graph(sql):
+        return vc.graph_of(sql, SCHEMA)
+
+    assert view.slices_for(graph("SELECT MIN(a.z) FROM u AS a")) == [frozenset()]
+    assert view.slices_for(graph("SELECT MIN(a.z) FROM u AS a, t AS b WHERE b.id = a.t_id")) == [frozenset({0}), frozenset()]
+    assert view.slices_for(graph("SELECT MIN(b.x) FROM t AS b")) == []
+    # both tables are in the query but it does not join them on the view's columns: only the core fits
+    assert view.slices_for(graph("SELECT MIN(a.z) FROM u AS a, t AS b WHERE b.id = a.id")) == [frozenset()]
+
+
+def test_the_prover_shows_a_slice_equals_the_stored_view_only_under_the_key():
+    view = {v.core.tables: v for v in _general()[0]}[("u",)]
+    for chosen in (frozenset(), frozenset({0})):
+        assert view.lemma(chosen, SCHEMA, CONSTRAINTS)
+    assert not view.lemma(frozenset(), SCHEMA, {})  # without the key the LEFT JOIN may repeat rows
+
+
+def _slice_schema():
+    int_column = lambda name, null=False: bench.Column(name, "int", null)  # noqa: E731
+    return bench.Schema(
+        [
+            bench.Table("t", [int_column("id", True), int_column("x"), int_column("y")], [("id",)]),
+            bench.Table("u", [int_column("id", True), int_column("t_id"), int_column("z")], [("id",)]),
+        ]
+    )
+
+
+_SLICE_QUERIES = {
+    "a": "SELECT COUNT(*) FROM u, t WHERE t.id = u.t_id AND u.z > 3",
+    "b": "SELECT COUNT(*) FROM u, t WHERE t.id = u.t_id AND t.x = 1",
+    "c": "SELECT COUNT(*) FROM u WHERE u.z < 7",
+}
+
+
+def _slice_view(schema, cons):
+    graphs = {q: vc.graph_of(sql, schema.columns) for q, sql in _SLICE_QUERIES.items()}
+    return {v.core.tables: v for v in vg.generalize(vc.mine(_SLICE_QUERIES, schema.columns), cons, graphs)}[("u",)]
+
+
+def test_a_query_over_the_core_alone_reads_the_general_view_and_is_verified():
+    schema = _slice_schema()
+    cons = bench.constraints_of(schema)
+    record = bench.view_record(_slice_view(schema, cons), "view0")
+    for name, chosen in (("a", frozenset({0})), ("b", frozenset({0})), ("c", frozenset())):
+        reuse = bench.rewrite_over_slice(_SLICE_QUERIES[name], record, chosen, schema, cons)
+        assert reuse.rewritten, (name, reuse.reason)
+        assert find_difference(schema, reuse.query_sql, reuse.inlined_sql, mode="bag", trials=20) is None
+    # the joined query needs the presence test on t
+    assert "IS NOT NULL" in bench.rewrite_over_slice(_SLICE_QUERIES["a"], record, frozenset({0}), schema, cons).inlined_sql
+
+
+def test_a_general_view_with_a_contradiction_answers_nothing():
+    schema = _slice_schema()
+    cons = bench.constraints_of(schema)
+    record = bench.poisoned(bench.view_record(_slice_view(schema, cons), "view0"))
+    for name in _SLICE_QUERIES:
+        assert not bench.rewrite_over_slice(_SLICE_QUERIES[name], record, frozenset(), schema, cons).rewritten
 
 
 FLOORS = {"job_sample_rewritten": 20, "sample": 24}

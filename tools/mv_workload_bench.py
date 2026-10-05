@@ -56,6 +56,7 @@ logging.getLogger("sqlglot").setLevel(logging.ERROR)
 
 from kumosql import model_reuse as mr  # noqa: E402
 from kumosql import view_candidates as vc  # noqa: E402
+from kumosql import view_generalize as vg  # noqa: E402
 from kumosql.random_check import CheckError, Column, Schema, Table, find_difference  # noqa: E402
 from kumosql.smt_equivalence import TableConstraints  # noqa: E402
 
@@ -222,20 +223,29 @@ def try_rewrite(task: dict) -> dict:
     if graph is None:
         record.update(status="unsupported", seconds=round(time.time() - start, 2))
         return record
-    views = [v for v in task["views"] if applicable(graph, v["tables"])]
-    record["applicable"] = len(views)
-    if not views:
+    attempts = []  # (tables replaced, view, slice of a general view)
+    for view in task["views"]:
+        general = view.get("general")
+        if general is None:
+            if applicable(graph, view["tables"]):
+                attempts.append((len(view["tables"]), view, None))
+        else:
+            attempts.extend((len(general.core.tables) + len(chosen), view, chosen) for chosen in general.slices_for(graph))
+    record["applicable"] = len({a[1]["name"] for a in attempts})
+    if not attempts:
         record.update(status="no_view", seconds=round(time.time() - start, 2))
         return record
     cons = constraints_of(schema)
     outcome = "no_rewrite"
-    for view in sorted(views, key=lambda v: (-len(v["tables"]), v["name"])):
+    for size, view, chosen in sorted(attempts, key=lambda a: (-a[0], a[1]["name"])):
         record["tried"] += 1
         try:
             if task["baseline"]:
                 reuse = baseline(task["sql"], view["sql"], schema, cons)
-            else:
+            elif chosen is None:
                 reuse = mr.rewrite_over_model(task["sql"], view["sql"], schema=schema.columns, constraints=cons, timeout_ms=TIMEOUT_MS)
+            else:
+                reuse = rewrite_over_slice(task["sql"], view, chosen, schema, cons)
         except Exception as error:  # noqa: BLE001 - reported, never a result
             outcome = "error"
             record["reason"] = f"{type(error).__name__}: {error}"[:200]
@@ -244,7 +254,7 @@ def try_rewrite(task: dict) -> dict:
             outcome = "timeout"
             continue
         if reuse.rewritten:
-            record.update(view=view["name"], view_tables=len(view["tables"]), strategy=reuse.strategy)
+            record.update(view=view["name"], view_tables=size, strategy=reuse.strategy)
             inlined = reuse.inlined_sql or view["sql"]
             try:
                 witness = find_difference(schema, reuse.query_sql or task["sql"], inlined, mode="bag", trials=TRIALS)
@@ -258,6 +268,26 @@ def try_rewrite(task: dict) -> dict:
     return record
 
 
+def rewrite_over_slice(sql: str, view: dict, chosen: frozenset[int], schema: Schema, cons) -> mr.ModelReuse:
+    """Rewrite over one slice of a general (LEFT JOIN) view.
+
+    The engine proves the rewrite over the slice's inner join; the prover then proves that inner join equals the
+    stored view filtered to the rows where the slice's extras are present, so the rewrite reads the stored view."""
+
+    general: vg.GeneralView = view["general"]
+    poison = view.get("poison", False)
+    reuse = mr.rewrite_over_model(sql, general.inner_sql(chosen, poison), schema=schema.columns, constraints=cons, timeout_ms=TIMEOUT_MS)
+    if not reuse.rewritten:
+        return reuse
+    if not general.lemma(chosen, schema.columns, cons, TIMEOUT_MS, poison):
+        return mr.ModelReuse("no_rewrite", "the slice is not proven equal to the stored view")
+    stored = general.stored_sql(chosen, "mv_stored")
+    replacement = mr.sqlglot.parse_one(reuse.sql, read="postgres")
+    composed = mr._inline(replacement, "mv0", stored)
+    inlined = mr._inline(replacement, "mv0", general.stored_inline(chosen, poison))
+    return mr.ModelReuse("rewritten", reuse.reason, composed, reuse.strategy, reuse.assumptions, reuse.model_columns, reuse.candidates_tried, inlined, reuse.query_sql)
+
+
 def baseline(sql: str, view_sql: str, schema: Schema, cons) -> mr.ModelReuse:
     """The existing prover alone: does the view, as a whole, equal the query?"""
 
@@ -269,13 +299,17 @@ def baseline(sql: str, view_sql: str, schema: Schema, cons) -> mr.ModelReuse:
     return mr.ModelReuse("no_rewrite", "not the same query")
 
 
-def view_record(candidate: vc.Candidate, name: str) -> dict:
+def view_record(candidate: vc.Candidate | vg.GeneralView, name: str) -> dict:
+    if isinstance(candidate, vg.GeneralView):
+        return {"name": name, "sql": candidate.sql(), "tables": candidate.tables, "general": candidate}
     return {"name": name, "sql": candidate.sql(), "tables": list(candidate.shape.tables)}
 
 
 def poisoned(view: dict) -> dict:
     """The same view with a condition that no row meets: a query cannot be answered from it, so no rewrite may be proven."""
 
+    if view.get("general") is not None:
+        return {**view, "name": view["name"] + "-empty", "sql": view["general"].sql(poison=True), "poison": True}
     sql = view["sql"]
     column = re.match(r"SELECT t0\.(\w+) AS", sql).group(1)
     contradiction = f"t0.{column} IS NULL AND t0.{column} IS NOT NULL"
@@ -309,12 +343,16 @@ def summarize(records: list[dict]) -> dict:
     return out
 
 
-def run_workload(name: str, data: Path | None, sample: int | None, budget: int, jobs: int, use_baseline: bool, tracks: list[str]) -> dict:
+def run_workload(name: str, data: Path | None, sample: int | None, budget: int, jobs: int, use_baseline: bool, tracks: list[str], dev_only: bool = False, generalize: bool = True) -> dict:
     queries, schema = load_workload(name, data, sample)
     dev = {q: r["sql"] for q, r in queries.items() if not r["held_out"]}
     start = time.time()
     mined = vc.mine(dev, schema.columns)
-    chosen = vc.select(mined, budget)
+    if generalize:
+        graphs = {q: g for q, g in ((q, vc.graph_of(sql, schema.columns)) for q, sql in dev.items()) if g is not None}
+        chosen = vg.select(vg.generalize(mined, constraints_of(schema), graphs), graphs, budget)
+    else:
+        chosen = vc.select(mined, budget)
     views = [view_record(c, f"view{i}") for i, c in enumerate(chosen)]
     result: dict = {
         "workload": name,
@@ -324,6 +362,7 @@ def run_workload(name: str, data: Path | None, sample: int | None, budget: int, 
         "candidates_mined": len(mined),
         "views_chosen": len(chosen),
         "view_sizes": sorted(Counter(len(v["tables"]) for v in views).items()),
+        "views_with_left_joins": sum(1 for v in views if v.get("general") is not None and v["general"].extras),
         "mining_seconds": round(time.time() - start, 1),
         "tracks": {},
         "records": {},
@@ -334,7 +373,7 @@ def run_workload(name: str, data: Path | None, sample: int | None, budget: int, 
     if name == "job" and "given" in tracks:
         plans["given"] = [g for g in (given_record(n, s, schema) for n, s in load_given(data).items()) if g]
     for track, track_views in plans.items():
-        tasks = [{"id": q, "sql": r["sql"], "held_out": r["held_out"], "schema": schema, "views": track_views, "track": track, "baseline": use_baseline} for q, r in queries.items()]
+        tasks = [{"id": q, "sql": r["sql"], "held_out": r["held_out"], "schema": schema, "views": track_views, "track": track, "baseline": use_baseline} for q, r in queries.items() if not (dev_only and r["held_out"])]
         if jobs > 1:
             with ProcessPoolExecutor(max_workers=jobs) as pool:
                 records = list(pool.map(try_rewrite, tasks, chunksize=4))
@@ -355,6 +394,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data", type=Path, help="a local checkout of the benchmark instead of the download")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1)
     parser.add_argument("--track", choices=["mined", "given", "poisoned"], action="append")
+    parser.add_argument("--no-generalize", action="store_true", help="keep the mined inner-join views as they are (no LEFT JOIN onto unique keys)")
+    parser.add_argument("--dev-only", action="store_true", help="rewrite and score only the development queries (held-out queries are never read by a rewrite)")
     parser.add_argument("--json")
     args = parser.parse_args(argv)
     names = list(WORKLOADS) if args.all else (args.workload or ["job"])
@@ -362,7 +403,7 @@ def main(argv: list[str] | None = None) -> int:
     report = {}
     for name in names:
         sample = None if name == "job" else (args.sample or 100)
-        report[name] = run_workload(name, args.data, sample, args.budget, args.jobs, args.baseline, tracks)
+        report[name] = run_workload(name, args.data, sample, args.budget, args.jobs, args.baseline, tracks, args.dev_only, not args.no_generalize)
         head = report[name]
         print(f"{name}: {head['queries']} queries ({head['held_out_queries']} held out), {head['candidates_mined']} candidate views mined, {head['views_chosen']} kept, sizes {head['view_sizes']}")
         for track, summary in head["tracks"].items():
