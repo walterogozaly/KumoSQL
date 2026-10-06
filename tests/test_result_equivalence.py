@@ -16,6 +16,7 @@ pytest.importorskip("duckdb")
 from kumosql import lift_subqueries, prove_equivalent
 from kumosql.result_equivalence import (
     ExecutionError,
+    _SharedInstance,
     QueryOutput,
     ResultEquivalenceStatus,
     assert_result_equivalent,
@@ -328,6 +329,36 @@ INSERT INTO `p.d.customers` (id) SELECT 42;"""
     # A second run on the same dataset still sees the original source rows.
     fresh, _ = execute_on_dataset("SELECT COUNT(*) AS n FROM `p.d.customers`", SCHEMA, dataset)
     assert fresh.rows == ((len(dataset.tables["p.d.customers"].rows),),)
+
+
+def test_shared_instance_matches_fresh_connections_and_starts_each_run_empty():
+    scripts = [
+        "SELECT c.region, COUNT(*) AS n FROM `p.d.customers` AS c JOIN `p.d.orders` AS o "
+        "ON o.customer_id = c.id GROUP BY c.region",
+        "CREATE OR REPLACE TABLE `p.d.customers` AS SELECT id FROM `p.d.customers` WHERE FALSE; "
+        "INSERT INTO `p.d.customers` (id) SELECT 42",
+        "CREATE TABLE `p.d.summary` AS SELECT customer_id, SUM(amount) AS total FROM `p.d.orders` GROUP BY 1; "
+        "SELECT * FROM `p.d.summary`",
+        "CREATE VIEW `p.d.customer_ids` AS SELECT id FROM `p.d.customers`; "
+        "SELECT COUNT(*) AS n FROM `p.d.customer_ids`",
+        "CREATE TEMP TABLE big AS SELECT * FROM `p.d.orders` WHERE amount > 0; SELECT COUNT(*) AS n FROM big",
+        "UPDATE `p.d.orders` SET amount = 0 WHERE amount > 10; SELECT SUM(amount) AS s FROM `p.d.orders`",
+        "SELECT no_such_column FROM `p.d.customers`",
+    ]
+
+    def outcome(script, dataset, shared):
+        try:
+            output, statements = execute_on_dataset(script, SCHEMA, dataset, run_tag="shared-test", shared=shared)
+        except ExecutionError as error:
+            return str(error)
+        return output.columns, sorted(output.rows, key=repr), statements
+
+    datasets = [generate_synthetic_dataset(SCHEMA, seed=seed) for seed in (0, 3, 5)]
+    with _SharedInstance() as shared:
+        for _ in range(2):
+            for dataset in datasets:
+                for script in scripts:
+                    assert outcome(script, dataset, shared) == outcome(script, dataset, None), script
 
 
 def test_cte_names_shadow_unqualified_schema_tables():

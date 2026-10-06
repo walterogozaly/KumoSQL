@@ -18,6 +18,7 @@ affected-row count.
 from __future__ import annotations
 
 from collections import Counter
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -560,7 +561,7 @@ def prepare_statements(
 # ---------------------------------------------------------------------------
 
 
-def _connect(dialect: str = "bigquery"):
+def _connect(dialect: str = "bigquery", *, configure_session: bool = True):
     try:
         import duckdb
     except ImportError as exc:  # pragma: no cover - exercised only without the extra
@@ -568,11 +569,55 @@ def _connect(dialect: str = "bigquery"):
             "duckdb is required for result equivalence; install kumosql[execution]"
         ) from exc
     connection = small_database()
-    if dialect == "bigquery":
+    if dialect == "bigquery" and configure_session:
         from .bigquery_on_duckdb import configure
 
         configure(connection)
     return connection
+
+
+_SHAREABLE = re.compile(
+    r"\s*\(*\s*(SELECT|WITH|VALUES|FROM|INSERT|UPDATE|DELETE"
+    r"|CREATE\s+(OR\s+REPLACE\s+)?(TABLE|VIEW)|DROP\s+(TABLE|VIEW))\b",
+    re.IGNORECASE,
+)
+_SPARE_DATABASE = "__eqv_spare"
+
+
+class _SharedInstance:
+    """Reuse one DuckDB instance while giving each safe run an empty attached database."""
+
+    def __init__(self) -> None:
+        self._instance = None
+
+    def __enter__(self) -> "_SharedInstance":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self._instance is not None:
+            self._instance.close()
+            self._instance = None
+
+    @contextmanager
+    def database(self):
+        if self._instance is None:
+            self._instance = _connect(configure_session=False)
+            self._instance.execute(f"ATTACH ':memory:' AS {_SPARE_DATABASE}")
+            self._instance.execute(f"USE {_SPARE_DATABASE}")
+            self._instance.execute("DETACH memory")
+        self._instance.execute("ATTACH ':memory:' AS memory")
+        try:
+            connection = self._instance.cursor()
+            try:
+                connection.execute("USE memory")
+                from .bigquery_on_duckdb import configure
+
+                configure(connection)
+                yield connection
+            finally:
+                connection.close()
+        finally:
+            self._instance.execute("DETACH memory")
 
 
 def _sql_literal(value: Any) -> str:
@@ -606,38 +651,51 @@ def _load_dataset(connection, dataset: SyntheticDataset) -> None:
             connection.execute(f'INSERT INTO "{local}" VALUES {values_sql}')
 
 
+def _run_statements(
+    connection, dataset: SyntheticDataset, statements: list[str], last_target: str | None
+) -> QueryOutput:
+    _load_dataset(connection, dataset)
+    cursor = None
+    for statement in statements:
+        try:
+            cursor = connection.execute(statement)
+        except Exception as exc:
+            raise _execution_error(f"DuckDB failed on {statement!r}", exc) from exc
+    if last_target is not None:
+        try:
+            cursor = connection.execute(f'SELECT * FROM "{last_target}"')
+        except Exception as exc:
+            raise _execution_error("DuckDB failed reading the written table", exc) from exc
+    if cursor is None or cursor.description is None:
+        raise ExecutionError("script produced neither a query result nor a written table")
+    try:
+        columns = tuple(column[0] for column in cursor.description)
+        rows = tuple(tuple(row) for row in cursor.fetchall())
+    except Exception as exc:
+        raise _execution_error("DuckDB failed while fetching results", exc) from exc
+    rows = _bigquery_rows(rows, "bigquery")
+    return QueryOutput(columns=columns, rows=rows)
+
+
 def execute_on_dataset(
     sql: str,
     schema: Schema,
     dataset: SyntheticDataset,
     *,
     run_tag: str = "run",
+    shared: _SharedInstance | None = None,
 ) -> tuple[QueryOutput, list[str]]:
-    """Run ``sql`` in a fresh DuckDB connection loaded with ``dataset``."""
+    """Run ``sql`` in a fresh DuckDB database loaded with ``dataset``."""
 
     statements, last_target = prepare_statements(sql, schema, run_tag=run_tag)
+    if shared is not None and all(_SHAREABLE.match(statement) for statement in statements):
+        with shared.database() as connection:
+            return _run_statements(connection, dataset, statements, last_target), statements
     connection = _connect()
     try:
-        _load_dataset(connection, dataset)
-        cursor = None
-        for statement in statements:
-            try:
-                cursor = connection.execute(statement)
-            except Exception as exc:
-                raise _execution_error(f"DuckDB failed on {statement!r}", exc) from exc
-        if last_target is not None:
-            cursor = connection.execute(f'SELECT * FROM "{last_target}"')
-        if cursor is None or cursor.description is None:
-            raise ExecutionError("script produced neither a query result nor a written table")
-        try:
-            columns = tuple(column[0] for column in cursor.description)
-            rows = tuple(tuple(row) for row in cursor.fetchall())
-        except Exception as exc:
-            raise _execution_error("DuckDB failed while fetching results", exc) from exc
+        return _run_statements(connection, dataset, statements, last_target), statements
     finally:
         connection.close()
-    rows = _bigquery_rows(rows, "bigquery")
-    return QueryOutput(columns=columns, rows=rows), statements
 
 
 class DatasetRunner:
@@ -866,93 +924,106 @@ def check_result_equivalence(
                 yield labeled.dataset.seed, labeled.dataset
 
     skipped = 0
-    for seed, dataset in _datasets():
-        try:
-            left_output, left_sql_out = execute_on_dataset(
-                left_sql, schema, dataset, run_tag=f"left_{seed}"
-            )
-        except BigQueryWouldFail:
-            skipped += 1  # BigQuery fails on this database: it shows nothing either way
-            continue
-        except ExecutionError as exc:
-            return ResultEquivalence(
-                ResultEquivalenceStatus.ERROR, f"left side failed: {exc}", tuple(checked), seed,
-                float_digits=float_digits,
-            )
-        try:
-            right_output, right_sql_out = execute_on_dataset(
-                right_sql, schema, dataset, run_tag=f"right_{seed}"
-            )
-        except BigQueryWouldFail:
-            skipped += 1
-            continue
-        except ExecutionError as exc:
-            return ResultEquivalence(
-                ResultEquivalenceStatus.ERROR,
-                f"right side failed: {exc}",
-                tuple(checked),
-                seed,
-                left_output=left_output,
-                left_duckdb_sql=tuple(left_sql_out),
-                float_digits=float_digits,
-            )
-        # A side that disagrees with itself on identical input cannot support
-        # either an equivalence or a counterexample claim.
-        for side, side_sql, first_output in (
-            ("left", left_sql, left_output),
-            ("right", right_sql, right_output),
-        ):
+    with _SharedInstance() as shared:
+        for seed, dataset in _datasets():
             try:
-                repeat_output, _ = execute_on_dataset(
-                    side_sql, schema, dataset, run_tag=f"{side}_{seed}_repeat"
+                left_output, left_sql_out = execute_on_dataset(
+                    left_sql, schema, dataset, run_tag=f"left_{seed}", shared=shared
                 )
+            except BigQueryWouldFail:
+                skipped += 1  # BigQuery fails on this database: it shows nothing either way
+                continue
+            except ExecutionError as exc:
+                return ResultEquivalence(
+                    ResultEquivalenceStatus.ERROR, f"left side failed: {exc}", tuple(checked), seed,
+                    float_digits=float_digits,
+                )
+            try:
+                right_output, right_sql_out = execute_on_dataset(
+                    right_sql, schema, dataset, run_tag=f"right_{seed}", shared=shared
+                )
+            except BigQueryWouldFail:
+                skipped += 1
+                continue
             except ExecutionError as exc:
                 return ResultEquivalence(
                     ResultEquivalenceStatus.ERROR,
-                    f"{side} side failed on repeat run: {exc}",
+                    f"right side failed: {exc}",
                     tuple(checked),
                     seed,
+                    left_output=left_output,
+                    left_duckdb_sql=tuple(left_sql_out),
                     float_digits=float_digits,
                 )
-            stable, _, _, _ = compare_outputs(
-                first_output,
-                repeat_output,
+            # A side that disagrees with itself on identical input cannot support
+            # either an equivalence or a counterexample claim.
+            for side, side_sql, first_output in (
+                ("left", left_sql, left_output),
+                ("right", right_sql, right_output),
+            ):
+                try:
+                    repeat_output, _ = execute_on_dataset(
+                        side_sql, schema, dataset, run_tag=f"{side}_{seed}_repeat", shared=shared
+                    )
+                except ExecutionError as exc:
+                    return ResultEquivalence(
+                        ResultEquivalenceStatus.ERROR,
+                        f"{side} side failed on repeat run: {exc}",
+                        tuple(checked),
+                        seed,
+                        float_digits=float_digits,
+                    )
+                stable, _, _, _ = compare_outputs(
+                    first_output,
+                    repeat_output,
+                    ignore_row_order=ignore_row_order,
+                    check_column_names=check_column_names,
+                    float_digits=float_digits,
+                )
+                if not stable:
+                    return ResultEquivalence(
+                        ResultEquivalenceStatus.INCONCLUSIVE,
+                        f"{side} side returned different results on two runs over the same "
+                        f"synthetic data (seed {seed}); it is nondeterministic, so the "
+                        "comparison proves nothing either way",
+                        tuple(checked),
+                        seed,
+                        left_duckdb_sql=tuple(left_sql_out),
+                        right_duckdb_sql=tuple(right_sql_out),
+                        float_digits=float_digits,
+                    )
+            checked.append(seed)
+            equal, reason, only_left, only_right = compare_outputs(
+                left_output,
+                right_output,
                 ignore_row_order=ignore_row_order,
                 check_column_names=check_column_names,
                 float_digits=float_digits,
             )
-            if not stable:
-                return ResultEquivalence(
-                    ResultEquivalenceStatus.INCONCLUSIVE,
-                    f"{side} side returned different results on two runs over the same "
-                    f"synthetic data (seed {seed}); it is nondeterministic, so the "
-                    "comparison proves nothing either way",
-                    tuple(checked),
-                    seed,
-                    left_duckdb_sql=tuple(left_sql_out),
-                    right_duckdb_sql=tuple(right_sql_out),
-                    float_digits=float_digits,
-                )
-        checked.append(seed)
-        equal, reason, only_left, only_right = compare_outputs(
-            left_output,
-            right_output,
-            ignore_row_order=ignore_row_order,
-            check_column_names=check_column_names,
-            float_digits=float_digits,
-        )
-        if not equal:
-            from .refute import order_dependence
+            if not equal:
+                from .refute import order_dependence
 
-            try:
-                free = order_dependence(left_sql) or order_dependence(right_sql)
-            except sqlglot.errors.SqlglotError:
-                free = None
-            if free:
+                try:
+                    free = order_dependence(left_sql) or order_dependence(right_sql)
+                except sqlglot.errors.SqlglotError:
+                    free = None
+                if free:
+                    return ResultEquivalence(
+                        ResultEquivalenceStatus.INCONCLUSIVE,
+                        f"the results differ, but a query may pick rows freely ({free}), so the "
+                        "difference may be a different choice rather than a different answer",
+                        tuple(checked),
+                        seed,
+                        left_output,
+                        right_output,
+                        only_left,
+                        only_right,
+                        tuple(left_sql_out),
+                        tuple(right_sql_out),
+                    )
                 return ResultEquivalence(
-                    ResultEquivalenceStatus.INCONCLUSIVE,
-                    f"the results differ, but a query may pick rows freely ({free}), so the "
-                    "difference may be a different choice rather than a different answer",
+                    ResultEquivalenceStatus.DIFFERENT,
+                    reason,
                     tuple(checked),
                     seed,
                     left_output,
@@ -961,20 +1032,8 @@ def check_result_equivalence(
                     only_right,
                     tuple(left_sql_out),
                     tuple(right_sql_out),
+                    float_digits=float_digits,
                 )
-            return ResultEquivalence(
-                ResultEquivalenceStatus.DIFFERENT,
-                reason,
-                tuple(checked),
-                seed,
-                left_output,
-                right_output,
-                only_left,
-                only_right,
-                tuple(left_sql_out),
-                tuple(right_sql_out),
-                float_digits=float_digits,
-            )
     if not checked and skipped:
         return ResultEquivalence(
             ResultEquivalenceStatus.ERROR, "BigQuery fails on every synthetic dataset", (), None

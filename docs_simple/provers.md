@@ -68,6 +68,8 @@ Two details of the structural check: it drops a result ordering only when no sor
 
 ## Comparing scripts that change a table
 
+Each run starts with empty tables. Queries and permanent table or view writes in one comparison can reuse a DuckDB instance, with a fresh empty database for every run; scripts that may leave session state or temporary objects get their own connection.
+
 An `UPDATE` or `DELETE` only reports how many rows it touched, and two updates can touch the same number of rows while writing different values: `UPDATE t SET a = 1 WHERE TRUE` and `UPDATE t SET a = 2 WHERE TRUE` both touch every row. The executed comparison therefore works on a private copy of the table and compares the rows that are left afterwards, not the count. This also covers `TRUNCATE`.
 
 Some writes cannot be compared faithfully, so the check answers `error` instead of guessing: `MERGE` and `UPDATE ... FROM` (BigQuery fails when a target row matches several source rows, while DuckDB quietly picks one), an `UPDATE` or `DELETE` with no `WHERE` clause (BigQuery rejects it), and a statement whose target table cannot be identified. The limit is that a script writing several tables is still compared on the last table it wrote. See the [full reference](../docs/provers.md) for details.
