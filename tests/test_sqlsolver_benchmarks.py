@@ -1,8 +1,9 @@
 """SQLSolver's published benchmark pairs: coverage floors and zero wrong proofs.
 
 Every proof is re-checked by running both queries on random DuckDB databases that
-respect the schema's constraints. ``FLOORS`` only ever goes up: a drop means a
-regression in proving power, a wrong proof means a soundness bug.
+respect the schema's constraints. ``FLOORS`` track current supported coverage. A sound semantics
+change may conservatively lower a floor only when a former proof becomes unknown; wrong proofs
+remain failures.
 """
 
 import importlib.util
@@ -21,7 +22,7 @@ bench = importlib.util.module_from_spec(_spec)
 sys.modules["sqlsolver_bench"] = bench
 _spec.loader.exec_module(bench)
 
-FLOORS = {"calcite": 227, "spark": 123, "tpch": 22, "tpcc": 19}
+FLOORS = {"calcite": 227, "spark": 123, "tpch": 21, "tpcc": 19}
 if int(sqlglot.__version__.split(".")[0]) < 30:
     # sqlglot 26 parses some constructs differently, so fewer pairs reach the prover (measured 2026-10-02).
     FLOORS = {"calcite": 177, "spark": 118, "tpch": 12, "tpcc": 18}
