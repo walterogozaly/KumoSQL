@@ -401,6 +401,110 @@ def _outer_join_hazard(tree: exp.Expression) -> bool:
     return False
 
 
+def _conjuncts(node: exp.Expression) -> list[exp.Expression]:
+    if isinstance(node, exp.Paren):
+        return _conjuncts(node.this)
+    if isinstance(node, exp.And):
+        return _conjuncts(node.this) + _conjuncts(node.expression)
+    return [node]
+
+
+def _qualified_column_key(node: exp.Expression) -> tuple[str, str] | None:
+    if not isinstance(node, exp.Column) or not isinstance(node.this, exp.Identifier) or not node.table:
+        return None
+    if node.args.get("db") or node.args.get("catalog"):
+        return None
+    return node.table.lower(), node.name.lower()
+
+
+def _small_integer(node: exp.Expression) -> int | None:
+    sign = 1
+    if isinstance(node, exp.Neg):
+        sign, node = -1, node.this
+    if not isinstance(node, exp.Literal) or node.is_string or not node.is_int:
+        return None
+    try:
+        value = sign * int(node.this)
+    except ValueError:
+        return None
+    # These values stay distinct even if a comparison promotes an integer to FLOAT64.
+    return value if abs(value) <= 2**53 else None
+
+
+def _contradictory_integer_equalities(conditions: Sequence[exp.Expression]) -> bool:
+    """Whether ANDed qualified equalities force one column to two distinct small integers."""
+
+    parent: dict[tuple[str, str], tuple[str, str]] = {}
+    constants: list[tuple[tuple[str, str], int]] = []
+
+    def root(key: tuple[str, str]) -> tuple[str, str]:
+        parent.setdefault(key, key)
+        if parent[key] != key:
+            parent[key] = root(parent[key])
+        return parent[key]
+
+    def union(left: tuple[str, str], right: tuple[str, str]) -> None:
+        a, b = root(left), root(right)
+        if a != b:
+            parent[max(a, b)] = min(a, b)
+
+    equalities = []
+    for condition in conditions:
+        for part in _conjuncts(condition):
+            if not isinstance(part, exp.EQ):
+                continue
+            left, right = part.this, part.expression
+            left_column, right_column = _qualified_column_key(left), _qualified_column_key(right)
+            if left_column is not None and right_column is not None:
+                equalities.append((left_column, right_column))
+                continue
+            if left_column is not None:
+                value = _small_integer(right)
+                if value is not None:
+                    constants.append((left_column, value))
+            elif right_column is not None:
+                value = _small_integer(left)
+                if value is not None:
+                    constants.append((right_column, value))
+
+    for left, right in equalities:
+        union(left, right)
+    values: dict[tuple[str, str], set[int]] = {}
+    for column, value in constants:
+        values.setdefault(root(column), set()).add(value)
+    return any(len(found) > 1 for found in values.values())
+
+
+def _empty_inner_join_forms(tree: exp.Expression) -> list[exp.Expression]:
+    """Replace an inner join condition with FALSE when the whole select is already unsatisfiable."""
+
+    selects = list(tree.find_all(exp.Select))
+    out = []
+    for select_index, select in enumerate(selects):
+        joins = list(select.args.get("joins") or [])
+        if not joins or any(
+            (join.args.get("side") or "").upper()
+            or (join.args.get("kind") or "").upper() not in ("", "INNER")
+            for join in joins
+        ):
+            continue
+        conditions = [join.args["on"] for join in joins if join.args.get("on") is not None]
+        where = select.args.get("where")
+        if where is not None:
+            conditions.append(where.this)
+        if not _contradictory_integer_equalities(conditions):
+            continue
+        for join_index, join in enumerate(joins):
+            if join.args.get("on") is None:
+                continue
+            candidate = tree.copy()
+            copied_select = list(candidate.find_all(exp.Select))[select_index]
+            copied_join = list(copied_select.args.get("joins") or [])[join_index]
+            copied_join.set("on", exp.false())
+            out.append(candidate)
+    return out
+
+
 def _unresolved(tree: exp.Expression) -> bool:
     """A column ``qualify`` left without a source: folding a source in could capture it."""
 
@@ -737,6 +841,7 @@ def _optimizer_forms(tree: exp.Expression, schema: dict | None, volatile: bool) 
         folded = chain(folded, merge_subqueries)
     folded = chain(folded, eliminate_joins, eliminate_ctes)
     out.append(folded)
+    out.extend(_empty_inner_join_forms(folded))
     try:
         having = _fold_outer_filters(folded.copy())
     except Exception:  # noqa: BLE001

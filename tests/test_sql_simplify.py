@@ -86,6 +86,37 @@ def test_join_of_two_folded_tables():
     assert proven(sql, out[0])
 
 
+def test_contradictory_inner_join_filters_can_be_reduced_to_no_matches():
+    sql = (
+        "SELECT x.b AS b, y.b AS b2 FROM (SELECT x.b AS b FROM m.x AS x WHERE x.b = 1) AS x "
+        "INNER JOIN (SELECT y.b AS b FROM m.y AS y WHERE y.b = 2) AS y ON x.b = y.b"
+    )
+    columns = {"m.x": ["b"], "m.y": ["b"]}
+    out = simpler_forms(sql, columns)
+    empty_join = next((form for form in out if "INNER JOIN m.y ON FALSE" in form), None)
+
+    assert empty_join is not None, out
+    check_contract(sql, out, columns)
+    assert proven(sql, empty_join, columns)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT x.b FROM (SELECT b FROM m.x WHERE b = 1) AS x LEFT JOIN "
+        "(SELECT b FROM m.y WHERE b = 2) AS y ON x.b = y.b",
+        "SELECT x.b FROM (SELECT b FROM m.x WHERE b = 1) AS x INNER JOIN "
+        "(SELECT b FROM m.y WHERE b = 2 OR b = 3) AS y ON x.b = y.b",
+        "SELECT x.b FROM (SELECT a, b FROM m.x WHERE b = 1) AS x INNER JOIN "
+        "(SELECT a, b FROM m.y WHERE b = 2) AS y ON x.a = y.a",
+    ],
+    ids=["outer-join", "disjunction", "different-key"],
+)
+def test_no_match_candidate_keeps_outer_or_unrelated_predicates(sql):
+    columns = {"m.x": ["a", "b"], "m.y": ["a", "b"]}
+    assert all("ON FALSE" not in form for form in simpler_forms(sql, columns))
+
+
 def test_filter_over_grouped_table_becomes_having():
     sql = "SELECT k, n FROM (SELECT k, COUNT(*) AS n FROM m.t GROUP BY k) AS d WHERE n > 1"
     out = simpler_forms(sql, COLUMNS)

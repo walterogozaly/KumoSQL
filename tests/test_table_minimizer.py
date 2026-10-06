@@ -85,6 +85,25 @@ def test_chain_folds_into_the_protected_tables_with_proofs():
     json.dumps(data)
 
 
+def test_contradictory_inner_join_models_fold_to_an_empty_join():
+    sources = {
+        "x": {"columns": {"a": "INT64", "b": "INT64"}},
+        "y": {"columns": {"b": "INT64", "c": "INT64"}},
+    }
+    tables = {
+        "x_t": "SELECT x.b AS b FROM x AS x WHERE x.b = 1",
+        "y_t": "SELECT y.b AS b FROM y AS y WHERE y.b = 2",
+        "result": "SELECT x.b AS b, y.b AS b2 FROM x_t AS x INNER JOIN y_t AS y ON x.b = y.b",
+    }
+
+    result = minimize_tables(tables, ["result"], sources=sources, timeout_ms=3000, max_seconds=20)
+
+    assert set(result.tables) == {"result"}
+    assert "INNER JOIN y ON FALSE" in result.tables["result"]
+    assert result.proofs["result"].status == "proved"
+    assert result.score < result.original_score
+
+
 def test_unprotected_tables_nobody_needs_are_dropped_and_the_rest_left_alone():
     tables = {
         "report": "SELECT customer_id, SUM(amount) AS total FROM orders GROUP BY customer_id",
