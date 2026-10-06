@@ -661,6 +661,75 @@ def infer(sql_or_tree, catalog: Catalog | None = None, dialect: str = "bigquery"
     return TypedQuery(tree, columns, typer.findings, typer.types, typer.relations)
 
 
+def infer_pipeline(pipeline, catalog: Catalog | None = None) -> dict[str, TypedQuery]:
+    """Infer query-model outputs in Dataform dependency order.
+
+    ``pipeline.source_schema`` seeds the catalog; an optional ``catalog`` adds
+    schemas for external tables. Successfully typed outputs are then available
+    to downstream models. Models with unresolved SQLX, dynamic/unknown kinds,
+    disabled actions, incremental branches, or dependency cycles are skipped.
+    A skipped or untyped model never supplies guessed columns to another model.
+    """
+
+    models = getattr(pipeline, "models", None) or {}
+    if not isinstance(models, Mapping):
+        return {}
+    source_schema = {
+        name: columns
+        for name, columns in (getattr(pipeline, "source_schema", None) or {}).items()
+        if isinstance(name, str) and isinstance(columns, Mapping) and columns
+    }
+
+    if catalog is None:
+        working = Catalog.from_types(source_schema)
+    else:
+        working = Catalog(
+            functions={name: catalog.function_type(name) for name in catalog.functions},
+            complete=catalog.complete,
+        )
+        for name, columns in catalog.tables().items():
+            working.add(name, columns)
+        for name, columns in catalog.table_functions.items():
+            working.add_table_function(name, columns)
+        for name, columns in source_schema.items():
+            if name.strip("`").lower() not in working.tables():
+                for table, values in Catalog.from_types({name: columns}).tables().items():
+                    working.add(table, values)
+
+    order_method = getattr(pipeline, "topological_order", None)
+    try:
+        order = list(order_method()) if callable(order_method) else list(models)
+    except Exception:  # an incomplete graph can still yield safe, partial types in declaration order
+        order = list(models)
+    cyclic_method = getattr(pipeline, "cyclic_models", None)
+    try:
+        cyclic = set(cyclic_method()) if callable(cyclic_method) else set()
+    except Exception:
+        cyclic = set(models)
+
+    results: dict[str, TypedQuery] = {}
+    for key in order:
+        model = models.get(key)
+        if model is None or key in cyclic or not getattr(model, "is_query", False):
+            continue
+        if getattr(model, "kind", None) == "unknown" or getattr(model, "disabled", False):
+            continue
+        # A full-refresh query does not describe an incremental table when the
+        # incremental branch has its own SQL. Keep that output unknown for now.
+        if getattr(model, "incremental_sql", ()):
+            continue
+        sql = getattr(model, "sql", None)
+        if not isinstance(sql, str) or not sql.strip() or "${" in sql:
+            continue
+
+        typed = infer(sql, working, dialect="bigquery")
+        results[key] = typed
+        if typed.columns is not None:
+            target = getattr(getattr(model, "target", None), "key", "") or key
+            working.add(target, typed.columns)
+    return results
+
+
 def _public_name(name: str | None) -> str | None:
     """A column the text fallback named only to build it (see :mod:`kumosql.googlesql_text_fallback`) has no name."""
 

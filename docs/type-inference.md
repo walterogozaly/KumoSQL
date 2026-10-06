@@ -4,11 +4,11 @@
 
 `kumosql.googlesql_types` works out the output schema of a BigQuery query, STRUCT and ARRAY included, without running it or asking BigQuery: which columns the query returns, with which names and which types. It is a conservative type checker: it gives a type only when GoogleSQL's own rules fix one, and answers **unknown** for everything else. A wrong type would be worse than no type, because a caller (a schema-change check, a prover's column model, a lineage view) would build on it.
 
-The checker is a library. Nothing else in KumoSQL calls it yet; the hooks planned for it are [at the end](#planned-hooks). How well it does is scored by the [GoogleSQL type inference eval](evals/googlesql-types.md); the numbers are on that page and in `benchmarks/results/googlesql-types.json`, not here.
+The checker is a library used by `prover_schema` to infer Dataform model output types across a loaded pipeline and make them available to the equivalence prover. The schema-change and set-operation hooks are in PR #780. How well the checker does is scored by the [GoogleSQL type inference eval](evals/googlesql-types.md); the numbers are on that page and in `benchmarks/results/googlesql-types.json`, not here.
 
 | Module | What it holds |
 | --- | --- |
-| `kumosql/googlesql_types.py` | `GType`, `parse_type`, `Catalog`, `infer`, `TypedQuery`; name resolution, `FROM` items, set operations, coercion and supertypes |
+| `kumosql/googlesql_types.py` | `GType`, `parse_type`, `Catalog`, `infer`, `infer_pipeline`, `TypedQuery`; name resolution, `FROM` items, set operations, coercion and supertypes |
 | `kumosql/googlesql_signatures.py` | The result type of each operator and built-in function, from the GoogleSQL function reference |
 | `kumosql/googlesql_pipe_types.py` | Pipe syntax (`FROM t \|> WHERE ... \|> SELECT ...`), operator by operator |
 | `tools/googlesql_types_eval.py` | The labelled eval against the GoogleSQL compliance tests |
@@ -82,6 +82,12 @@ A `Catalog` holds table schemas, found under each spelling of their name (`proje
 | `tree` | The parsed tree |
 
 Names follow GoogleSQL. A column reference or path takes its last identifier as its implicit alias; a range variable on its own is a STRUCT of its table's columns (or the row value of a value table such as `UNNEST`); range variables are looked up before columns; `UNNEST` of an array of structs makes the struct's fields columns. Output types are given as if the query were valid, since a query that is invalid has no type to be wrong about.
+
+### `infer_pipeline`
+
+`infer_pipeline(pipeline, catalog=None)` returns a mapping from Dataform model key to `TypedQuery`. It starts with `pipeline.source_schema` and an optional external `Catalog`, then adds each typed model output before visiting downstream models in `pipeline.topological_order()`. A known cycle, unresolved SQLX expression, disabled action, dynamic/unknown model kind or incremental model with a separate incremental query is left out. Partial and unknown column types are preserved; they never become guessed types for downstream models.
+
+`prover_schema.from_pipeline()` uses this API to supply model output names and complete inferred types to the prover schema. It also seeds inference from saved BigQuery table fields, including nested STRUCT and repeated ARRAY fields. A table spelling shared by multiple saved tables remains ambiguous.
 
 ## How unknown works
 
@@ -192,11 +198,9 @@ It prints the queries typed, scripts skipped (a script that declares variables c
 - **Names only as written.** Quoting and case follow BigQuery's rules for the cases the eval covers; a collation, a case-insensitive dataset setting or a wildcard-table suffix is not modelled.
 - **The labels are one source.** The eval measures agreement with the reference implementation's printed types on the GoogleSQL compliance tests. It does not show agreement with BigQuery on every query.
 
-## Planned hooks
+## Other hooks
 
-None of these exist yet; this page changes when one lands.
+The schema-change and set-operation hooks are in open PR #780:
 
-- **schema_change**: use inferred output columns to tell whether a column retype reaches an output and changes its type, which the [schema-change bench](evals/schema-change-bench.md) lists as a limit today (retypes feeding a `UNION` are not scored because the supertype is not modelled).
+- **schema_change**: use inferred output columns to tell whether a column retype reaches an output and changes its type.
 - **set_operation_types**: use the supertype rules to give the output types of `UNION` models in the whole-pipeline views.
-- **prover_schema / prover_context**: give the prover's schema and column model the inferred types of derived tables, so a column without a declared type stops being unknown.
-- **infer_pipeline**: run `infer` over a loaded Dataform project in dependency order, putting each model's columns in the catalog for the ones downstream (the scan's `--chain` already does this by hand).

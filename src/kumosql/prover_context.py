@@ -98,7 +98,9 @@ def current_schema() -> ProverSchema:
     loaded = live_graph.loaded()
     pipeline = loaded["pipeline"] if loaded else None
     tables = bigquery_catalog.saved_tables()
-    signature = (id(pipeline), len(tables))
+    # Saved schemas can be refreshed without changing the table count. The
+    # type inference in from_pipeline depends on each metadata object too.
+    signature = (id(pipeline), tuple(sorted((p, d, t, id(data)) for p, d, t, data in tables)))
     with _LOCK:
         if _CACHE.get("signature") == signature:
             return _CACHE["schema"]

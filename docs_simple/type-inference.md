@@ -34,7 +34,7 @@ Numbers that mix types (is `1 + 2.5` an integer or a decimal?), literals like `N
 - It does not run queries, read data or call BigQuery.
 - It is not a complete validator: a query it does not complain about can still fail in BigQuery.
 - Some parts of the language are left unknown on purpose: graph queries, protocol buffers, maps and a few uncommon number types.
-- Nothing else in KumoSQL uses it yet. It is a building block for later features such as checking schema changes more precisely.
+- The equivalence prover uses inferred output types from Dataform models. The checker types models in dependency order, so an upstream model's output can help type the queries that read it. Schema-change and set-operation checks are tracked separately in PR #780.
 
 ## How we know it is right
 
