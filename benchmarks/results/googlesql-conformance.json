@@ -2,19 +2,19 @@
   "suite": "GoogleSQL conformance (pure-Python evaluator)",
   "order": 63,
   "size": 3149,
-  "score": "2,694/3,149 claimed development cases exact, 0 wrong",
+  "score": "2,711/3,149 claimed development cases exact, 0 wrong",
   "metric": "The pure-Python GoogleSQL evaluator (kumosql.gsql_eval) run on the claimed subset of the GoogleSQL compliance tests: each case is exact (the expected rows, or the same kind of runtime error), unsupported (the evaluator declined) or a mismatch (a wrong answer, which must stay 0).",
   "docs": "docs/evals/googlesql-conformance.md",
   "command": "python tools/googlesql_conformance.py",
-  "date": "2026-10-05",
-  "caveats": "Source google/googlesql @ d82db99 (Apache-2.0). 12,062 cases in 285 files; 4,748 are claimed (BigQuery's feature set, fixed before the evaluator had functions): 3,149 in 94 development files, 1,599 in 30 held-out files (a quarter of the files by a hash of the file name). Of the 3,149 development cases 2,694 are exact, 455 unsupported (about 250 read columns of GoogleSQL-only types: INT32, UINT32, UINT64, FLOAT32, PROTO, ENUM), 0 mismatch; up to 154 of the exact ones are expected errors the evaluator also raises (a different status code is reported separately). The held-out files were run once before any fix: 989/1,599 exact, 577 unsupported, 30 mismatches, 3 unscored (expected text unreadable). Those mismatches (BETWEEN with NaN, leap seconds, GROUPING SETS key matching) were then fixed with the cases in view, so the held-out row is tuned on test: 1,024/1,599 exact, 0 mismatch after the fixes; read 989/1,599 with 30 wrong as the honest unseen figure. The 80% target holds on the development split (85.6%), not on the unseen held-out run (61.9%). Exact means the same answer as Google's reference implementation, not BigQuery itself; the evaluator raises Unsupported rather than approximate.",
+  "date": "2026-10-06",
+  "caveats": "Source google/googlesql @ d82db99 (Apache-2.0). 12,062 cases in 285 files; 4,748 are claimed (BigQuery's feature set, fixed before the evaluator had functions): 3,149 in 94 development files, 1,599 in 30 held-out files (a quarter of the files by a hash of the file name). Of the 3,149 development cases 2,711 are exact, 438 unsupported (about 250 read columns of GoogleSQL-only types: INT32, UINT32, UINT64, FLOAT32, PROTO, ENUM), 0 mismatch; up to 154 of the exact ones are expected errors the evaluator also raises (a different status code is reported separately). The held-out files were run once before any fix: 989/1,599 exact, 577 unsupported, 30 mismatches, 3 unscored (expected text unreadable). Those mismatches (BETWEEN with NaN, leap seconds, GROUPING SETS key matching) were then fixed with the cases in view, so the held-out row is tuned on test: 1,024/1,599 exact, 0 mismatch after the fixes; read 989/1,599 with 30 wrong as the honest unseen figure. The 80% target holds on the development split (86.1%), not on the unseen held-out run (61.9%). Exact means the same answer as Google's reference implementation, not BigQuery itself; the evaluator raises Unsupported rather than approximate.",
   "evidence": "executed",
   "correctness": "0 mismatches on the development split and, after the fixes described, on the held-out split; checked against the compliance tests' expected results",
   "coverage": {
-    "proven": 2694,
-    "unsupported": 455
+    "proven": 2711,
+    "unsupported": 438
   },
   "coverage_of": "the 3,149 claimed development cases: exact answers and cases the evaluator declines",
   "held_out": "1,024/1,599 exact, 0 wrong (tuned on test: the first, unseen run was 989/1,599 exact with 30 wrong and 3 unreadable)",
-  "performance": "3,149 development cases in about 5 s on 4 workers"
+  "performance": "3,149 development cases in about 4.4 s on 4 workers"
 }

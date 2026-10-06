@@ -216,8 +216,13 @@ def test_min_max_type_errors():
         evaluate("SELECT MAX(x) FROM UNNEST([[1], [2]]) x")
     with pytest.raises(AnalysisError):
         evaluate("SELECT MAX(1, 2)")
-    with pytest.raises(Unsupported):
-        evaluate("SELECT MAX(DISTINCT a) FROM t", DB)
+
+
+def test_min_max_distinct_is_redundant():
+    result = evaluate("SELECT MIN(DISTINCT x), MAX(DISTINCT x) FROM UNNEST([5, 5, NULL, 2]) x")
+    assert result.rows == [(2, 5)] and result.deterministic
+    with pytest.raises(AnalysisError):
+        evaluate("SELECT MIN(DISTINCT x) FROM UNNEST([[1], [2]]) x")
 
 
 # --- ANY_VALUE, MAX_BY, MIN_BY --------------------------------------------------------------------
@@ -232,6 +237,13 @@ def test_any_value_is_deterministic_only_when_the_value_cannot_vary():
     assert not result.deterministic
     assert result.rows[0][0] in {"x", "y", "z"}
     assert evaluate("SELECT ANY_VALUE(x) FROM UNNEST([CAST(NULL AS INT64)]) x").rows == [(None,)]
+
+
+def test_any_value_distinct_keeps_unique_value_determinism():
+    result = evaluate("SELECT ANY_VALUE(DISTINCT x) FROM UNNEST([5, 5, NULL, 5]) x")
+    assert result.rows == [(5,)] and result.deterministic
+    result = evaluate("SELECT ANY_VALUE(DISTINCT x) FROM UNNEST([5, 5, 7, NULL]) x")
+    assert result.rows == [(5,)] and not result.deterministic
 
 
 def test_any_value_having_max_min():
@@ -627,7 +639,6 @@ def test_grouping_needs_a_grouped_query_and_a_grouped_argument():
         "SELECT ARRAY_AGG(a HAVING MAX f) FROM t",
         "SELECT SUM(DISTINCT a ORDER BY a) FROM t",
         "SELECT COUNTIF(DISTINCT b) FROM t",
-        "SELECT ANY_VALUE(DISTINCT a) FROM t",
         "SELECT SUM(INTERVAL 1 DAY) FROM t",
     ],
 )

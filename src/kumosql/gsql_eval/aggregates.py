@@ -446,7 +446,9 @@ def _min_max(compiler, node, cx, nulls, want_max: bool) -> AggSpec:
         raise AnalysisError(f"{name} takes one argument")
     if isinstance(node.this, exp.HavingMax):
         raise Unsupported(f"{name} with HAVING MAX/MIN")
-    value, _ = _argument(compiler, cx, node.this, name)
+    value, distinct = _argument(compiler, cx, node.this, name, distinct_ok=True)
+    if distinct and not T.groupable(value.type):
+        raise AnalysisError(f"{name}(DISTINCT) does not support {value.type}")
     _orderable(value.type, name)
     fn, t = value.fn, value.type
 
@@ -493,7 +495,9 @@ def _any_value(compiler, node, cx, nulls) -> AggSpec:
         _only(this, "this", "expression", "max")
         having = this
         this = this.this
-    value, _ = _argument(compiler, cx, this, "ANY_VALUE")
+    value, distinct = _argument(compiler, cx, this, "ANY_VALUE", distinct_ok=True)
+    if distinct and not T.groupable(value.type):
+        raise AnalysisError(f"ANY_VALUE(DISTINCT) does not support {value.type}")
     fn, t = value.fn, value.type
     if having is None:
 

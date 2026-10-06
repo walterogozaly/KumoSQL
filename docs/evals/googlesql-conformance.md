@@ -43,15 +43,15 @@ python -m pytest tests/test_googlesql_conformance.py        # the floor, on both
 | **mismatch** | anything else: other rows, an unexpected error, an unexpected result, an exception that is not one of the three above, a timeout |
 | unscored | the expected text cannot be read by the runner (none now) |
 
-## Scores (2026-10-05)
+## Scores (2026-10-06)
 
 | Split | Claimed | Exact | Unsupported | Mismatch |
 | --- | ---: | ---: | ---: | ---: |
-| Development files | 3,149 | 2,694 (85.6%) | 455 | 0 |
+| Development files | 3,149 | 2,711 (86.1%) | 438 | 0 |
 | Held-out files, first run (before any fix) | 1,599 | 989 (61.9%) | 577 | 30 (and 3 unscored) |
 | Held-out files, now (tuned on test) | 1,599 | 1,024 (64.0%) | 575 | 0 |
 
-Of the claimed cases 154 (development) and 52 (held-out) expect an error, so up to that many exact answers are an error that the evaluator also raises. The development run takes about 5 s on four workers.
+Of the claimed cases 154 (development) and 52 (held-out) expect an error, so up to that many exact answers are an error that the evaluator also raises. The development run takes about 4.4 s on four workers.
 
 The target of at least 80% exact is met on the development files and not on the held-out files' first run.
 
@@ -68,7 +68,7 @@ The 30 mismatches were then fixed with the failing cases in view, so the "now" r
 
 ## What is declined
 
-Of the 455 unsupported development cases about 250 read columns of GoogleSQL-only types (INT32, UINT32, UINT64, FLOAT32, PROTO, ENUM, or a STRUCT holding one), which the value model deliberately lacks. The rest are mostly aggregate corners (`MIN(DISTINCT ...)`, `ANY_VALUE(DISTINCT ...)`, `ARRAY_AGG ... LIMIT` over ties, a float `SUM` that overflows to infinity), functions not implemented (`PERCENTILE_CONT` as an aggregate, `SPLIT_SUBSTR`, JSON extraction, `WITH` expressions), and approximate aggregates. `--reasons N` lists them with the files they come from.
+Of the 438 unsupported development cases about 250 read columns of GoogleSQL-only types (INT32, UINT32, UINT64, FLOAT32, PROTO, ENUM, or a STRUCT holding one), which the value model deliberately lacks. `MIN`/`MAX(DISTINCT ...)` and `ANY_VALUE(DISTINCT ...)` now work for groupable arguments; remaining aggregate corners include `ARRAY_AGG ... LIMIT` over ties and a float `SUM` that overflows to infinity. Other gaps include functions not implemented (`PERCENTILE_CONT` as an aggregate, `SPLIT_SUBSTR`, JSON extraction, `WITH` expressions) and approximate aggregates. `--reasons N` lists them with the files they come from.
 
 ## Limits
 
