@@ -32,7 +32,7 @@ from . import view_candidates as vc
 from .smt_equivalence import TableConstraints
 
 MAX_SLICES = 6  # slices tried per query and view
-_LEMMAS: dict[tuple[str, str, str], bool] = {}  # proven slice lemmas of this process, by the two queries compared
+_LEMMAS: dict[tuple[str, str, tuple[tuple[str, tuple[str, ...]], ...], str], bool] = {}  # proven slice lemmas
 
 
 @dataclass(frozen=True)
@@ -188,7 +188,8 @@ class GeneralView:
         from .algebraic_equivalence import prove_equivalent_algebraic
 
         inner, stored = self.inner_sql(chosen, poison), self.stored_inline(chosen, poison)
-        key = (inner, stored, repr(sorted((constraints or {}).items())))
+        schema_key = tuple(sorted((table, tuple(columns)) for table, columns in schema.items()))
+        key = (inner, stored, schema_key, repr(sorted((constraints or {}).items())))
         if key not in _LEMMAS:
             try:
                 result = prove_equivalent_algebraic(inner, stored, schema=schema, constraints=constraints, timeout_ms=timeout_ms, dialect="postgres", compare_names=False)

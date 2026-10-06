@@ -154,29 +154,32 @@ def test_a_general_view_with_a_contradiction_answers_nothing():
         assert not bench.rewrite_over_slice(_SLICE_QUERIES[name], record, frozenset(), schema, cons).rewritten
 
 
-FLOORS = {"job_sample_rewritten": 20, "sample": 24}
+# These workload floors score development queries only; held-out queries are reserved for the final workstream run.
+FLOORS = {"scale_dev_sample_rewritten": 16, "sample": 24}
 
 
 def _run(tracks, sample=FLOORS["sample"]):
     try:
-        return bench.run_workload("job", None, sample, 6, 1, False, tracks)
+        # The development sample exercises LEFT JOIN generalization without reading held-out query results.
+        return bench.run_workload("scale", None, sample, 12, 1, False, tracks, dev_only=True)
     except OSError as error:
         pytest.skip(f"benchmark data not available: {error}")
 
 
-def test_job_sample_rewrites_are_proven_verified_and_never_wrong():
+def test_scale_dev_sample_rewrites_are_proven_verified_and_never_wrong():
     report = _run(["mined", "poisoned"])
-    mined, poisoned = report["tracks"]["mined"]["all"], report["tracks"]["poisoned"]["all"]
+    mined, poisoned = report["tracks"]["mined"]["dev"], report["tracks"]["poisoned"]["dev"]
+    assert mined["queries"] == report["tracks"]["mined"]["all"]["queries"]
+    assert report["tracks"]["mined"]["held_out"]["queries"] == 0
     assert mined["wrong"] == 0 and mined["unchecked"] == 0, mined
-    assert mined["rewritten"] >= FLOORS["job_sample_rewritten"], mined
+    assert mined["rewritten"] >= FLOORS["scale_dev_sample_rewritten"], mined
     assert poisoned["rewritten"] == 0 and poisoned["wrong"] == 0, poisoned  # no query can be answered from an empty view
 
 
 @pytest.mark.slow
 def test_job_full_workload():
-    report = bench.run_workload("job", None, None, bench.BUDGET, 2, False, ["mined", "given", "poisoned"])
+    report = bench.run_workload("job", None, None, bench.BUDGET, 2, False, ["mined", "given", "poisoned"], dev_only=True)
     for track, summary in report["tracks"].items():
-        assert summary["all"]["wrong"] == 0, (track, summary["all"])
-    assert report["tracks"]["mined"]["all"]["rewritten"] >= 108
-    assert report["tracks"]["mined"]["held_out"]["rewritten"] >= 12
-    assert report["tracks"]["given"]["all"]["rewritten"] >= 90
+        assert summary["dev"]["wrong"] == 0, (track, summary["dev"])
+    assert report["tracks"]["mined"]["dev"]["rewritten"] >= 96
+    assert report["tracks"]["given"]["dev"]["rewritten"] >= 77
