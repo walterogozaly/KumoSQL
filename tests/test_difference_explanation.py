@@ -22,6 +22,10 @@ JOINED = (
     "SELECT t.id FROM t JOIN u ON t.id = u.id WHERE t.x > 5",
     "SELECT t.id FROM t JOIN u ON t.id = u.id WHERE t.x >= 5",
 )
+OUTER_JOIN = (
+    "SELECT t.id FROM t LEFT JOIN u ON t.id = u.id WHERE t.x > 5",
+    "SELECT t.id FROM t LEFT JOIN u ON t.id = u.id WHERE t.x >= 5",
+)
 ACROSS = (
     "SELECT t.id FROM t JOIN u ON t.id = u.id WHERE t.x > u.y",
     "SELECT t.id FROM t JOIN u ON t.id = u.id WHERE t.x >= u.y",
@@ -172,7 +176,7 @@ def test_a_spent_time_budget_is_unknown():
     assert explain_difference(*BOUNDARY, explain_seconds=0.00001) is None
 
 
-@pytest.mark.parametrize("pair", [STATUS, BOUNDARY, COALESCED, JOINED])
+@pytest.mark.parametrize("pair", [STATUS, BOUNDARY, COALESCED, JOINED, OUTER_JOIN])
 def test_every_predicate_passes_both_checks(pair):
     found = explain_difference(*pair, schema=SCHEMA, types=TYPES)
     assert found is not None
@@ -188,6 +192,13 @@ def test_every_predicate_passes_both_checks(pair):
     # and the same databases without the P rows agree: the check SQL is zero there
     for c in conditions:
         assert c.check_sql.startswith("SELECT COUNT(*) AS violations FROM ")
+
+
+def test_outer_join_branch_difference_is_a_verified_cover_not_an_exact_predicate():
+    found = explain_difference(*OUTER_JOIN, schema=SCHEMA, types=TYPES)
+    assert found is not None
+    assert (found.sql, found.tables, found.exact) == ("x = 5", ("t",), False)
+    assert differs_on(OUTER_JOIN, found.witness)
 
 
 def test_a_predicate_failing_the_witness_replay_is_never_returned(monkeypatch):

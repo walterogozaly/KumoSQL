@@ -7,12 +7,16 @@ NOT NULL assertion, without reading a counterexample database. In the verdict mo
 verdict (:mod:`kumosql.conditional_equivalence`) under one more condition kind, ``no_rows``; :func:`conditions_of`
 turns an explanation into those conditions.
 
-How a predicate is found (select-project-join pairs, and grouped pairs on one row; everything else is unknown):
+How a predicate is found (select-project-join pairs, grouped pairs on one row, and mutually exclusive outer-join
+branches on one row; everything else is unknown):
 
-1. Both queries are compiled by the SMT prover's compiler into one block each, over the same tables, each table
-   read once, with no subquery, DISTINCT or set operation. On a database with one row per table the outputs differ
-   exactly when ``D = XOR(cond_a, cond_b) OR (cond_a AND cond_b AND outputs differ)`` holds. In a grouped block
-   the one row is its own group (``COUNT`` is 1 or 0, ``SUM``, ``MIN`` and ``MAX`` are the value).
+1. Both queries are compiled by the SMT prover's compiler into one block each or into mutually exclusive
+   outer-join SPJ branches, over the same tables, each table read once, with no SQL subquery, DISTINCT or set
+   operation. On a database with one row per table the outputs differ exactly when
+   ``D = XOR(cond_a, cond_b) OR (cond_a AND cond_b AND outputs differ)`` holds. In a grouped block the one row is its
+   own group (``COUNT`` is 1 or 0, ``SUM``, ``MIN`` and ``MAX`` are the value). A multi-branch outer join is accepted
+   only when Z3 proves that at most one branch can return on every one-row database; its result is always marked as
+   covering rather than exact because the one-row check does not model bag interactions across multiple rows.
 2. Candidate atoms come from the queries themselves (every comparison or predicate they write, ``col IS NULL`` and
    ``col IS NOT NULL`` for every column they read, and the equality behind each inequality such as ``x > 5``).
    Each atom mentions one table. A search over conjunctions and disjunctions of at most three atoms, shortest
@@ -626,6 +630,127 @@ def _one_row(block):
     )
 
 
+def _query_occurrences(union: smt._Union):
+    """All source occurrences in a compiled query, including the absent side of an outer join."""
+
+    originals = []
+
+    def read_sub(sub):
+        originals.extend(sub.occs)
+        for nested in sub.nested:
+            read_sub(nested)
+
+    for block in union.branches:
+        originals.extend(block.occs)
+        for sub in block.subs:
+            read_sub(sub)
+
+    by_uid = {}
+    for occ in originals:
+        previous = by_uid.get(occ.uid)
+        if previous is not None and previous.table != occ.table:
+            raise _Unknown("one occurrence has conflicting source tables")
+        by_uid.setdefault(occ.uid, occ)
+    canonical = sorted(by_uid.values(), key=lambda occ: occ.uid)
+    targets = {occ.uid: occ for occ in canonical}
+    pairs = []
+    for occ in originals:
+        target = targets[occ.uid]
+        if occ is not target:
+            pairs.extend(smt._occ_pairs(occ, target))
+    return canonical, pairs
+
+
+def _contains_term(term, target) -> bool:
+    """Whether a Z3 expression contains ``target`` as a subterm."""
+
+    if term.eq(target):
+        return True
+    return any(_contains_term(child, target) for child in term.children())
+
+
+def _one_row_spj(block: smt._Spj, occurrence_pairs, all_sub_atoms):
+    """A single outer-join branch on one row per source table, or unknown for nested existence tests."""
+
+    if block.distinct or any(occ.opaque or occ.table == smt._UNNEST_TABLE for occ in block.occs):
+        raise _Unknown("DISTINCT, UNNEST or a derived table")
+    if any(sub.nested for sub in block.subs):
+        raise _Unknown("a nested existence test")
+
+    z3 = smt.z3
+    guards: dict[object, list] = {}
+    for sub in block.subs:
+        guard = smt._subst(sub.guard, occurrence_pairs)
+        guards.setdefault(sub.atom, []).append(guard)
+    substitutions = [(atom, z3.Or(*terms)) for atom, terms in guards.items()]
+    # These are existence tests for the other rows in an outer join. Their guards must be independent
+    # of the existence atoms being replaced; otherwise evaluating one row would need nested SQL semantics.
+    for _, guard in substitutions:
+        if any(_contains_term(guard, atom) for atom in guards):
+            raise _Unknown("dependent existence tests")
+
+    pairs = occurrence_pairs + substitutions
+    condition = smt._subst(block.cond.t, pairs)
+    outputs = [smt._subst_val(value, pairs) for value in block.outputs]
+    facts = [smt._subst(fact, pairs) for fact in block.facts]
+    for term in [condition, *(value.null for value in outputs), *(value.val for value in outputs), *facts]:
+        if any(_contains_term(term, atom) for atom in all_sub_atoms):
+            raise _Unknown("an unevaluated existence test")
+    return condition, outputs, facts
+
+
+def _one_row_spj_union(union: smt._Union, occs, occurrence_pairs, prover, timeout_ms: int):
+    """The result of a compiled outer-join SELECT on one row per table.
+
+    Outer-join expansion creates one SPJ branch for each match case. This path is exact only when the
+    cases are mutually exclusive; branches that can return together would form a bag and remain unknown.
+    """
+
+    if union.distinct or not union.branches or any(not isinstance(block, smt._Spj) for block in union.branches):
+        raise _Unknown("not a row-producing SPJ union")
+
+    z3 = smt.z3
+    all_sub_atoms = set()
+
+    def collect(sub):
+        all_sub_atoms.add(sub.atom)
+        for nested in sub.nested:
+            collect(nested)
+
+    for block in union.branches:
+        for sub in block.subs:
+            collect(sub)
+    rows = [_one_row_spj(block, occurrence_pairs, all_sub_atoms) for block in union.branches]
+
+    # Without a database-wide multiplicity model, each one-row database must select at most one branch.
+    for i, (guard, _, facts) in enumerate(rows):
+        for other_guard, _, other_facts in rows[i + 1 :]:
+            solver = bounded_solver(timeout_ms)
+            solver.add(*prover._typing(occs))
+            solver.add(*prover._constraint_facts(occs))
+            solver.add(*(z3.Implies(guard, fact) for fact in facts))
+            solver.add(*(z3.Implies(other_guard, fact) for fact in other_facts))
+            solver.add(guard, other_guard)
+            if solver.check() != z3.unsat:
+                raise _Unknown("outer-join branches are not exclusive on one-row databases")
+
+    guards = [guard for guard, _, _ in rows]
+    condition = z3.Or(*guards)
+    width = len(rows[0][1])
+    if any(len(outputs) != width for _, outputs, _ in rows):
+        raise _Unknown("outer-join branches have different output widths")
+    V = smt._value_sort()
+    outputs = []
+    for column in range(width):
+        null, value = z3.BoolVal(False), V.Num(0)
+        for guard, branch_outputs, _ in reversed(rows):
+            out = branch_outputs[column]
+            null, value = z3.If(guard, out.null, null), z3.If(guard, out.val, value)
+        outputs.append(smt._Val(null, value))
+    facts = [z3.Implies(guard, fact) for guard, _, branch_facts in rows for fact in branch_facts]
+    return condition, outputs, facts
+
+
 def _explain(left_sql: str, right_sql: str, options: dict, deadline: float) -> DifferenceExplanation:
     dialect = options.get("dialect", "bigquery")
     schema, types, constraints = options.get("schema"), options.get("types"), options.get("constraints")
@@ -647,41 +772,72 @@ def _explain(left_sql: str, right_sql: str, options: dict, deadline: float) -> D
     compiled = [compiler.compile(sql) for sql in (left, right)]
     if compiler.uses_uf or compiler.limit_opaque or compiler.window_opaque or compiler.big_literals or compiler.timestamp_literals:
         raise _Unknown("a construct whose values are free in the model")
-    blocks = []
     for union in compiled:
-        if union.distinct or len(union.branches) != 1:
-            raise _Unknown("a set operation")
-        block = union.branches[0]
-        if block.distinct or block.subs or any(o.opaque or o.table == smt._UNNEST_TABLE for o in block.occs):
-            raise _Unknown("DISTINCT, a subquery or a derived table")
-        blocks.append(block)
-    a, b = blocks
-    if len(a.outputs) != len(b.outputs) or (options.get("compare_names", True) and list(compiled[0].names) != list(compiled[1].names)):
+        if union.distinct or not union.branches:
+            raise _Unknown("a set operation or empty branch list")
+    blocks = [block for union in compiled for block in union.branches]
+    multiple_branches = any(len(union.branches) != 1 for union in compiled)
+    if multiple_branches:
+        # SQL subqueries have row multiplicity and correlation semantics beyond the one-row outer-join
+        # expansion handled below. The internal _Sub guards from outer joins have no nested SQL SELECT.
+        if any(len(list(tree.find_all(exp.Select))) != 1 for tree in trees):
+            raise _Unknown("a subquery")
+        if any(not isinstance(block, smt._Spj) for block in blocks):
+            raise _Unknown("multiple grouped branches")
+    else:
+        for block in blocks:
+            if block.subs:
+                raise _Unknown("a subquery")
+            if block.distinct or any(o.opaque or o.table == smt._UNNEST_TABLE for o in block.occs):
+                raise _Unknown("DISTINCT, UNNEST or a derived table")
+    a_occs, a_occurrence_pairs = _query_occurrences(compiled[0])
+    b_occs, b_occurrence_pairs = _query_occurrences(compiled[1])
+    if any(o.opaque or o.table == smt._UNNEST_TABLE for o in a_occs + b_occs):
+        raise _Unknown("UNNEST or a derived table")
+    if multiple_branches and any(block.distinct for block in blocks):
+        raise _Unknown("DISTINCT outer-join branch")
+    if len(compiled[0].branches[0].outputs) != len(compiled[1].branches[0].outputs) or (
+        options.get("compare_names", True) and list(compiled[0].names) != list(compiled[1].names)
+    ):
         raise _Unknown("the output columns differ")
-    tables = Counter(o.table.lower() for o in a.occs)
-    if tables != Counter(o.table.lower() for o in b.occs):
+    tables = Counter(o.table.lower() for o in a_occs)
+    if tables != Counter(o.table.lower() for o in b_occs):
         raise _Unknown("the queries read different tables")
     if max(tables.values(), default=1) > 1:
         raise _Unknown("a table is read twice")
-    rows_only = isinstance(a, smt._Spj) and isinstance(b, smt._Spj)  # a grouped pair is read on one row per table only
 
     order = compiler.order_facts()
     for block in blocks:
         block.facts = block.facts + order + compiler.typed_facts(smt._block_occs(block))
     prover = smt._Prover(timeout_ms, constraints)
-    mapping = next(prover._bijections(a.occs, b.occs))
+    mapping = next(prover._bijections(a_occs, b_occs))
     pairs = prover._pairs(mapping)
-    facts = a.facts + [smt._subst(f, pairs) for f in b.facts]
     z3 = smt.z3
-    cond_a, outs_a = _one_row(a)
-    cond_b, outs_b = _one_row(b)
+    if multiple_branches:
+        cond_a, outs_a, facts_a = _one_row_spj_union(
+            compiled[0], a_occs, a_occurrence_pairs, prover, timeout_ms
+        )
+        cond_b, outs_b, facts_b = _one_row_spj_union(
+            compiled[1], b_occs, b_occurrence_pairs, prover, timeout_ms
+        )
+        facts = facts_a + [smt._subst(f, pairs) for f in facts_b]
+    else:
+        a, b = blocks
+        cond_a, outs_a = _one_row(a)
+        cond_b, outs_b = _one_row(b)
+        cond_a = smt._subst(cond_a, a_occurrence_pairs)
+        cond_b = smt._subst(cond_b, b_occurrence_pairs)
+        outs_a = [smt._subst_val(v, a_occurrence_pairs) for v in outs_a]
+        outs_b = [smt._subst_val(v, b_occurrence_pairs) for v in outs_b]
+        facts = [smt._subst(f, a_occurrence_pairs) for f in a.facts]
+        facts += [smt._subst(smt._subst(f, b_occurrence_pairs), pairs) for f in b.facts]
     cond_b, outs_b = smt._subst(cond_b, pairs), [smt._subst_val(v, pairs) for v in outs_b]
     region = z3.Or(z3.Xor(cond_a, cond_b), z3.And(cond_a, cond_b, z3.Not(smt._rows_eq(outs_a, outs_b))))
 
-    usable, facts = _usable_atoms(compiler, trees, a, schema, dialect, facts)
+    usable, facts = _usable_atoms(compiler, trees, a_occs, schema, dialect, facts)
     if not usable:
         raise _Unknown("no atom to build a predicate from")
-    problem_ = _Problem(prover, a.occs, facts, region, z3.Or(cond_a, cond_b), usable, deadline)
+    problem_ = _Problem(prover, a_occs, facts, region, z3.Or(cond_a, cond_b), usable, deadline)
     result, model = problem_.check(region)
     if result != z3.sat:
         raise _Unknown("the queries agree on every one-row database" if result == z3.unsat else "the solver gave no answer")
@@ -691,7 +847,7 @@ def _explain(left_sql: str, right_sql: str, options: dict, deadline: float) -> D
         problem_.add_sample(model)
 
     columns = {}
-    for occ in a.occs:
+    for occ in a_occs:
         listed = {k.lower(): v for k, v in (schema or {}).items()}.get(occ.table.lower())
         columns[occ.table.lower()] = [c for c in (listed or sorted(occ.cols))]
     candidates = _candidates(usable)
@@ -709,7 +865,8 @@ def _explain(left_sql: str, right_sql: str, options: dict, deadline: float) -> D
                 rejected.add(candidate)  # two tables of one short name: the columns could not be told apart
                 continue
             verified += 1
-            found, failed = _verify(problem_, candidate, usable, a.occs, left_sql, right_sql, options, columns, qualify, strict and rows_only)
+            exact = strict and not multiple_branches and isinstance(blocks[0], smt._Spj) and isinstance(blocks[-1], smt._Spj)
+            found, failed = _verify(problem_, candidate, usable, a_occs, left_sql, right_sql, options, columns, qualify, exact)
             if found is not None:
                 return found
             why = f"a predicate failed its {failed}"
@@ -717,11 +874,11 @@ def _explain(left_sql: str, right_sql: str, options: dict, deadline: float) -> D
     raise _Unknown(why)
 
 
-def _usable_atoms(compiler, trees, a, schema, dialect: str, facts: list):
+def _usable_atoms(compiler, trees, occurrences, schema, dialect: str, facts: list):
     """The atoms that compile, each with its Z3 term over the first query's table occurrences, and the facts they add."""
 
     z3 = smt.z3
-    by_table = {o.table.lower(): o for o in a.occs}
+    by_table = {o.table.lower(): o for o in occurrences}
     usable = []
     for atom in _written_atoms(list(trees), schema, dialect):
         occ = by_table.get(atom.table)

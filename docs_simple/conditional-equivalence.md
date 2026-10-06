@@ -14,7 +14,7 @@ Suppose you replace `SELECT DISTINCT id FROM users` with `SELECT id FROM users`.
 
 ## What the facts can be
 
-The facts come from the queries themselves: a column is NOT NULL, a set of columns is unique, or one table's column always has a match in another table. Facts already declared in your catalog or Dataform assertions are assumed without being listed. A fact can also say that no row matches a test (for example, no row of `orders` has `status IS NULL`). The search above never proposes that kind; it is what a verified explanation of a difference between two queries is made of.
+The facts come from the queries themselves: a column is NOT NULL, a set of columns is unique, or one table's column always has a match in another table. Facts already declared in your catalog or Dataform assertions are assumed without being listed. A fact can also say that no row matches a test (for example, no row of `orders` has `status IS NULL`). The search above never proposes that kind; it is what a verified explanation of a difference between two queries is made of. Some simple outer joins can also yield a verified condition when their match cases cannot overlap. Those explanations are marked as covering the difference; more complex joins stay unknown.
 
 ## Limits
 
