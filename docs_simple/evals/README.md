@@ -21,6 +21,7 @@ An unknown answer is allowed. A false proof or a rewrite accepted despite changi
 | [Singh and Bedathur](singh-bedathur.md) | Do alternative LeetCode solutions agree? |
 | [Logos' TPC-H, DSB and TPC-DS pairs](logos.md) | Are Calcite's rewrites of benchmark queries really equivalent? |
 | [Equivalent under conditions](conditional-equivalence.md) | How often is a pair equal under a short list of facts, and is any answer wrong? |
+| [Verified difference explanations](difference-explanations.md) | When can KumoSQL describe a verified query difference with a short SQL predicate? |
 | [Bounded verification](bounded-verification.md) | Do queries agree on every modeled small database? |
 | [SQL-IQ](sql-iq.md) | Equivalence, candidate choice, and error classification |
 | [LLM-SQL-Solver](llm-sql-solver.md) | Does the checker reject wrong query pairs and handle expert labels? |

@@ -1,0 +1,27 @@
+{
+  "suite": "Verified difference explanations",
+  "order": 49,
+  "size": 35,
+  "score": "29/35 (82.9%) with a verified predicate of at most three atoms; 0 unverified",
+  "metric": "Share of independently refuted single-block SPJ pairs in a fixed development sample with a verified difference predicate.",
+  "evidence": "proof",
+  "correctness": "Every reported predicate has a replayable witness and is proved by both the SMT and algebraic provers after filtering the difference rows.",
+  "coverage": {
+    "proven": 29,
+    "unknown": 6
+  },
+  "held_out": "3/3; only source-provided held-out partitions were scored",
+  "coverage_of": "Explanation outcomes over 35 independently refuted pairs that compile to one SPJ block in the fixed development sample.",
+  "docs": "docs/evals/difference-explanations.md",
+  "command": "python tools/difference_bench.py --split all --write-results",
+  "date": "2026-10-06",
+  "caveats": "Fixed samples, not full source-corpus scores. The broader syntactic SPJ sample was 29/152 (19.1%); 115 cases compiled into multiple branches and are excluded from this one-block metric. VeriEQL has no held-out partition and is development-only.",
+  "environment": {
+    "python": "3.11.9",
+    "sqlglot": "30.21.0",
+    "duckdb": "1.5.6",
+    "z3-solver": "5.1.0.0",
+    "sqlfluff": "4.4.0",
+    "commit": "f09d7a0e+changes"
+  }
+}
