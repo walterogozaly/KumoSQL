@@ -68,7 +68,7 @@ def _only(node, *allowed):
 # Analytic-only functions sqlglot files under AggFunc: they are never aggregates here (the window code owns them).
 _ANALYTIC = (
     exp.Rank, exp.DenseRank, exp.CumeDist, exp.PercentRank, exp.Ntile, exp.FirstValue, exp.LastValue, exp.NthValue,
-    exp.Lag, exp.Lead, exp.PercentileCont, exp.PercentileDisc, exp.Grouping, exp.GroupingId,
+    exp.Lag, exp.Lead, exp.PercentileDisc, exp.Grouping, exp.GroupingId,
 )
 
 _ANON_AGGREGATES = {
@@ -1008,6 +1008,49 @@ def _covariance(compiler, node, cx, nulls, name: str) -> AggSpec:
 
 
 # ---------------------------------------------------------------------------------------------
+# PERCENTILE_CONT
+# ---------------------------------------------------------------------------------------------
+
+
+def _percentile_cont(compiler, node, cx, nulls) -> AggSpec:
+    """Continuous percentile aggregate; the window implementation owns the shared rank/interpolation rules."""
+
+    _only(node, "this", "expression")
+    if node.this is None:
+        raise AnalysisError("PERCENTILE_CONT needs a value argument")
+    if node.args.get("expression") is None:
+        raise AnalysisError("PERCENTILE_CONT needs a percentile argument")
+
+    value = compiler.expr(node.this, cx)
+    _check_type(value, "PERCENTILE_CONT")
+    if value.type.kind in ("INT64", "FLOAT64"):
+        result_type = T.FLOAT64
+    elif value.type.kind in ("NUMERIC", "BIGNUMERIC"):
+        result_type = value.type
+    elif value.lit == "null":
+        result_type = T.FLOAT64
+    else:
+        raise AnalysisError(f"PERCENTILE_CONT needs a numeric argument, not {value.type}")
+
+    # Keep this in sync with the analytic form. It validates that the percentile is a deterministic constant and
+    # applies the same typed interpolation, including NUMERIC/BIGNUMERIC half-away-from-zero rounding.
+    from .windows import _constant, percentile_value
+
+    percentile, payload = _constant(compiler, node.args["expression"], "The percentile of PERCENTILE_CONT")
+    if not percentile.type.is_numeric and percentile.lit != "null":
+        raise AnalysisError("PERCENTILE_CONT percentile must be numeric")
+    if isinstance(payload, float) and math.isnan(payload):
+        raise Unsupported("PERCENTILE_CONT with a NaN percentile")
+    fn, value_type = value.fn, value.type
+    respect_nulls = nulls == "RESPECT"
+
+    def compute(rows, env):
+        return percentile_value(_values(fn, rows, env), payload, False, value_type, respect_nulls, env)
+
+    return AggSpec(result_type, compute, "PERCENTILE_CONT")
+
+
+# ---------------------------------------------------------------------------------------------
 # dispatch
 # ---------------------------------------------------------------------------------------------
 
@@ -1037,6 +1080,7 @@ _BUILDERS: dict = {
     exp.Corr: lambda c, n, cx, nulls: _covariance(c, n, cx, nulls, "CORR"),
     exp.CovarPop: lambda c, n, cx, nulls: _covariance(c, n, cx, nulls, "COVAR_POP"),
     exp.CovarSamp: lambda c, n, cx, nulls: _covariance(c, n, cx, nulls, "COVAR_SAMP"),
+    exp.PercentileCont: _percentile_cont,
 }
 
 
@@ -1053,7 +1097,7 @@ def compile_aggregate(compiler, node, cx) -> AggSpec:
         if is_aggregate(node):
             raise Unsupported(f"aggregate function {type(node).__name__}")
         raise AnalysisError(f"{type(node).__name__} is not an aggregate function")
-    if nulls == "RESPECT" and not isinstance(node, exp.ArrayAgg):
+    if nulls == "RESPECT" and not isinstance(node, (exp.ArrayAgg, exp.PercentileCont)):
         raise Unsupported(f"{type(node).__name__} with RESPECT NULLS")
     return builder(compiler, node, cx, nulls)
 

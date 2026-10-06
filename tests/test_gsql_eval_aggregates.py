@@ -83,6 +83,35 @@ def test_count_argument_errors():
         evaluate("SELECT COUNT(a, g) FROM t", DB)
 
 
+def test_percentile_cont_aggregate_uses_analytic_percentile_rules():
+    got = evaluate("SELECT PERCENTILE_CONT(a, 0.25), PERCENTILE_CONT(a, 0.5), "
+                   "PERCENTILE_CONT(a, 0.5 IGNORE NULLS) FROM t", DB)
+    assert got.rows == [(1.5, 2.0, 2.0)]
+    assert [type_.kind for _, type_ in got.columns] == ["FLOAT64", "FLOAT64", "FLOAT64"]
+    assert got.inexact
+
+    grouped = rows("SELECT g, PERCENTILE_CONT(a, 0.5) FROM t GROUP BY g ORDER BY g")
+    assert grouped == [("x", 1.5), ("y", 2.0), ("z", None)]
+    assert one("SELECT PERCENTILE_CONT(a, 0.5) FROM empty") is None
+
+
+def test_percentile_cont_aggregate_respects_nulls_and_numeric_scale():
+    assert one("SELECT PERCENTILE_CONT(a, 0.375 RESPECT NULLS) FROM t") == 1.0
+    assert rows("SELECT PERCENTILE_CONT(v, NUMERIC '0.5') FROM nums") == [(N("0.15"),)]
+    assert evaluate("SELECT PERCENTILE_CONT(v, NUMERIC '0.5') FROM nums", DB).columns[0][1] == T.NUMERIC
+
+
+def test_percentile_cont_aggregate_validates_arguments():
+    with pytest.raises(EvalError):
+        one("SELECT PERCENTILE_CONT(a, 1.5) FROM t")
+    with pytest.raises(EvalError):
+        one("SELECT PERCENTILE_CONT(a, NULL) FROM t")
+    with pytest.raises(AnalysisError):
+        evaluate("SELECT PERCENTILE_CONT(g, 0.5) FROM t")
+    with pytest.raises(AnalysisError):
+        evaluate("SELECT PERCENTILE_CONT(a, a) FROM t")
+
+
 def test_countif():
     assert rows("SELECT COUNTIF(a > 1), COUNTIF(b), COUNTIF(NULL) FROM t") == [(2, 2, 0)]
     assert one("SELECT COUNTIF(x > 5) FROM UNNEST([1, 2]) x") == 0
