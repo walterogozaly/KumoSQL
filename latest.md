@@ -4,6 +4,7 @@ Newest first. Details per run in `results/`.
 
 | finished (UTC) | job | leg | sha | verdict | passed/tests | time |
 |---|---|---|---|---|---|---|
+| 2026-10-06T16:37:50Z | master | compiled-routine | `6ea82f9deb` | 1 failed, 0 errors | 12383/12505 | 10 min |
 | 2026-10-06T16:27:42Z | master | compiled-routine | `fb918cff66` | 1 failed, 0 errors | 12383/12505 | 9 min |
 | 2026-10-06T07:01:55Z | nightly | compiled-periodic-full | `3b3c57645b` | green | 13262/13383 | 61 min |
 | 2026-10-05T18:14:57Z | master | compiled-routine | `3b3c57645b` | green | 12365/12486 | 11 min |
