@@ -111,6 +111,25 @@ def test_the_same_converted_comparison_on_both_sides_stays_proven(prover, dialec
     assert prover(left, right, dialect=dialect, schema=schema, types=types).status is SmtStatus.PROVEN_EQUIVALENT
 
 
+@pytest.mark.parametrize("prover", PROVERS)
+def test_unmatched_declared_string_number_comparison_is_not_proven(prover):
+    """An unmatched mixed-type filter inside INTERSECT must not be treated as always false."""
+
+    types = {"member": {"member_name": "TEXT", "party_id": "TEXT"}}
+    schema = {"member": ["member_name", "party_id"]}
+    left = (
+        "SELECT member_name FROM member WHERE party_id = 3 "
+        "INTERSECT DISTINCT SELECT member_name FROM member WHERE party_id = 1"
+    )
+    right = (
+        "SELECT member_name FROM member WHERE party_id = 3 "
+        "INTERSECT DISTINCT SELECT member_name FROM member"
+    )
+
+    result = prover(left, right, dialect="bigquery", schema=schema, types=types)
+    assert result.status is SmtStatus.NOT_PROVEN, result.reason
+
+
 @pytest.mark.parametrize("dialect", DIALECTS)
 def test_converted_comparison_is_never_refuted(dialect):
     """The result of the conversion is unknown to the prover, so a model of it is not a counterexample."""

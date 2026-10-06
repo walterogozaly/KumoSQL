@@ -5036,9 +5036,9 @@ def _prove_algebraic_levels(left_sql: str, right_sql: str, search: bool, **kwarg
     )
     if mixed:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {mixed} (the rules do not model the conversion)")
-    compared = string_number_compare.problem(
-        original[0], kwargs.get("dialect", "bigquery"), kwargs.get("types"), plain_ok=True
-    ) or string_number_compare.problem(original[1], kwargs.get("dialect", "bigquery"), kwargs.get("types"), plain_ok=True)
+    compared = string_number_compare.pair_problem(
+        original[0], original[1], kwargs.get("dialect", "bigquery"), kwargs.get("types")
+    )
     if compared:
         return SmtEquivalenceResult(SmtStatus.NOT_PROVEN, f"unsupported: {compared}")
     normalization_cache = {}

@@ -8,8 +8,10 @@ filter. No engine reads it that way:
 - DuckDB and PostgreSQL cast the string to the number's type (``'2' = 2`` is true, ``'abc' = 2`` is an error);
 - BigQuery rejects the comparison as a type error, so the query cannot run.
 
-:func:`problem` names the first such comparison so the prover returns "not proven". It looks at
-equality, ordering, ``BETWEEN``, ``IN`` lists, simple ``CASE`` operands and ``NULLIF``, comparing
+:func:`problem` names the first such comparison so the prover returns "not proven". The paired
+entry point, :func:`pair_problem`, also checks that a plain mixed-type comparison treated as an
+opaque predicate occurs the same number of times in both queries. It looks at equality, ordering,
+``BETWEEN``, ``IN`` lists, simple ``CASE`` operands and ``NULLIF``, comparing
 
 - a string literal with a number literal, arithmetic, a numeric ``CAST``, a ``COUNT`` or a column declared numeric;
 - a number literal (or the other numeric forms) with a column declared as a string;
@@ -17,8 +19,9 @@ equality, ordering, ``BETWEEN``, ``IN`` lists, simple ``CASE`` operands and ``NU
   is not empty on MySQL when ``a`` is an integer column, since ``'abc'`` reads as 0).
 
 The SMT prover reads a plain comparison of that kind as an opaque predicate of its two values, true or false whatever the
-engine's conversion rule is, so a pair that uses one the same way on both sides can still be proven; :func:`problem` with
-``plain_ok`` reports only the other forms and the same-column case. Nothing is folded, even where the engine's reading is exact (MySQL ``'2' = 2``).
+engine's conversion rule is, so a pair that uses one the same way on both sides can still be proven. :func:`problem` with
+``plain_ok`` reports only the other forms and the same-column case; :func:`pair_problem` declines an unmatched plain
+comparison. Nothing is folded, even where the engine's reading is exact (MySQL ``'2' = 2``).
 
 The kind of a column the schema does not declare is inferred from the query (:class:`_Kinds`): a column compared with a
 string literal reads as a string and one compared with a number as a number, columns equated by a join, ``USING``, ``IN``
@@ -30,6 +33,7 @@ cannot tell the kinds apart for a column it has no type for and calls a string a
 
 from __future__ import annotations
 
+from collections import Counter
 import re
 
 import sqlglot
@@ -389,6 +393,52 @@ def problem(sql: str, dialect: str = "bigquery", types: dict[str, dict[str, str]
             if kinds.kinds(node) == {"string", "number"} and _is_operand(node):
                 return "a value of mixed kinds (a string in one branch, a number in another) is compared or used in arithmetic (the engines convert it; the prover does not model it)"
     return None
+
+
+def pair_problem(
+    left_sql: str,
+    right_sql: str,
+    dialect: str = "bigquery",
+    types: dict[str, dict[str, str]] | None = None,
+) -> str | None:
+    """Whether a query pair contains an unsupported string-number comparison.
+
+    Plain, fully typed comparisons can be treated as opaque predicates only when the same
+    comparisons occur on both sides. Checking each query independently with ``plain_ok`` would
+    miss a comparison that appears only on one side and can let the prover treat an unmatched
+    predicate as always false.
+    """
+
+    def plain_mismatches(sql: str) -> Counter[str]:
+        try:
+            tree = sqlglot.parse_one(sql, read=dialect)
+        except Exception:  # noqa: BLE001 - the prover reports the parse error itself
+            return Counter()
+
+        def signature(node: exp.Expression) -> str:
+            node = node.copy()
+            for column in node.find_all(exp.Column):
+                table = column.args.get("table")
+                if table is not None:
+                    # Decorrelation gives an inner relation a `kumosql_cN_` prefix to avoid
+                    # shadowing. Its suffix is the original alias and identifies the same input.
+                    name = re.sub(r"^kumosql_c\d+_", "", table.name, flags=re.IGNORECASE)
+                    if name != table.name:
+                        table.set("this", name)
+            dumped = node.dump()
+            for item in dumped:
+                item.pop("m", None)  # Ignore parser source positions, but preserve literal and quoted-name case.
+            return repr(dumped)
+
+        return Counter(
+            signature(node)
+            for node in tree.walk()
+            if mismatched(node, types)
+        )
+
+    if plain_mismatches(left_sql) != plain_mismatches(right_sql):
+        return "a typed string-number comparison is not shared by both queries"
+    return problem(left_sql, dialect, types, plain_ok=True) or problem(right_sql, dialect, types, plain_ok=True)
 
 
 def _is_operand(node: exp.Expression) -> bool:
