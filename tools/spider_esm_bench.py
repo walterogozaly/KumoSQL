@@ -326,7 +326,7 @@ def decide_guarded(pair: Pair, timeout: float = PAIR_TIMEOUT) -> dict:
     """``decide_pair`` in its own process: a pair that runs past ``timeout`` seconds (one z3 call can ignore its own
     time limit) is killed and counted as unknown, never as a proof or a refutation."""
 
-    context = multiprocessing.get_context("fork")
+    context = multiprocessing.get_context("spawn" if os.name == "nt" else "fork")
     receiver, sender = context.Pipe(duplex=False)
     process = context.Process(target=_worker, args=(pair, sender), daemon=True)
     started = time.time()

@@ -15,14 +15,14 @@
   "held_out": "7/66 proved, 47 refuted, 0 wrong",
   "docs": "docs/evals/spider-esm.md",
   "command": "python tools/spider_esm_bench.py --write-results",
-  "date": "2026-10-05",
+  "date": "2026-10-06",
   "caveats": "Downloaded at run time from pinned commits (TestSuiteEval has no licence) and never committed. The 558 rows hold 359 distinct pairs, each decided once. Spider's databases are blocked here, so refutations use databases KumoSQL builds from tables.json's types, keys and foreign keys; the prover gets no key (tables.json lists only the first column of a composite key). Taken as published: 23/235 proved, 152 refuted. 124 pairs hold value placeholders and are decided with TestSuiteEval's plug-in of the gold's values (scored apart): 10 proved, 69 refuted. Refuted causes: columns 3, columns+null 5, distinct 12, distinct+null 37, nonempty 24, null 133, other 3, values 2, values+null 2. A pair that runs past 300 s or crashes z3 is unknown (0 here). Tuned on test: no knowledge of it; the harness was written by an earlier, interrupted session whose log is not available, and this run is the first full scoring of the held-out pairs (the development pairs alone scored 26/293 proved earlier the same day).",
   "environment": {
-    "python": "3.11.15",
+    "python": "3.11.9",
     "sqlglot": "30.21.0",
     "duckdb": "1.5.6",
     "z3-solver": "5.1.0.0",
     "sqlfluff": "4.4.0",
-    "commit": "8655327f+changes"
+    "commit": "0053eb83+changes"
   }
 }
