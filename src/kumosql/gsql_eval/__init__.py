@@ -87,6 +87,90 @@ def _strict_set_operations(text: str) -> bool:
     return strict and not by_name
 
 
+_EMPTY_STRUCT_FIELD = "__KUMOSQL_EMPTY_STRUCT_FIELD"
+
+
+def _normalize_empty_struct_syntax(text: str) -> tuple[str, str | None, int]:
+    """Make BigQuery's empty STRUCT constructor/type parseable by sqlglot.
+
+    sqlglot tokenizes ``STRUCT<>()`` as ``STRUCT <> ()`` (a comparison), and cannot parse the empty
+    ``STRUCT<>`` type used by casts. Only the exact empty angle-bracket form after an unquoted STRUCT token is
+    rewritten. Empty constructors become ``STRUCT()``; empty types temporarily receive a private field that is
+    removed from the parsed type tree below. Token positions keep text in comments and literals untouched.
+    """
+
+    if "STRUCT" not in text.upper():
+        return text, None, 0
+
+    from sqlglot.dialects.bigquery import BigQuery
+    from sqlglot.tokens import TokenType
+
+    try:
+        tokens = BigQuery().tokenize(text)
+    except Exception:
+        # Let the normal parser path report malformed SQL.
+        return text, None, 0
+
+    field = _EMPTY_STRUCT_FIELD
+    suffix = 0
+    while field.lower() in text.lower():
+        suffix += 1
+        field = f"{_EMPTY_STRUCT_FIELD}_{suffix}"
+
+    replacements = []
+    type_count = 0
+    index = 0
+    while index + 1 < len(tokens):
+        if tokens[index].token_type is not TokenType.STRUCT:
+            index += 1
+            continue
+
+        first = index + 1
+        if tokens[first].token_type is TokenType.NEQ and tokens[first].text == "<>":
+            last = first
+        elif (
+            first + 1 < len(tokens)
+            and tokens[first].token_type is TokenType.LT
+            and tokens[first + 1].token_type is TokenType.GT
+        ):
+            last = first + 1
+        else:
+            index += 1
+            continue
+
+        constructor = last + 1 < len(tokens) and tokens[last + 1].token_type is TokenType.L_PAREN
+        replacement = "" if constructor else f"<{field} INT64>"
+        if not constructor:
+            type_count += 1
+        replacements.append((tokens[first].start, tokens[last].end + 1, replacement))
+        index = last + 1
+
+    for start, end, replacement in reversed(replacements):
+        text = text[:start] + replacement + text[end:]
+    return text, field if type_count else None, type_count
+
+
+def _restore_empty_struct_types(tree: exp.Expression, field: str | None, expected: int) -> None:
+    """Remove the private parse-only field from each normalized empty STRUCT type."""
+
+    if not expected:
+        return
+    found = 0
+    for node in tree.find_all(exp.DataType):
+        kind = node.this.name if hasattr(node.this, "name") else str(node.this)
+        fields = node.expressions or []
+        if (
+            kind.upper() == "STRUCT"
+            and len(fields) == 1
+            and isinstance(fields[0], exp.ColumnDef)
+            and fields[0].name.lower() == (field or "").lower()
+        ):
+            node.set("expressions", [])
+            found += 1
+    if found != expected:
+        raise Unsupported("sqlglot could not preserve an empty STRUCT type")
+
+
 def evaluate(sql_or_tree: Any, database: Database | None = None, time_zone: str = "UTC", params: dict | None = None,
              mode: str = "bigquery") -> Result:
     from .compiler import Compiler, EmptyScope
@@ -104,9 +188,11 @@ def evaluate(sql_or_tree: Any, database: Database | None = None, time_zone: str 
         text_guards.check(text)
         strict_certain = _strict_set_operations(text)
         try:
-            tree = sqlglot.parse_one(decode_literals(text), read="bigquery")
+            normalized, empty_struct_field, empty_struct_types = _normalize_empty_struct_syntax(text)
+            tree = sqlglot.parse_one(decode_literals(normalized), read="bigquery")
         except sqlglot.errors.ParseError as error:
             raise Unsupported(f"sqlglot cannot parse the query: {str(error)[:120]}") from None
+        _restore_empty_struct_types(tree, empty_struct_field, empty_struct_types)
         literals_decoded = True
         if isinstance(tree, exp.Block):  # `SELECT 1;  -- comment`: the statement and a Semicolon carrying the comment
             statements = [e for e in tree.expressions if not isinstance(e, exp.Semicolon)]

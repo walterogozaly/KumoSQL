@@ -48,6 +48,8 @@ The evaluator never approximates. Every handler names the sqlglot arguments it r
 
 ## Text-level guards
 
+The text path accepts Google's empty `STRUCT<>()` constructor and `STRUCT<>` type, which sqlglot otherwise reads as a comparison or rejects. A private parse-only field is removed before type analysis, preserving the zero-field `STRUCT`.
+
 sqlglot reads some names BigQuery does not have (`LEN`, `HEX`, `CHARINDEX`...) as functions it knows, drops extra arguments of a few functions, and drops the `STRICT` keyword of a set operation. `text_guards.py` scans the query text outside strings and comments and raises `Unsupported` for those; `STRICT` is detected on the token stream and implemented. On the text path every BigQuery string escape is decoded once (`literals.py`); on the tree path a literal holding a backslash is refused.
 
 ## Differential check against the DuckDB layer

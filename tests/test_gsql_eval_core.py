@@ -86,6 +86,29 @@ def test_unnest_of_structs_exposes_fields():
     assert rows(sql) == [(1, "p"), (2, "q")]
 
 
+def test_empty_struct_constructor_and_type_match_google_sql():
+    sql = """SELECT
+      STRUCT<>() = STRUCT<>(),
+      STRUCT<>() <> STRUCT<>(),
+      STRUCT<>() = CAST(NULL AS STRUCT<>),
+      STRUCT<>() <> CAST(NULL AS STRUCT<>),
+      STRUCT<>() = null_struct,
+      STRUCT<>() <> null_struct,
+      null_struct = CAST(NULL AS STRUCT<>),
+      null_struct <> CAST(NULL AS STRUCT<>),
+      null_struct = null_struct,
+      null_struct <> null_struct
+    FROM (SELECT CAST(NULL AS STRUCT<>) AS null_struct)"""
+    result = run(sql)
+    assert result.rows == [(True, False, None, None, None, None, None, None, None, None)]
+    assert [kind for _, kind in result.columns] == [T.BOOL] * 10
+
+
+def test_empty_struct_rewrite_skips_strings_and_comments():
+    result = run("SELECT 'STRUCT<>()' AS text, STRUCT < > ( ) AS empty /* STRUCT<> */")
+    assert result.rows == [("STRUCT<>()", ())]
+
+
 def test_order_by_prefers_select_alias_over_column():
     t = ([("x", I), ("v", I)], [(1, 3), (2, 2), (3, 1)])
     assert rows("SELECT x AS v FROM t ORDER BY v", t=t) == [(1,), (2,), (3,)]
