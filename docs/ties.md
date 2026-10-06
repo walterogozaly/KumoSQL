@@ -99,7 +99,7 @@ false; it labels findings ambiguous when an upstream model also has an unknown t
 
 ## Measured on the fixture
 
-On the generated fixture (`python tools/make_dataform_fixture.py OUT --models 3000 --seed 11`, 3,378 models), `python tools/tie_lint_check.py OUT --budget 0.2 --check-budget 5` completed in 132 seconds: 1,260 sites, 175 replayable findings, 600 unwitnessed sites, all 175 findings confirmed from source rows, 0 ambiguous findings, 0 false alarm candidates and 0 inconclusive checks. Sites whose witness might come from an upstream unknown tie are included among the unwitnessed sites.
+On the generated fixture (`python tools/make_dataform_fixture.py OUT --models 3000 --seed 11`, 3,378 models), `python tools/tie_lint_check.py OUT --budget 0.2 --check-budget 5` completed in 128 seconds: 1,260 sites, 175 replayable findings, 600 unwitnessed sites, all 175 findings confirmed from source rows, 0 ambiguous findings, 0 false alarm candidates and 0 inconclusive checks. Sites whose witness might come from an upstream unknown tie are included among the unwitnessed sites.
 
 The loaded project in the app has the same lint as a background job: `POST /api/ties/run` (optional `budget`, `limit`) starts it, `GET /api/ties` returns its state (`idle`, `running`, `done` with the result, `cancelled`, `error`) and `POST /api/ties/cancel` stops it. There is no page for it yet.
 
