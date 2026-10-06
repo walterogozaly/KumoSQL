@@ -112,6 +112,21 @@ def test_score_intervals_contain_the_point_and_are_seeded():
     assert one["spearman"]["value"] > 0.7
 
 
+def test_score_can_bootstrap_whole_query_or_view_groups():
+    predicted = [9, 8, 7, 6, 5, 4]
+    measured = [10, 9, 8, 7, 6, 5]
+    groups = ["v1", "v1", "v2", "v2", "v3", "v3"]
+
+    one = bt.score(predicted, measured, k=2, resamples=100, groups=groups)
+    two = bt.score(predicted, measured, k=2, resamples=100, groups=groups)
+
+    assert one == two
+    assert one["groups"] == 3
+    assert one["resamples"] == 100
+    with pytest.raises(ValueError, match="groups must label every change"):
+        bt.score(predicted, measured, groups=groups[:-1])
+
+
 def _job(i: int, when: datetime, table: str, slot: int) -> ObservedJob:
     return ObservedJob(job_id=f"j{i}", creation_time=when.isoformat().replace("+00:00", "Z"),
                        referenced_tables=(table,), total_slot_ms=slot, total_bytes_billed=slot)

@@ -29,3 +29,7 @@ Saved statistics use compressed JSON with checks on the format and join-key bins
 Q-error treats counts below 1 as 1. Runtime and estimated plan cost are separate: a good estimate does not guarantee the fastest query.
 
 The full guide compares STATS-CEB and JOB workloads and includes commands for gathering data and running measurements. Different key groups are treated as independent, which can miss correlations. The estimates also depend on the samples and statistics you collected.
+
+## Materialization runtime estimates
+
+A separate STATS-CEB experiment measures query runtimes before and after storing a shared join. It keeps one query in four out of model fitting, and releases those queries only after development choices are frozen. The internal harness has no end-to-end command or final score floor yet, and early results are not strong enough to recommend materializations; see the [full guide](../docs/joinorder.md#stats-ceb-materialization-proxy).

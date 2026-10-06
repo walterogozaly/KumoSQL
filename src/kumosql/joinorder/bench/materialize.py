@@ -97,6 +97,20 @@ def duckdb_sql(sql: str) -> str:
     return sqlglot.transpile(sql.strip().rstrip(";"), read="postgres", write="duckdb")[0]
 
 
+def _queries_for_stage(work: Workload, queries: Iterable[str] | None, *, allow_held_out: bool, stage: str) -> set[str]:
+    """Select development queries by default; require an explicit release for held-out queries."""
+
+    names = set(work.dev if queries is None else queries)
+    unknown = names.difference(work.queries)
+    if unknown:
+        raise ValueError(f"{stage} requested unknown queries: {', '.join(sorted(unknown)[:5])}")
+    held_out = names.intersection(work.held_out)
+    if held_out and not allow_held_out:
+        sample = ", ".join(sorted(held_out)[:5])
+        raise ValueError(f"{stage} includes held-out queries ({sample}); set allow_held_out=True only after freezing development choices")
+    return names
+
+
 # ----------------------------------------------------------------------------- stage 1: views
 
 
@@ -155,24 +169,27 @@ def _prove(task: tuple) -> tuple:
     return (view_id, query, r.status, r.reason[:120], r.sql if r.rewritten else None)
 
 
-def placements(work: Workload) -> dict[str, dict]:
-    """Per query, the join shapes it contains (shape -> aliases in shape order)."""
+def placements(work: Workload, *, queries: Iterable[str] | None = None,
+               allow_held_out: bool = False) -> dict[str, dict]:
+    """Per-query development placements, or explicitly released held-out placements."""
 
     from kumosql import view_candidates
 
     out = {}
-    for q, sql in work.queries.items():
+    for q in sorted(_queries_for_stage(work, queries, allow_held_out=allow_held_out, stage="placement analysis")):
+        sql = work.queries[q]
         graph = view_candidates.graph_of(sql, work.schema, "postgres")
         out[q] = view_candidates.shapes_of(graph) if graph else {}
     return out
 
 
 def prove_readers(work: Workload, views: Sequence[View], *, timeout_ms: int = 10_000, workers: int = 4,
-                  queries: Iterable[str] | None = None, log: Callable[[str], None] = print) -> dict[str, dict]:
-    """``{"view|query": {"status", "reason", "sql"}}`` for every query that contains a view's join."""
+                  queries: Iterable[str] | None = None, allow_held_out: bool = False,
+                  log: Callable[[str], None] = print) -> dict[str, dict]:
+    """Prove development readers, or explicitly released held-out readers, for each view."""
 
-    place = placements(work)
-    names = set(work.queries if queries is None else queries)
+    names = _queries_for_stage(work, queries, allow_held_out=allow_held_out, stage="reader proof")
+    place = placements(work, queries=names, allow_held_out=allow_held_out)
     tasks = [(v.id, q, work.queries[q], v.sql, work.schema, timeout_ms)
              for v in views for q in sorted(names) if v.shape in place[q]]
     log(f"proving {len(tasks)} reader rewrites")
@@ -238,11 +255,15 @@ def plan_of(con: Any, sql: str, *, analyze: bool = True) -> dict | None:
 
 
 def measure_baselines(con: Any, work: Workload, *, timeout: float = 60.0, reps: int = 3, names: Iterable[str] | None = None,
-                      known: Mapping[str, dict] | None = None, log: Callable[[str], None] = print) -> dict[str, dict]:
-    """Median runtime, result and plan of each original query (a timeout leaves ``time`` as ``None``)."""
+                      known: Mapping[str, dict] | None = None, allow_held_out: bool = False,
+                      log: Callable[[str], None] = print) -> dict[str, dict]:
+    """Median runtime, result and plan; held-out runs require an explicit post-freeze release."""
 
-    out = dict(known or {})
-    for q in sorted(work.queries if names is None else names):
+    selected = _queries_for_stage(work, names, allow_held_out=allow_held_out, stage="baseline measurement")
+    if known:
+        _queries_for_stage(work, known, allow_held_out=allow_held_out, stage="cached baselines")
+    out = {q: result for q, result in (known or {}).items() if q in selected}
+    for q in sorted(selected):
         if q in out:
             continue
         sql = duckdb_sql(work.queries[q])
@@ -258,7 +279,7 @@ def _reader_timeout(base: float | None) -> float:
 
 
 def measure_view(con: Any, view: View, readers: Mapping[str, str], baselines: Mapping[str, dict], work: Workload, *,
-                 reps: int = 3, previous: Mapping | None = None) -> dict:
+                 reps: int = 3, previous: Mapping | None = None, allow_held_out: bool = False) -> dict:
     """Store ``view`` as a table, run its ``readers`` (query -> rewritten SQL), drop it.
 
     ``previous`` is an earlier record of the same view: its build time and readers are kept and
@@ -267,11 +288,18 @@ def measure_view(con: Any, view: View, readers: Mapping[str, str], baselines: Ma
     DuckDB's optimizer off (``duckdb_load.run_unoptimized``) and counts as ``wrong`` only if that
     run also differs. A reader that runs past five times the original (at most 30 s) is recorded
     as censored: its ``time`` is the limit, so its measured saving is an upper bound.
+    Held-out readers and cached held-out measurements require ``allow_held_out=True`` only after
+    the development view selection and runtime model have been frozen.
     """
 
     table = f"mv_{view.id}"
     out = {"id": view.id, "build": None, "rows": None, "readers": {}}
+    selected = _queries_for_stage(work, readers, allow_held_out=allow_held_out, stage="reader measurement")
+    _queries_for_stage(work, baselines, allow_held_out=allow_held_out, stage="reader baselines")
+    readers = {q: sql for q, sql in readers.items() if q in selected}
     if previous:
+        _queries_for_stage(work, previous.get("readers", {}), allow_held_out=allow_held_out,
+                           stage="cached reader measurements")
         out.update({k: previous[k] for k in ("build", "rows")})
         out["readers"] = dict(previous["readers"])
     todo = {q: sql for q, sql in readers.items() if q not in out["readers"]}

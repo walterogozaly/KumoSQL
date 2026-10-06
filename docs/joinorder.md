@@ -196,6 +196,33 @@ reach. The CEB repository (`learnedsystems/CEB` at `9eaaadb`) ships the query
 templates, so a regenerated workload is possible but would not be the
 published one.
 
+## STATS-CEB materialization proxy
+
+The experimental materialization proxy is separate from the join-order scores
+above. It mines shared joins from the development queries, proves each reader
+rewrite, then measures the original and rewritten queries in local DuckDB. Its
+cache lives under `$KUMOSQL_BENCH_DATA/materialize-stats` (default
+`~/.kumosql-bench/materialize-stats`). It does not write to a warehouse.
+
+The query-name hash split is stable: one query in four is held out. View mining,
+reader proofs and baseline measurement default to development queries. Passing
+`allow_held_out=True` is required to inspect or measure held-out queries and is
+intended only after the development choices have been frozen. The ratio runtime
+model fits log runtime changes from development before/after pairs. For a
+held-out score, pass the development pairs as `training_pairs`; the evaluator
+rejects overlapping query names. Its confidence intervals resample whole query
+or view groups.
+
+This is still an internal benchmark module; it has no end-to-end command or
+published result floor yet. The full STATS run, advisor-vs-baseline measurement
+and packaged score report remain to be done.
+
+The current proxy results do not support making runtime recommendations. The
+absolute-work model failed to rank individual reader savings. A ratio model
+ranked the measured pairs better, but its 10-view sample did not establish a
+reliable advisor win. This code supports a follow-up evaluation; it is not a
+calibrated production cost model.
+
 ## Credits
 
 * Workload and published estimates from Han et al.'s

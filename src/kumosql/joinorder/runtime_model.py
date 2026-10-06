@@ -106,6 +106,8 @@ def folds_by_group(groups: Sequence[str], folds: int, seed: int = 11) -> list[se
     """Split the distinct groups into ``folds`` random parts."""
 
     distinct = sorted(set(groups))
+    if len(distinct) < 2:
+        raise ValueError("cross-validation needs at least two distinct groups")
     random.Random(seed).shuffle(distinct)
     folds = max(2, min(folds, len(distinct)))
     return [set(distinct[k::folds]) for k in range(folds)]
