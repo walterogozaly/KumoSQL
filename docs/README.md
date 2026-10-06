@@ -16,13 +16,16 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Proof safeguards](proof-safeguards.md) | The independent predicate, CTE, parenthesis, DISTINCT, qualification, layout, subquery-lift and prover column-resolution checkers, the checker registry, Dataform expressions in proofs, and what is not covered yet |
 | [Parser checks](parser-checks.md) | A second reading of every query a proof depends on, checked against MySQL, DuckDB and BigQuery, and what sqlglot gets wrong |
 | [Equivalent under conditions](conditional-equivalence.md) | The fourth verdict: a pair that is equal when stated NOT NULL, unique or foreign-key facts hold, with a SQL check for each |
+| [Difference explanations](difference-explanations.md) | "Equivalent except when P": a verified predicate for the rows two different queries disagree on, in the API, CLI, Compare queries and change reports |
 | [Running BigQuery SQL on DuckDB](bigquery-on-duckdb.md) | How executed counterexamples stay BigQuery refutations: settings, translation fixes and guards |
+| [GoogleSQL reference evaluator](gsql-eval.md) | A pure-Python GoogleSQL interpreter that returns BigQuery's rows or declines: values, coverage, errors and guards |
 | [Whole-pipeline analysis](pipeline-analysis.md) | Loading a project, lineage and impact, table profiles, work already done elsewhere, comparing outputs |
 | [Cost, change reports and the BigQuery dry run](cost-and-change-reports.md) | Dry-run checks, cost attribution, change reports and refactoring proposals |
 | [Refactor](refactor.md) | Protected and editable tables, searching for simpler pipelines, and folding chosen tables into one |
 | [Shared models](shared-models.md) | Moving a CTE repeated across Dataform models into one shared model, as a patch checked by the prover |
 | [Table minimization](table-minimization.md) | The lowest-complexity set of tables that keeps every protected table proved unchanged |
 | [Project reduction](project-reduction.md) | The smallest Dataform project that still produces the outputs you keep, as a proved patch on the `.sqlx` files |
+| [GoogleSQL type inference](type-inference.md) | The output column types of a BigQuery query, STRUCT and ARRAY included, without running it: the catalog, unknown, coercion and supertype rules, set operations, pipe syntax, findings and the scan tool |
 | [Output properties](output-properties.md) | Never-NULL columns, unique keys and row bounds, inferred without running a query |
 | [Ties and nondeterministic results](ties.md) | Windows, LIMITs and aggregates whose result can depend on how tied rows are ordered, what would pin them down, and small databases that show the difference (tie witnesses) |
 | [Constraint-dependent rewrites](constraint-rewrites.md) | Rewrites that hold only under declared NOT NULL columns, keys and foreign keys |

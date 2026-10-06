@@ -186,7 +186,7 @@ def predict(case: dict) -> dict:
             unknown.append(f"*:{record.reason}")  # output columns not known (an INSERT with no column list): no edge claimed
             continue
         for source in record.sources:
-            edges.add((_table(source.table), source.column.lower(), _table(key), _target_column(ref.column)))
+            edges.add((_table(source.table), source.dotted.lower(), _table(key), _target_column(ref.column)))
         if record.status == "unknown":
             unknown.append(f"{ref.column}:{record.reason}")
     diagnostics = {d.code for d in pipeline.all_diagnostics() if d.model == key}

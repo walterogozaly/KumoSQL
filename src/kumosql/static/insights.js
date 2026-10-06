@@ -1047,6 +1047,7 @@ function renderReport(data, report, root) {
     return h("tr", {},
       h("td", {}, h("span", { class: "mono", text: change.model }), h("br"), h("span", { class: "muted small", text: change.kind }), change.owned === false ? tag("Other owner", "idle") : null),
       h("td", {}, E.pill(label), h("p", { class: "muted small reason", text: change.verification.reason }),
+        change.except_when ? h("p", { class: "sp-except" }, "Equivalent except when ", h("code", { class: "sp-except-sql", text: change.except_when.sql })) : null,
         change.verification.checks.length ? h("div", { class: "ev-checks" }, change.verification.checks.map(E.checkChip)) : null,
         E.assumptions(change.verification.checks)),
       h("td", {}, cost),

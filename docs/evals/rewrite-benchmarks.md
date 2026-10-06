@@ -200,9 +200,37 @@ python tools/cost_validity_bench.py --workload ... --rejudge results.json --out 
 
 BigQuery dry-run bytes for the same recommendations need real BigQuery access and have not been measured yet.
 
+### Advisor recommendations: `store_view` and `unstore_table`
+
+The materialization advisor (`kumosql.advisor.advise`) recommends storing a view as a table (`store_view`) or turning a table back into a view (`unstore_table`). Neither changes any SQL a reader runs; both change *when* a model's rows are computed, so the check is different from the rewrites above. `python tools/cost_validity_bench.py --advisor` needs no database server and no network.
+
+* **Proof.** The advisor's evidence label on every candidate: `proven` (every stored input is refreshed in the same runs, or there is no stored input), `conditional` or `unknown` (the label names what would have to hold, for example that a declared source never changes between a refresh and a read), and `changes_results` (the model reads a clock, `RAND()` or a UUID, directly or through a view it reads).
+* **Executed comparison.** `execute_change` builds the project twice in DuckDB, with and without the change, and runs it for 3 simulated days. Each day the sources grow, then every reader query and a full read of every model are compared between runs (before the refresh) and after the refresh, where stored models refresh in one run in dependency order. Rows are compared as a bag, with column names and types. A difference counts only when both worlds, re-run with DuckDB's optimizer off (`kumosql.duckdb_load.run_unoptimized`), return the same difference; otherwise it is `optimizer_disagrees`, not judged and not counted. The chosen set of each project is also run as one change.
+* **What counts as wrong.** A `proven` candidate whose worlds differ, a chosen set whose worlds differ, or any candidate that is not `proven` and is recommended or chosen (counted as a saving). A candidate that is not proven is listed under `needs_proof` and never counted. For it, a difference between the worlds is the expected result and is reported as `difference_seen`, which shows the refusal was warranted; agreement does not make it safe.
+* **Projects.** Three invented Dataform projects with 14-day job histories live in `tools/cost_validity_projects.py`. `retail` has a hot aggregate view, a view reading `CURRENT_DATE()`, a view over a declared source, a chain view and an unread table. `sampling` has views reading `RAND()` and `GENERATE_UUID()`, a view over the UUID view, and a hot aggregate chain. `staleness` has schedules that decide freshness: a join of tables refreshed by different schedules, a view over one table, and tables that read a source, stamp `CURRENT_TIMESTAMP()` or roll up a same-schedule table.
+
+| | Candidates |
+| --- | ---: |
+| Total (11 `store_view`, 8 `unstore_table`) | 19 |
+| `proven` | 7 |
+| `conditional` (needs proof) | 7 |
+| `changes_results` (refused) | 5 |
+| Recommended (proven with a positive estimated saving) | 5 |
+| Proven candidates executed to the same rows | 7 of 7 |
+| Chosen sets executed to the same rows | 3 of 3 |
+| Needs proof, and a difference seen | 6 of 7 |
+| Refused, and a difference seen | 5 of 5 |
+| Unproven candidates recommended or chosen | 0 |
+| Reads compared | 1,362 |
+
+* The one unproven candidate with no difference is the join over tables on different schedules. Its condition (the stored copy refreshes whenever any input does) holds in the simulation, so the rows agree. It is still listed as needing proof, and its estimated saving is the largest in the project, so it shows the gate working: a big saving that is not counted.
+* Two proven candidates are not recommended because their estimated saving is negative once their own refresh is counted.
+* The savings are estimates on invented job histories, in bytes billed. They are not measured, and the advisor's estimate is not compared with a measured saving here. The fixtures were written together with the advisor, so this shows that the labels and the gate behave on these shapes, not how often the advisor is right on a real warehouse.
+* Limits of the simulation: sources change only between runs, stored models refresh once a day in one run, nothing is read during a run, the data is a few dozen synthetic rows per table, and BigQuery SQL is transpiled to DuckDB on both sides (the transpiler is not under test). A clock is replaced by the simulated date; `RAND` and UUID are DuckDB's, seeded and single-threaded. These assumptions are copied into every saved record (`assumptions`).
+
 ### What the score covers
 
-The 72 recommendations are 44 from the rule pipeline and 28 from the optimizer, on 103 TPC-DS and 53 DSB statements. They do not include build recommendations, shared-model proposals, cost attribution or change reports, so the score says nothing about those (cost attribution and change reports are described in [Cost, change reports and the BigQuery dry run](../cost-and-change-reports.md)). There is no held-out split.
+The 72 recommendations are 44 from the rule pipeline and 28 from the optimizer, on 103 TPC-DS and 53 DSB statements, and the 19 advisor candidates above are counted with them (size 175). The score does not include build recommendations, shared-model proposals, cost attribution or change reports, so it says nothing about those (cost attribution and change reports are described in [Cost, change reports and the BigQuery dry run](../cost-and-change-reports.md)). There is no held-out split.
 
 A proof label holds under its model, and the tool now copies these assumptions into every recommendation it saves (`assumptions`):
 
@@ -229,3 +257,5 @@ The first comparator, which produced the saved 70, compared an ordered result as
 ### Rerun status
 
 The stricter comparator was rerun on 2026-10-03 on PostgreSQL 16 with TPC-DS and DSB at scale factor 1 (data from the `dsdgen` of each public kit, queries from `dsqgen` with seed 7: TPC-DS templates with the Netezza dialect file, DSB's PostgreSQL templates), 103 TPC-DS and 53 DSB statements as before. The generated queries are not stored and the first run's query text is not available, so this is a fresh draw from the same templates, not a `--rejudge` of the first run's recommendations. Result: 72 recommendations (44 rules, 28 optimizer), 65 judged and agreeing, 7 not judged (the same seven TPC-DS queries), `different_rows` 0, `different_schema` 0, `rewrite_error` 0. The first run's figures (70 recommendations, 63 agreeing, 1 estimated cheaper at 1.30x) were from the first comparator and a different draw, and are superseded by this run. Estimates and timings differ between draws and runs; the correctness counts are what the rerun was for.
+
+The advisor part was run on 2026-10-05 with `python tools/cost_validity_bench.py --advisor` (DuckDB 1.5.6, no network, about 12 seconds): 19 candidates on 3 projects, 1,362 reads compared, 0 wrong. The rewrite figures above were not rerun on that date. Its floor is in `tests/test_cost_validity_bench.py`: it asserts 0 wrong and that each fixture keeps its expected labels, which also catches a change that makes the advisor recommend a refused model.

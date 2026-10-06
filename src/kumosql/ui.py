@@ -52,6 +52,10 @@ ASSETS = {
     "/shared-models": ("shared-models.html", "text/html; charset=utf-8"),
     "/assets/shared-models.js": ("shared-models.js", "text/javascript; charset=utf-8"),
     "/assets/shared-models.css": ("shared-models.css", "text/css; charset=utf-8"),
+    "/reduce": ("reduce.html", "text/html; charset=utf-8"),
+    "/assets/reduce.js": ("reduce.js", "text/javascript; charset=utf-8"),
+    "/assets/reduce.css": ("reduce.css", "text/css; charset=utf-8"),
+    "/assets/patch-view.js": ("patch-view.js", "text/javascript; charset=utf-8"),
     "/assets/refactor.js": ("refactor.js", "text/javascript; charset=utf-8"),
     "/assets/refactor.css": ("refactor.css", "text/css; charset=utf-8"),
     "/assets/settings.js": ("settings.js", "text/javascript; charset=utf-8"),
@@ -254,6 +258,16 @@ class UIHandler(BaseHTTPRequestHandler):
             from . import shared_models
 
             self._json(200, shared_models.repeated_payload())
+            return
+        if self.path == "/api/reduce":
+            from . import reduction_app
+
+            self._json(200, reduction_app.reduction_payload())
+            return
+        if self.path == "/api/reduce/status":
+            from . import reduction_app
+
+            self._json(200, reduction_app.job_status())
             return
         if self.path == "/api/equivalences":
             from . import equivalences
@@ -649,7 +663,8 @@ class UIHandler(BaseHTTPRequestHandler):
             "/api/repositories", "/api/repositories/refresh", "/api/repositories/activate", "/api/repositories/clear",
             "/api/storage", "/api/workflow-configs/refresh", "/api/workflow-configs/settings",
             "/api/tag-rules/preview", "/api/catalogs/preview", "/api/catalogs/active", "/api/data-sources/populate", "/api/equivalences", "/api/equivalences/remove", "/api/prove-tables", "/api/prove-queries", "/api/consolidate-tables",
-            "/api/refactor/run", "/api/refactor/cancel", "/api/ties/run", "/api/ties/cancel", "/api/shared-models/patch",
+            "/api/refactor/run", "/api/refactor/cancel", "/api/ties/run", "/api/ties/cancel",
+            "/api/shared-models/patch", "/api/reduce/run",
         ):
             self._json(404, {"error": "not found"})
             return
@@ -704,6 +719,10 @@ class UIHandler(BaseHTTPRequestHandler):
                 from . import shared_models
 
                 result = shared_models.patch_payload(payload)
+            elif self.path == "/api/reduce/run":
+                from . import reduction_app
+
+                result = reduction_app.run_payload(payload)
             elif self.path == "/api/consolidate-tables":
                 from . import consolidate
 
@@ -716,7 +735,7 @@ class UIHandler(BaseHTTPRequestHandler):
                 elif self.path == "/api/equivalences/remove":
                     result = {"removed": equivalences.remove(payload.get("right"))}
                 elif self.path == "/api/prove-queries":
-                    result = pipeline_equivalence.prove_queries(payload.get("left"), payload.get("right"))
+                    result = pipeline_equivalence.prove_queries(payload.get("left"), payload.get("right"), payload.get("explain") is True)
                 else:
                     result = pipeline_equivalence.prove_loaded(payload.get("left"), payload.get("right"))
             elif self.path == "/api/storage":

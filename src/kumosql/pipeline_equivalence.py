@@ -382,8 +382,12 @@ def prove_loaded(left: object, right: object) -> dict:
     ).to_json()
 
 
-def prove_queries(left: object, right: object) -> dict:
-    """``POST /api/prove-queries``: prove two pasted queries return the same rows."""
+def prove_queries(left: object, right: object, explain: bool = False) -> dict:
+    """``POST /api/prove-queries``: prove two pasted queries return the same rows.
+
+    ``explain`` (the request's ``explain`` field, off by default) adds ``except_when``
+    (``{sql, atoms, tables, exact}``, see ``difference_explanation``) to a refuted pair when a verified predicate exists.
+    """
 
     from . import prover_context
     from .result_equivalence import DataRules
@@ -429,6 +433,12 @@ def prove_queries(left: object, right: object) -> dict:
             data["status"] = "not_equivalent"
             data["reason"] = "the queries return different rows on a small database"
             data["counterexample"] = found
+    if explain and data["status"] == SmtStatus.NOT_EQUIVALENT.value:
+        from .difference_surface import except_when
+
+        found_when = except_when(left, right, timeout_ms=config["timeout_ms"])
+        if found_when is not None:
+            data["except_when"] = found_when
     return data
 
 

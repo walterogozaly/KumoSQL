@@ -22,6 +22,7 @@ The server accepts only its own local addresses and gives each running session a
 | Change reports | Compare project versions and inspect proposed shared logic |
 | Refactor | Protect important outputs and search for simpler pipelines |
 | Shared models | Generate a checked patch to share a repeated CTE |
+| Reduce | Pick the outputs you need and get a smaller project that still builds them |
 | BigQuery | Browse the catalog your Google credentials can access |
 
 In Workspace, start with one rule. Open **Details** to understand the verdict, then use **Diff** to see the changed lines. A green planning check alone does not establish equal results; see [provers](provers.md).

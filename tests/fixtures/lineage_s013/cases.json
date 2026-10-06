@@ -113,14 +113,17 @@
    "sql": "SELECT rec.a AS out FROM src",
    "expected_edges": {
     "out": [
-     "src.rec"
+     "src.rec.a"
     ]
    },
    "expected_consumed": [
+    "src.rec.a"
+   ],
+   "probes": [
     "src.rec"
    ],
    "finding_family": null,
-   "note": "Root-column golden; documented struct field precision is coarse."
+   "note": "Field-level golden: the edge and the read name the field rec.a. They used to name the root column rec; a read of the whole rec is probed as well, since it contains the field."
   },
   {
    "id": "C07",

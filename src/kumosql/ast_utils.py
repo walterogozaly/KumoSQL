@@ -1087,3 +1087,20 @@ def captured_names(body: exp.Expression, at: exp.Expression) -> set[str]:
     replaced ``at``."""
 
     return free_reads(body) & visible_ctes(at)
+
+
+def field_path(column: exp.Column) -> tuple[str, ...]:
+    """The struct fields read straight off a column, outermost first: ``a.b.c`` on column ``a`` gives ``("b", "c")``.
+
+    Only a plain chain of field names counts. A subscript (``a[OFFSET(0)].b``), a function call or a ``.*`` ends the
+    path there, so the read is attributed to the whole of what came before: unknown stays coarse, never guessed.
+    """
+
+    path: list[str] = []
+    node: exp.Expression = column
+    parent = node.parent
+    while isinstance(parent, exp.Dot) and parent.this is node and isinstance(parent.expression, exp.Identifier):
+        path.append(parent.expression.name)
+        node = parent
+        parent = node.parent
+    return tuple(path)

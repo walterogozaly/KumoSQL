@@ -2,17 +2,19 @@
 
 Each case in ``tests/fixtures/incremental/*.json`` is a SQLX incremental model,
 its source tables, a *contract* (the kinds of source change allowed), the
-author's label for that contract (``safe`` or ``diverges``) and a scripted
-change sequence that exercises it. Two things are scored, separately:
+author's label for that contract (``safe``, ``diverges`` or ``nondeterministic``)
+and a scripted change sequence that exercises it. Two things are scored, separately:
 
 * **Harness fidelity.** The script is replayed in the DuckDB simulator of
   Dataform's run cycle; the outcome must match the label (a ``diverges`` case
-  must diverge at the stated batch, a ``safe`` case must agree throughout).
+  must diverge at the stated batch, a ``safe`` case must agree throughout, and
+  on a ``nondeterministic`` case's final source state two evaluations of the
+  full query, reading the rows in opposite orders, must differ).
 * **Detection.** ``check_incremental`` gets only the model and the contract,
-  never the script. ``proven`` (a proof rule) on a ``diverges`` case is a false
-  proof; ``refuted`` (a minimised counterexample that replays) on a ``safe``
-  case is a false alarm. Both count as wrong and must stay 0. ``unknown`` is a
-  miss, not an error.
+  never the script. Any definite answer (``proven``, ``refuted`` with a
+  minimised counterexample, ``nondeterministic`` with a tie witness) other than
+  the label counts as wrong, as does a counterexample or witness that does not
+  replay; wrong must stay 0. ``unknown`` is a miss, not an error.
 
     python tools/incremental_bench.py            # all splits
     python tools/incremental_bench.py --split dev
@@ -39,9 +41,11 @@ from kumosql.incremental import (  # noqa: E402
     parse_incremental_sqlx,
     replay,
 )
+from kumosql.incremental_ties import differs_by_row_order  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "incremental"
-SOURCE_FILES = ("boundary_cases.json",)
+SOURCE_FILES = ("boundary_cases.json", "full_rerun_cases.json", "full_rerun_heldout.json")
+OUTCOMES = ("proven", "refuted", "nondeterministic", "unknown", "unsupported", "timeout", "error")
 
 
 def load_cases(split: str = "all") -> list[dict]:
@@ -69,6 +73,10 @@ def fidelity(case: dict) -> tuple[bool, str]:
 
     model, sources = build(case)
     script = case["script"]
+    if case["label"] == "nondeterministic":
+        state = list(script["initial"]) + [s for batch in script["batches"] for s in batch]
+        witness = differs_by_row_order(model, sources, state)
+        return witness is not None, witness or "the full query gave one result"
     try:
         divergence = first_divergence(replay(model, sources, script["initial"], script["batches"]))
     except IncrementalError as exc:
@@ -91,10 +99,9 @@ def detect(case: dict, seeds: int) -> dict:
     elapsed = time.monotonic() - start
     outcome = {"safe": "proven", "diverges": "refuted"}.get(verdict.outcome, verdict.outcome)
     label = case["label"]
-    wrong = (verdict.outcome == "safe" and label == "diverges") or (verdict.outcome == "diverges" and label == "safe")
+    wrong = verdict.outcome in ("safe", "diverges", "nondeterministic") and verdict.outcome != label
     if verdict.counterexample is not None and not wrong:
-        again = first_divergence(replay(model, sources, verdict.counterexample.initial, verdict.counterexample.batches))
-        wrong = again is None  # a counterexample that does not replay is a wrong answer
+        wrong = not replays(model, sources, verdict)  # a counterexample that does not replay is a wrong answer
     return {
         "id": case["id"],
         "family": case["family"],
@@ -106,6 +113,18 @@ def detect(case: dict, seeds: int) -> dict:
         "seconds": round(elapsed, 2),
         "cex_size": verdict.counterexample.size if verdict.counterexample else None,
     }
+
+
+def replays(model: IncrementalModel, sources: dict, verdict) -> bool:
+    """A refutation's counterexample diverges again; a tie witness shows two results again."""
+
+    cex = verdict.counterexample
+    if verdict.outcome == "nondeterministic":
+        return differs_by_row_order(model, sources, list(cex.initial) + [s for b in cex.batches for s in b]) is not None
+    try:
+        return first_divergence(replay(model, sources, cex.initial, cex.batches)) is not None
+    except IncrementalError:
+        return False
 
 
 def run(split: str = "all", seeds: int = 60) -> dict:
@@ -120,12 +139,12 @@ def run(split: str = "all", seeds: int = 60) -> dict:
             rows.append(
                 {"id": case["id"], "family": case["family"], "split": case["split"], "label": case["label"], "outcome": "error", "rule": str(exc)[:80], "wrong": False, "seconds": 0, "cex_size": None}
             )
-    coverage = {k: sum(r["outcome"] == k for r in rows) for k in ("proven", "refuted", "unknown", "unsupported", "timeout", "error")}
+    coverage = {k: sum(r["outcome"] == k for r in rows) for k in OUTCOMES}
     sizes = [r["cex_size"] for r in rows if r["cex_size"]]
     return {
         "total": len(rows),
         "coverage": coverage,
-        "decided": coverage["proven"] + coverage["refuted"],
+        "decided": coverage["proven"] + coverage["refuted"] + coverage["nondeterministic"],
         "wrong": [r["id"] for r in rows if r["wrong"]],
         "fidelity_failures": bad_fidelity,
         "mean_counterexample_statements": round(sum(sizes) / len(sizes), 1) if sizes else None,
@@ -170,7 +189,7 @@ def run_pgivm(seeds: int = 30, limit: int | None = None) -> dict:
     path = FIXTURES / "pgivm_cases.json"
     cases = json.loads(path.read_text(encoding="utf-8"))["cases"] if path.exists() else []
     out = {"total": len(cases), "unsupported_extraction": 0, "script_error": 0, "script_agrees": 0, "script_diverges": 0,
-           "coverage": {k: 0 for k in ("proven", "refuted", "unknown", "unsupported", "timeout", "error")}, "wrong": [], "rows": []}
+           "coverage": {k: 0 for k in OUTCOMES}, "wrong": [], "rows": []}
     for case in cases:
         if "adapted" not in case:
             out["unsupported_extraction"] += 1
@@ -191,7 +210,7 @@ def run_pgivm(seeds: int = 30, limit: int | None = None) -> dict:
         outcome = {"safe": "proven", "diverges": "refuted"}.get(verdict.outcome, verdict.outcome)
         wrong = verdict.outcome == "safe"
         if verdict.counterexample is not None:
-            wrong = wrong or first_divergence(replay(model, sources, verdict.counterexample.initial, verdict.counterexample.batches)) is None
+            wrong = wrong or not replays(model, sources, verdict)
         out["coverage"][outcome] = out["coverage"].get(outcome, 0) + 1
         if wrong:
             out["wrong"].append(case["id"])
@@ -214,7 +233,7 @@ def run_pgivm_heldout(seeds: int = 30, workload_seed: int = 9001) -> dict:
     path = FIXTURES / "pgivm_cases.json"
     cases = json.loads(path.read_text(encoding="utf-8"))["cases"]
     seen, out = set(), {"views": 0, "script_agrees": 0, "script_diverges": 0, "script_error": 0,
-                        "coverage": {k: 0 for k in ("proven", "refuted", "unknown", "unsupported", "timeout", "error")}, "wrong": []}
+                        "coverage": {k: 0 for k in OUTCOMES}, "wrong": []}
     for case in cases:
         if "adapted" not in case or case["adapted"]["full_sql"] in seen:
             continue
@@ -243,8 +262,7 @@ def run_pgivm_heldout(seeds: int = 30, workload_seed: int = 9001) -> dict:
         verdict = check_incremental(model, sources, pgivm_kinds(plan), seeds=seeds, batches=4, time_limit=20)
         outcome = {"safe": "proven", "diverges": "refuted"}.get(verdict.outcome, verdict.outcome)
         out["coverage"][outcome] += 1
-        if verdict.outcome == "safe" or (verdict.counterexample is not None and first_divergence(
-                replay(model, sources, verdict.counterexample.initial, verdict.counterexample.batches)) is None):
+        if verdict.outcome == "safe" or (verdict.counterexample is not None and not replays(model, sources, verdict)):
             out["wrong"].append(case["id"])
     return out
 
@@ -272,7 +290,8 @@ def main() -> None:
         print(f"{r['outcome']:10} label={r['label']:9} {r['id']:44} {r['rule'][:34]:34} {flag}")
     c = result["coverage"]
     print(
-        f"\n{result['decided']}/{result['total']} decided ({c['proven']} proven safe, {c['refuted']} refuted with a replayable counterexample), "
+        f"\n{result['decided']}/{result['total']} decided ({c['proven']} proven safe, {c['refuted']} refuted with a replayable counterexample, "
+        f"{c['nondeterministic']} nondeterministic with a tie witness), "
         f"{c['unknown']} unknown, {c['unsupported']} unsupported, {c['timeout']} timeout, {c['error']} error; "
         f"{len(result['wrong'])} wrong; fidelity failures {len(result['fidelity_failures'])}; {result['seconds']} s"
     )
