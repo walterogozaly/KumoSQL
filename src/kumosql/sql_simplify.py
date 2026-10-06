@@ -721,6 +721,24 @@ def _optimizer_forms(tree: exp.Expression, schema: dict | None, volatile: bool) 
         out.append(chain(qualified, eliminate_ctes))
         return out
     try:
+        from .dedup_join_rules import drop_unread_outer_join
+
+        joined = qualified.copy()
+        changed = False
+        for select in list(joined.find_all(exp.Select)):
+            candidate = drop_unread_outer_join(select)
+            if candidate is None:
+                continue
+            if select is joined:
+                joined = candidate
+            else:
+                select.replace(candidate)
+            changed = True
+        if changed:
+            out.append(joined)
+    except Exception:  # noqa: BLE001 - an optional simplification never blocks other candidates
+        pass
+    try:
         qualified = _fold_star_chain(qualified.copy())
     except Exception:  # noqa: BLE001
         pass

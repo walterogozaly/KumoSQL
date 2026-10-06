@@ -86,6 +86,30 @@ def test_join_of_two_folded_tables():
     assert proven(sql, out[0])
 
 
+def test_unread_left_join_to_a_distinct_projection_is_removed():
+    sql = "SELECT x.a FROM x LEFT JOIN (SELECT DISTINCT y.b FROM y) AS d ON x.b = d.b"
+    columns = {"x": ["a", "b"], "y": ["b", "c"]}
+    out = simpler_forms(sql, columns)
+    assert "SELECT a FROM x" in out
+    check_contract(sql, out, columns)
+    from kumosql.algebraic_equivalence import prove_equivalent_algebraic
+
+    proof = prove_equivalent_algebraic(sql, "SELECT a FROM x", schema=columns, dialect="bigquery")
+    assert proof.proven, proof.reason
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT d.b FROM x LEFT JOIN (SELECT DISTINCT y.b FROM y) AS d ON x.b = d.b",
+    "SELECT x.a FROM x LEFT JOIN (SELECT DISTINCT y.b, y.c FROM y) AS d ON x.b = d.b",
+    "SELECT x.a FROM x LEFT JOIN (SELECT DISTINCT y.b, y.c FROM y) AS d ON x.b = d.b AND d.c = c",
+    "SELECT x.a FROM x LEFT JOIN (SELECT y.b FROM y) AS d ON x.b = d.b",
+])
+def test_distinct_left_join_is_not_removed_when_unread_or_unique_guards_fail(sql):
+    columns = {"x": ["a", "b"], "y": ["b", "c"]}
+    out = simpler_forms(sql, columns)
+    assert all("LEFT JOIN" in form for form in out)
+
+
 def test_filter_over_grouped_table_becomes_having():
     sql = "SELECT k, n FROM (SELECT k, COUNT(*) AS n FROM m.t GROUP BY k) AS d WHERE n > 1"
     out = simpler_forms(sql, COLUMNS)

@@ -85,7 +85,104 @@ def _drop_join(select: exp.Select) -> exp.Select | None:
     return copy
 
 
+def _drop_unread_distinct_left_join(select: exp.Select) -> exp.Select | None:
+    """A LEFT JOIN to a DISTINCT projection cannot repeat a left row when ON fixes every output."""
+
+    joins = select.args.get("joins") or []
+    if len(joins) != 1 or select.args.get("laterals"):
+        return None
+    join = joins[0]
+    if (join.side or "").upper() != "LEFT" or join.args.get("kind") or join.args.get("using") or join.args.get("natural"):
+        return None
+    far = join.this
+    name = _name(far)
+    on = join.args.get("on")
+    if not name or not isinstance(far, exp.Subquery) or not isinstance(far.this, exp.Select) or on is None:
+        return None
+    body = far.this
+    distinct = body.args.get("distinct")
+    if not isinstance(distinct, exp.Distinct) or distinct.args.get("on") is not None:
+        return None
+    if any(body.args.get(key) for key in ("group", "having", "order", "limit", "offset", "qualify", "windows", "with_", "with", "joins", "laterals")):
+        return None
+    from_ = body.args.get("from_") or body.args.get("from")
+    if from_ is None or not isinstance(from_.this, exp.Table):
+        return None
+    output_names = []
+    for item in body.expressions:
+        value = item.this if isinstance(item, exp.Alias) else item
+        output_name = (item.alias_or_name or "").lower()
+        if not isinstance(value, exp.Column) or isinstance(value.this, exp.Star) or not output_name:
+            return None
+        output_names.append(output_name)
+    if not output_names or len(set(output_names)) != len(output_names):
+        return None
+
+    alias = name.lower()
+    # Limit this rule to simple deterministic projections and predicates. The relational proof below
+    # is about row multiplicity; leaving expression evaluation order alone keeps its premise explicit.
+    for node in select.walk():
+        if _inside(node, far):
+            continue
+        if isinstance(node, (exp.Func, exp.Subquery, exp.Exists, exp.Window)):
+            return None
+    for node in body.walk():
+        if isinstance(node, (exp.Func, exp.Subquery, exp.Exists, exp.Window)) and node is not body:
+            return None
+
+    for column in select.find_all(exp.Column):
+        # The projected columns inside ``far`` refer to that subquery's input scope. A
+        # source table there may share the join alias (for example, ``y.b`` projected
+        # from ``y`` and then joined back as ``AS y``), but those references do not read
+        # the outer joined row.
+        if _inside(column, far):
+            continue
+        if column.table.lower() == alias:
+            if not _inside(column, on):
+                return None
+        elif not column.table and column.name.lower() in output_names and not _inside(column, on):
+            return None
+
+    fixed_outputs = set()
+
+    def conjuncts(node: exp.Expression) -> list[exp.Expression]:
+        if isinstance(node, exp.Paren) and not isinstance(node.this, exp.Or):
+            return conjuncts(node.this)
+        if isinstance(node, exp.And):
+            return conjuncts(node.this) + conjuncts(node.expression)
+        return [node]
+
+    for part in conjuncts(on):
+        if not isinstance(part, exp.EQ):
+            continue
+        for right, other in ((part.this, part.expression), (part.expression, part.this)):
+            if (
+                isinstance(right, exp.Column)
+                and right.table.lower() == alias
+                and right.name.lower() in output_names
+                and not any(
+                    column.table.lower() == alias
+                    or (not column.table and column.name.lower() in output_names)
+                    for column in other.find_all(exp.Column)
+                )
+            ):
+                fixed_outputs.add(right.name.lower())
+    if fixed_outputs != set(output_names):
+        return None
+    # All references to the joined alias have already been checked in the outer query
+    # scope above. `_drop_join` also scans the derived table's own projection, where a
+    # source table can coincidentally have the same name as the join alias.
+    copy = select.copy()
+    near = (copy.args.get("from_") or copy.args.get("from")).this
+    copy.set("joins", None)
+    copy.set(FROM_KEY, exp.From(this=near.copy()))
+    return copy
+
+
 def drop_unread_outer_join(select: exp.Select) -> exp.Expression | None:
+    unique = _drop_unread_distinct_left_join(select)
+    if unique is not None:
+        return unique
     if not _duplicate_blind(select):
         return None
     own = _drop_join(select)

@@ -95,6 +95,18 @@ def test_unprotected_tables_nobody_needs_are_dropped_and_the_rest_left_alone():
     assert result.proofs["report"].status == "unchanged"
 
 
+def test_unread_left_join_to_a_distinct_table_is_removed():
+    sources = {"x": {"a": "INT64", "b": "INT64"}, "y": {"b": "INT64", "c": "INT64"}}
+    tables = {
+        "y_t": "SELECT DISTINCT y.b FROM y",
+        "result": "SELECT a FROM x LEFT JOIN y_t AS y ON x.b = y.b",
+    }
+    result = minimize_tables(tables, ["result"], sources=sources)
+    assert result.tables == {"result": "SELECT a FROM x"}, (result.moves, result.rejected_moves)
+    assert result.removed == ["y_t"]
+    assert result.proofs["result"].status == "proved"
+
+
 def test_traps_are_never_taken():
     # DISTINCT, LIMIT-free aggregation and a filter on a LEFT JOIN's right side: folding must keep each meaning
     tables = {
