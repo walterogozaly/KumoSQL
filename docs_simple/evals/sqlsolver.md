@@ -26,7 +26,7 @@ The samples use a fixed random seed, so they repeat across unchanged runs. Remem
 
 ## Read the caveats
 
-Some rules were built while inspecting failing corpus cases, so those scores are “tuned on test.” A case once held out ceases to be an untouched test if it is later used in development. The full guide tracks that exposure.
+Some rules were built while inspecting failing corpus cases, so those scores are “tuned on test.” A case once held out ceases to be an untouched test if it is later used in development. The mined Calcite "new" partition is also not an untouched holdout: on 2026-10-06, a repository search during #497 work surfaced SQL from one or more rows marked new; those lines were not analyzed or used. The full guide tracks that exposure.
 
 Other suites overlap. Adding their case counts does not produce a count of unique independent tests.
 
