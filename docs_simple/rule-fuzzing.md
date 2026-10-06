@@ -4,6 +4,8 @@
 
 KumoSQL proves two queries equal by first rewriting both into a standard form and comparing the results. If one rewrite is wrong, two queries that return different rows can end up looking the same, and the proof is false. Testing pairs of queries finds such a rule only if it happens to build a pair that uses it. This tool tests each rewrite directly.
 
+Focused generators exercise hard-to-reach rules. The unread-window target checks both removable window values and cases where projections, filters, ordering, joins, or row-value reads must preserve them.
+
 ## An example
 
 For the query `SELECT q.c FROM (SELECT MIN(x) AS k, 1 AS c FROM t) AS q`, one rewrite removes the unread column `k`. The tool runs the query before and after that single rewrite on small databases full of empty tables, NULLs, duplicates and ties. Here the "after" query no longer has its aggregate, so it returns one row per input row instead of one row. The two differ, so the tool reports the rewrite, shrinks the example to a few rows, and a developer fixes the rule.
