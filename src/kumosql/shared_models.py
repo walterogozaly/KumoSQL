@@ -1,10 +1,10 @@
-"""Turn a CTE repeated across Dataform models into one shared model, as a reviewable patch.
+"""Turn repeated CTEs into one shared Dataform model, as a reviewable patch.
 
-``repeated_ctes`` lists the exact-duplicate groups (``Pipeline.duplicate_selects``) whose copies are
-WITH tables of ``.sqlx`` models. ``extract_shared_model`` writes the patch for one group: a new
-``.sqlx`` file holding the CTE body (refs and all, copied from the first copy's source text) and,
-in every model that held a copy, the CTE body replaced by ``SELECT <its columns> FROM ${ref("<new>")}``.
-Only the CTE body changes; the rest of each file is kept byte for byte.
+``repeated_ctes`` lists exact-duplicate groups (``Pipeline.duplicate_selects``). The shared-model
+listing also includes near-duplicate CTEs that differ only by safe extra filters. ``extract_shared_model``
+writes a patch with a new ``.sqlx`` file holding the common CTE body (refs and all, copied from a
+source file) and each original CTE replaced by a read from the new model; supported residual filters
+are reapplied at their original sites. Only CTE bodies change; the rest of each file is kept byte for byte.
 
 The patch is then checked, never trusted from the fingerprint that found the group: the project is
 loaded again with the patch applied, and for every edited model the prover compares its query before
@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import difflib
+import hashlib
 from pathlib import Path, PurePosixPath
 import re
 from typing import Callable, Mapping
@@ -184,11 +185,14 @@ class Site:
     cte: str
     columns: tuple[str, ...] = ()
     problem: str = ""
+    residual_filters: tuple[str, ...] = ()
 
     def to_json(self) -> dict:
         data = {"model": self.model, "path": self.path, "cte": self.cte, "columns": list(self.columns)}
         if self.problem:
             data["problem"] = self.problem
+        if self.residual_filters:
+            data["residual_filters"] = list(self.residual_filters)
         return data
 
 
@@ -200,6 +204,8 @@ class RepeatedCte:
     sites: list[Site] = field(default_factory=list)
     others: list[dict] = field(default_factory=list)  # copies that are not WITH tables; left as they are
     problem: str = ""
+    kind: str | None = None
+    shared_site: tuple[str, str] | None = None
 
     @property
     def extractable(self) -> bool:
@@ -213,6 +219,8 @@ class RepeatedCte:
         }
         if self.problem:
             data["problem"] = self.problem
+        if self.kind:
+            data["kind"] = self.kind
         return data
 
 
@@ -305,6 +313,118 @@ def repeated_ctes(pipeline, files: Mapping[str, str] | None, *, min_nodes: int =
                 item.problem = "the copies name their columns differently"
         groups.append(item)
     return groups
+
+
+def _residual_columns(text: str) -> tuple[set[str] | None, str]:
+    """Return the projected columns a residual filter reads, or a refusal reason.
+
+    A filter moved outside a shared view may read only simple, unqualified columns
+    emitted by that view. Functions, subqueries and qualified reads keep their
+    original scope and are deliberately declined by this first source patcher.
+    """
+
+    try:
+        expression = sqlglot.parse_one(text, read="bigquery")
+    except sqlglot.errors.SqlglotError:
+        return None, "a residual filter could not be parsed"
+    if expression is None or any(
+        isinstance(node, (exp.Func, exp.Query, exp.Subquery, exp.Window))
+        for node in expression.walk()
+    ):
+        return None, "a residual filter is not a simple expression"
+    columns = list(expression.find_all(exp.Column))
+    if any(column.table or column.db or column.catalog for column in columns):
+        return None, "a residual filter has a qualified column"
+    return {column.name.lower() for column in columns}, ""
+
+
+def _near_duplicate_ctes(pipeline, files: Mapping[str, str], *, min_nodes: int = 12) -> list[RepeatedCte]:
+    """Source-aware candidates for the narrow extra-filter shared-model patch."""
+
+    groups: list[RepeatedCte] = []
+    for cluster in pipeline.near_duplicate_selects(min_nodes=min_nodes):
+        if cluster.kind != "extra_filters" or not cluster.shared_sql:
+            continue
+        digest = hashlib.sha1(
+            "\0".join(sorted(variant.fingerprint for variant in cluster.variants)).encode("utf-8")
+        ).hexdigest()[:12]
+        group = RepeatedCte(
+            id=f"near-filter-{digest}",
+            sql=cluster.shared_sql,
+            node_count=max((variant.node_count for variant in cluster.variants), default=0),
+            kind=cluster.kind,
+        )
+        common_variants = [variant for variant in cluster.variants if not variant.residual_filters]
+        base_columns: tuple[str, ...] | None = None
+        if not common_variants:
+            group.problem = "no copy contains only the shared filters"
+        else:
+            base_variant = common_variants[0]
+            base_occurrence = next(
+                ((model, location) for model, location in base_variant.occurrences if location.startswith("cte:")),
+                None,
+            )
+            if base_occurrence is None:
+                group.problem = "the common-filter copy is not a WITH table"
+            else:
+                base_model, base_location = base_occurrence
+                model = pipeline.models.get(base_model)
+                if model is None:
+                    group.problem = "the common-filter model is unavailable"
+                else:
+                    base_problem, base_columns = _site_problem(
+                        model, files.get(model.path or ""), base_location[4:]
+                    )
+                    if base_problem:
+                        group.problem = f"{base_location[4:]} in {base_model} {base_problem}"
+                    else:
+                        group.shared_site = base_occurrence
+
+        for variant in cluster.variants:
+            for model_key, location in variant.occurrences:
+                model = pipeline.models.get(model_key)
+                if not location.startswith("cte:") or model is None:
+                    problem = "every copy must be a WITH table in a loaded model"
+                    group.problem = group.problem or problem
+                    group.sites.append(
+                        Site(model_key, getattr(model, "path", "") or "", location, problem=problem)
+                    )
+                    continue
+                cte = location[4:]
+                path = model.path or ""
+                problem, columns = _site_problem(model, files.get(path), cte)
+                if base_columns is not None and {
+                    column.lower() for column in columns
+                } != {column.lower() for column in base_columns}:
+                    problem = problem or "the copies name their output columns differently"
+                for residual in variant.residual_filters:
+                    reads, reason = _residual_columns(residual)
+                    if reason:
+                        problem = problem or reason
+                        break
+                    if not reads <= {column.lower() for column in columns}:
+                        problem = problem or "a residual filter reads a column the copy does not output"
+                        break
+                if problem:
+                    group.problem = group.problem or f"{cte} in {model_key} {problem}"
+                group.sites.append(
+                    Site(model_key, path, cte, columns, problem, tuple(variant.residual_filters))
+                )
+        if group.shared_site is None and not group.problem:
+            group.problem = "the common-filter copy is not an editable CTE"
+        if len(group.sites) < 2:
+            group.problem = group.problem or "fewer than two editable CTE copies"
+        groups.append(group)
+    return groups
+
+
+def _shared_model_groups(pipeline, files: Mapping[str, str], *, min_nodes: int = 12) -> list[RepeatedCte]:
+    """The exact and narrowly patchable near-duplicate CTE groups shown by the UI/CLI."""
+
+    exact = repeated_ctes(pipeline, files, min_nodes=min_nodes)
+    near = _near_duplicate_ctes(pipeline, files, min_nodes=min_nodes)
+    exact_ids = {group.id for group in exact}
+    return [*exact, *(group for group in near if group.id not in exact_ids)]
 
 
 # ------------------------------------------------------------------------ patch
@@ -500,13 +620,18 @@ def extract_shared_model(
     if name is not None and not _NAME_RE.match(name):
         raise SharedModelError("the model name must be letters, digits and underscores, starting with a letter or underscore")
     before = pipeline if pipeline is not None else load_files(files)
-    group = next((g for g in repeated_ctes(before, files, min_nodes=min_nodes) if g.id == group_id), None)
+    group = next((g for g in _shared_model_groups(before, files, min_nodes=min_nodes) if g.id == group_id), None)
     if group is None:
-        raise SharedModelError("no repeated WITH table with that id in this project")
+        raise SharedModelError("no repeated WITH table or near-duplicate group with that id in this project")
     if not group.extractable:
         raise SharedModelError(group.problem or "this group cannot be extracted")
+    if group.kind == "extra_filters" and kind != "view":
+        raise SharedModelError("near-duplicate filters can only be extracted into a view")
 
-    first = group.sites[0]
+    first = next(
+        (site for site in group.sites if (site.model, f"cte:{site.cte}") == group.shared_site),
+        group.sites[0],
+    )
     folder = PurePosixPath(first.path).parent
     taken = _model_names(before)
     wanted = name or suggested_name(group)
@@ -531,7 +656,10 @@ def extract_shared_model(
             line_start = text.rfind("\n", 0, low) + 1
             indent = re.match(r"[ \t]*", text[line_start:]).group(0)
             columns = ", ".join(_identifier(c) for c in site.columns)
-            edits.append((low, high, f'\n{indent}  SELECT {columns}\n{indent}  FROM ${{ref("{name}")}}\n{indent}'))
+            replacement = "\n" + indent + "  SELECT " + columns + "\n" + indent + "  FROM " + '$' + '{ref("' + name + '")}'
+            if site.residual_filters:
+                replacement += "\n" + indent + "  WHERE " + " AND ".join(site.residual_filters)
+            edits.append((low, high, replacement + "\n" + indent))
         for low, high, replacement in sorted(edits, reverse=True):
             text = text[:low] + replacement + text[high:]
         changed[path] = text
@@ -568,7 +696,13 @@ def extract_shared_model(
         if inlined is None:
             checks.append(ModelCheck(key, "edited", UNKNOWN, why))
             continue
-        checks.append(_check(prove, key, before.models[key].sql, inlined))
+        check = _check(prove, key, before.models[key].sql, inlined)
+        if group.kind == "extra_filters" and check.label == DIFFERS:
+            check = ModelCheck(
+                key, "edited", UNKNOWN,
+                "the near-duplicate rewrite was not proved equivalent: " + check.reason,
+            )
+        checks.append(check)
 
     status = {c.model: c for c in checks}
     downstream = before.downstream
@@ -620,7 +754,7 @@ def repeated_payload() -> dict:
         return {"loaded": False, "groups": []}
     pipeline = current["pipeline"]
     files = getattr(pipeline, "source_files", None) or {}
-    groups = repeated_ctes(pipeline, files)
+    groups = _shared_model_groups(pipeline, files)
     groups.sort(key=lambda g: (not g.extractable, -len(g.sites), -g.node_count))
     return {"loaded": True, "label": current["label"], "files_available": bool(files),
             "groups": [g.to_json() for g in groups]}
@@ -673,7 +807,7 @@ def main(argv: list[str] | None = None) -> int:
     files = read_project_files(args.project)
     pipeline = load_files(files)
     if not args.group:
-        print(json.dumps({"groups": [g.to_json() for g in repeated_ctes(pipeline, files)]}, indent=2))
+        print(json.dumps({"groups": [g.to_json() for g in _shared_model_groups(pipeline, files)]}, indent=2))
         return 0
     try:
         patch = extract_shared_model(files, args.group, name=args.name, kind=args.kind, pipeline=pipeline)

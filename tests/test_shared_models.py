@@ -47,6 +47,11 @@ FROM paid JOIN ${ref("customers")} c ON c.customer_id = paid.customer_id
 GROUP BY c.name
 """
 REPORT = 'config { type: "view" }\nSELECT * FROM ${ref("revenue")} WHERE revenue > 100\n'
+FILTER_BASE = (
+    "SELECT o.order_id, o.customer_id, o.amount, o.status, o.created_at, o.currency, "
+    "o.region, o.channel, o.payment_method, o.campaign_id "
+    "FROM ${ref(\"orders\")} AS o WHERE o.amount > 0"
+)
 
 
 def project(**models: str) -> dict[str, str]:
@@ -181,6 +186,101 @@ SELECT * FROM paid
 """
     group = only_group(project(first=outer, second=outer.replace("SELECT * FROM paid", "SELECT order_id FROM paid")))
     assert not group.extractable and "base" in group.problem
+
+
+def test_near_duplicate_extra_filter_ctes_make_a_source_preserving_checked_patch():
+    first = f'''config {{ type: "table" }}
+WITH base AS ({FILTER_BASE})
+SELECT order_id, amount FROM base
+'''
+    second = f'''config {{ type: "view" }}
+WITH paid AS ({FILTER_BASE} AND o.status = 'paid')
+SELECT order_id FROM paid
+'''
+    files = project(first=first, second=second, reader='config { type: "view" }\nSELECT order_id FROM ${ref("second")}\n')
+    pipeline = load_files(files)
+    [group] = [
+        item for item in shared_models._shared_model_groups(pipeline, files, min_nodes=1)
+        if item.kind == "extra_filters"
+    ]
+
+    assert group.extractable
+    assert {site.residual_filters for site in group.sites} == {(), ("status = 'paid'",)}
+    patch = extract_shared_model(files, group.id, pipeline=pipeline, min_nodes=8)
+
+    assert patch.new_file == "definitions/marts/base.sqlx"
+    assert '${ref("orders")}' in patch.files[patch.new_file]
+    assert 'FROM ${ref("base")}' in patch.files["definitions/marts/first.sqlx"]
+    assert 'FROM ${ref("base")}' in patch.files["definitions/marts/second.sqlx"]
+    assert "WHERE status = 'paid'" in patch.files["definitions/marts/second.sqlx"]
+    assert "definitions/marts/reader.sqlx" not in patch.files
+    assert {check.role for check in patch.checks if check.model.endswith((".first", ".second"))} == {"edited"}
+    assert next(check for check in patch.checks if check.model.endswith(".reader")).role == "downstream"
+    assert all(check.label in (PROVEN, PROVEN_WITH_ASSUMPTIONS) for check in patch.checks if check.role == "edited")
+    assert next(check for check in patch.checks if check.model.endswith(".reader")).label == UNCHANGED
+
+
+def test_near_duplicate_filter_requires_projected_columns_and_a_view():
+    first = f'''config {{ type: "table" }}
+WITH base AS ({FILTER_BASE.replace(", o.status", "")})
+SELECT order_id, amount FROM base
+'''
+    second = f'''config {{ type: "view" }}
+WITH paid AS ({FILTER_BASE.replace(", o.status", "")} AND o.status = 'paid')
+SELECT order_id FROM paid
+'''
+    files = project(first=first, second=second)
+    pipeline = load_files(files)
+    [group] = [
+        item for item in shared_models._shared_model_groups(pipeline, files, min_nodes=1)
+        if item.kind == "extra_filters"
+    ]
+
+    assert not group.extractable
+    assert "does not output" in group.problem
+    with pytest.raises(SharedModelError, match="does not output"):
+        extract_shared_model(files, group.id, pipeline=pipeline, min_nodes=1)
+
+    supported = project(first=first, second=second.replace("o.status = 'paid'", "o.amount < 100"))
+    supported_pipeline = load_files(supported)
+    [supported_group] = [
+        item for item in shared_models._shared_model_groups(supported_pipeline, supported, min_nodes=1)
+        if item.kind == "extra_filters" and item.extractable
+    ]
+    with pytest.raises(SharedModelError, match="only be extracted into a view"):
+        extract_shared_model(supported, supported_group.id, kind="table", pipeline=supported_pipeline, min_nodes=1)
+
+
+def test_near_duplicate_patch_reports_a_failed_proof_as_unknown():
+    from kumosql.smt_equivalence import SmtStatus
+
+    first = f'''config {{ type: "view" }}
+WITH base AS ({FILTER_BASE})
+SELECT order_id FROM base
+'''
+    second = f'''config {{ type: "view" }}
+WITH paid AS ({FILTER_BASE} AND o.amount < 100)
+SELECT order_id FROM paid
+'''
+    files = project(first=first, second=second)
+    pipeline = load_files(files)
+    [group] = [
+        item for item in shared_models._shared_model_groups(pipeline, files, min_nodes=1)
+        if item.kind == "extra_filters" and item.extractable
+    ]
+
+    class Different:
+        status = SmtStatus.NOT_EQUIVALENT
+        reason = "counterexample"
+        assumptions = ()
+
+    patch = extract_shared_model(
+        files, group.id, pipeline=pipeline, min_nodes=1,
+        prove=lambda _old, _new: Different(),
+    )
+
+    assert patch.verdict == UNKNOWN
+    assert all(check.label == UNKNOWN for check in patch.checks if check.role == "edited")
 
 
 def test_downstream_reader_of_an_unproven_model_is_unknown(monkeypatch):

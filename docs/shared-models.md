@@ -2,7 +2,7 @@
 
 [Plain-language version](../docs_simple/shared-models.md)
 
-When the same CTE is copied into several Dataform models, KumoSQL can write the patch that moves it into one new model and points every copy at it, then check that patch with the prover. The patch is a reviewable `git apply` diff; nothing is written to the project or to BigQuery.
+When the same CTE is copied into several Dataform models, or copies differ only by safe extra WHERE filters, KumoSQL can write a patch that moves the common query into one view and checks the edited models with the prover. The patch is a reviewable diff; nothing is written to the project or to BigQuery.
 
 ![Shared models page](images/shared-models.png)
 
@@ -43,6 +43,12 @@ Copies come from the exact-duplicate search (`Pipeline.duplicate_selects`, see [
 - has no value that changes from run to run (a clock, `RAND`, a UUID);
 - names every output column once, the same columns in every copy.
 
-Groups that fail are listed with the reason and cannot be generated. Near duplicates (copies that differ by a literal, a filter or a column) are not extracted yet; their proposals are on the Change reports page.
+Groups that fail are listed with the reason and cannot be generated. Near-duplicate groups that differ by literals, extra columns, or unsupported filter shapes remain proposals on the Change reports page.
 
-The loaded project keeps its source files for this (`pipeline.source_files`), so a project parsed before this feature must be reloaded once.
+## Near-duplicate filter slices
+
+The patcher supports one conservative near-duplicate shape: every copy is a CTE in a SQLX file; all copies have the same named outputs; at least one copy contains only the common filters; and each residual filter reads only simple, unqualified columns already projected by the CTE. It copies that common CTE body from its source file so Dataform ${ref(...)} calls are preserved, then rewrites each CTE to read the shared view and reapplies that copy's residual WHERE clause. The patched project is reloaded and each edited model is checked against its original query; downstream readers inherit a result only when every edited model they read is proven.
+
+This slice supports views only. Literal parameters, hidden filter columns, functions or subqueries in residual filters, extra-column differences, mixed changes, and CTEs outside WITH clauses remain unsupported. Apply a generated patch only when its verdict is proven or proven with the listed assumptions.
+
+The loaded project keeps its source files for this (pipeline.source_files), so a project parsed before this feature must be reloaded once.
