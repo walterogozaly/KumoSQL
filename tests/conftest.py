@@ -181,6 +181,7 @@ EVAL_FILES = {
     "test_documented_rewrites_bench.py",
     "test_dlbench_bench.py",
     "test_engine_pairs_bench.py",
+    "test_feedback_optimization_bench.py",
     "test_dup_bench.py",
     "test_incremental.py",
     "test_jaffle_shop_bench.py",

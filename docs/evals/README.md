@@ -46,6 +46,7 @@ KumoSQL is scored on public benchmarks and on suites generated for its own featu
 | Page | What it scores | Results files |
 | --- | --- | --- |
 | [Query rewriting benchmarks](rewrite-benchmarks.md) | SQL-RewriteBench, WeTune's GitHub issues, QueryBooster's experiment rewrites, ClickBench and cost-recommendation validity | `sql-rewritebench`, `wetune-issues`, `querybooster`, `clickbench-rewrites`, `cost-recommendation-validity` |
+| [Feedback-driven SQL optimization](feedback-optimization.md) | GPL run-bundle rewrites with finite result checks | `feedback-optimization` |
 | [Transformations on TPC-H, TPC-DS and JOB](transformation-bench.md) | Transformations on standard workloads with real data | `transformation-workloads`, `job-alternative-forms` |
 | [LLM-R2 query sets](llmr2-bench.md) | Scale test of the rewrites on 11,353 queries, test files held out | `llm-r2-scale` |
 | [Sample databases](sample-databases.md) | Chinook, Northwind, Sakila and the Oracle HR and Customer Orders schemas loaded whole into DuckDB from their pinned scripts; Northwind's 16 views, Sakila's 7 views and 6 routines, Oracle's 5 views and authored workloads through every rewrite, checked on the real data; authored equivalent pairs and key-dependent siblings through the provers | `sample-databases-rewrites`, `sample-databases-pairs`, `sample-databases-sakila-rewrites`, `sample-databases-sakila-pairs`, `sample-databases-oracle_hr-rewrites`, `sample-databases-oracle_hr-pairs`, `sample-databases-oracle_co-rewrites`, `sample-databases-oracle_co-pairs` |

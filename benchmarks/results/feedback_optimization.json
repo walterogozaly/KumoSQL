@@ -1,0 +1,26 @@
+{
+  "suite": "Feedback-driven SQL optimization rewrites",
+  "order": 62,
+  "size": 10,
+  "score": "6/10 decided (6 proven, 0 label failures refuted), 0 wrong",
+  "metric": "Rewrites that passed the source run's full-result check, proven by KumoSQL or refuted by a replayed counterexample on schema-valid synthetic TPC-H data.",
+  "evidence": "proof",
+  "correctness": "Every pair is checked by the algebraic prover and by a DuckDB counterexample search confirmed with the optimizer off. Any overlap between a proof and a replayed counterexample counts as wrong.",
+  "coverage": {
+    "proven": 6,
+    "unknown": 4
+  },
+  "held_out": "2/2 decided (2 proven, 0 refuted)",
+  "docs": "docs/evals/feedback-optimization.md",
+  "command": "python tools/feedback_optimization_bench.py --write-results",
+  "date": "2026-10-05",
+  "caveats": "GPL-3.0 archive downloaded at run time and SHA-256 checked (commit 2d6de25), never committed. The archive contains ten passing full-result checks over generated TPC-H SF1 data, but not the database, workload manifest or parameter files; source bind values are unavailable. Binds are modeled symbolically as scalar MAX values over a synthetic relation, with declared TPC-H and parameter types. The eleventh candidate is excluded because DuckDB could not execute its original query. Tuned on test: all source SQL was inspected during the source-gate investigation; no prover code changed.",
+  "environment": {
+    "python": "3.12.15",
+    "sqlglot": "30.21.0",
+    "duckdb": "1.5.6",
+    "z3-solver": "5.1.0.0",
+    "sqlfluff": "4.4.0",
+    "commit": "3b3c5764+changes"
+  }
+}
