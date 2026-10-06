@@ -1,0 +1,26 @@
+{
+  "job": "nightly",
+  "kind": "periodic",
+  "ref": "master",
+  "sha": "3b3c57645b957db99d99b2dd4ce9694e1cff24eb",
+  "leg": "compiled-periodic-full",
+  "mode": "full",
+  "status": "finished",
+  "exit": 0,
+  "seconds": 3656.0,
+  "workers": 4,
+  "notes": [],
+  "finished": "2026-10-06T07:01:55Z",
+  "machine": {
+    "system": "Linux",
+    "release": "6.18.40.1-microsoft-standard-WSL2",
+    "cpus": 6,
+    "python": "3.12.3"
+  },
+  "passed": 13262,
+  "failed": [],
+  "errors": [],
+  "skipped": 121,
+  "tests": 13383,
+  "known_failed": []
+}
