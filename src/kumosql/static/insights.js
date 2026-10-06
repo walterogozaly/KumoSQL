@@ -426,8 +426,24 @@ function lineageOf(graph, id, column, seen = new Set()) {
   return {
     node: id, column, transform: item.transform,
     unknown: item.status === "unknown",
+    filters: [...(graph.data.model_filters?.[id] || []), ...(item.filters || [])],
+    filtersUnknown: Boolean(item.filters_unknown),
     sources: item.sources.map((source) => lineageOf(graph, source.node, source.column, seen)),
   };
+}
+
+const FILTER_EFFECTS = { matches_only: "outer join", excludes_rows: "excluded", feeds_value: "value" };
+
+/** The conditions that limit the rows of one lineage step: kind, condition, the scope it was written in. */
+function filterList(item) {
+  if (!item.filters?.length && !item.filtersUnknown) return null;
+  return h("ul", { class: "lineage-filters" },
+    item.filtersUnknown ? h("li", {}, E.pill("unknown")) : null,
+    (item.filters || []).map((found) => h("li", { class: `lineage-filter effect-${found.effect}`, title: found.columns.map((c) => `${c.node}.${c.column}`).join(", ") },
+      h("span", { class: "lineage-filter-kind", text: found.kind }),
+      h("code", { class: "lineage-filter-condition", text: found.condition }),
+      h("span", { class: "muted small", text: found.scope }),
+      FILTER_EFFECTS[found.effect] ? h("span", { class: "lineage-transform", text: FILTER_EFFECTS[found.effect] }) : null)));
 }
 
 /** Keep only the assets carrying ``tag`` (by hand or from a rule), and what connects them. */
@@ -809,6 +825,7 @@ function renderGraph(data, root) {
           nodeLink(item.node, item.column),
           h("span", { class: "lineage-transform", text: item.transform }),
           item.unknown ? E.pill("unknown") : null),
+        filterList(item),
         item.sources.length ? h("ul", { class: "lineage-tree" }, item.sources.map(renderTree)) : null);
       body = h("div", {}, columnPicker(node),
         tree ? h("ul", { class: "lineage-tree is-root" }, renderTree(tree)) : null,

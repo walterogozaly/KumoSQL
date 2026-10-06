@@ -65,6 +65,7 @@ from .result_equivalence import (
     generate_synthetic_dataset,
 )
 from .pipeline import (
+    ColumnFilter,
     ColumnLineage,
     ColumnRef,
     ColumnTrace,
@@ -205,6 +206,7 @@ __all__ = [
     "get_rule",
     "register_rule",
     "verify_rewrite",
+    "ColumnFilter",
     "ColumnLineage",
     "ColumnRef",
     "ColumnTrace",

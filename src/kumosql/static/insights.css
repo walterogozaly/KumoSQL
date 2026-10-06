@@ -118,6 +118,12 @@
 .lineage-tree.is-root { margin-top: 12px; padding-left: 0; border-left: 0; }
 .lineage-tree li { margin: 6px 0 0; }
 .lineage-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.lineage-filters { margin: 4px 0 0; padding-left: 12px; list-style: none; }
+.lineage-filter { margin: 2px 0 0; }
+.lineage-filter > * { margin-right: 8px; }
+.lineage-filter-kind { color: var(--accent-text); font: 11px var(--font-mono); text-transform: uppercase; }
+.lineage-filter-condition { overflow-wrap: anywhere; font: 12px var(--font-mono); }
+.lineage-filter.effect-matches_only, .lineage-filter.effect-excludes_rows, .lineage-filter.effect-feeds_value { opacity: 0.8; }
 .lineage-transform { padding: 1px 6px; border-radius: var(--radius-xs); background: var(--surface-2); color: var(--text-muted); font: 11px var(--font-mono); }
 
 /* ---------- Cost ---------- */

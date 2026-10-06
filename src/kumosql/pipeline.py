@@ -38,6 +38,7 @@ from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
 from sqlglot.schema import MappingSchema
 
 from . import lineage_limits
+from .lineage_filters import model_filters
 from .lineage_soundness import (
     UNTRACED,
     condition_columns,
@@ -69,6 +70,7 @@ from .pipeline_loading import (  # noqa: F401
     load_sqlx_project,
 )
 from .pipeline_types import (  # noqa: F401
+    ColumnFilter,
     ColumnLineage,
     ColumnRef,
     ColumnTrace,
@@ -326,6 +328,8 @@ class Pipeline:
         seen: set[ColumnRef] = set()
         sources: set[ColumnRef] = set()
         unknown: dict[ColumnRef, str] = {}
+        filters: dict[tuple[str, ColumnFilter], None] = {}
+        filters_unknown: set[str] = set()
         pending = deque([column])
         while pending:
             item = pending.popleft()
@@ -342,6 +346,10 @@ class Pipeline:
                 continue
             if record.status == "unknown":
                 unknown[item] = record.reason or "unknown"
+            if record.filters is None:
+                filters_unknown.add(item.table)
+            else:
+                filters.update(dict.fromkeys((item.table, found) for found in record.filters))
             pending.extend(sorted(hop))
         seen.discard(column)
         return ColumnTrace(
@@ -349,6 +357,8 @@ class Pipeline:
             upstream=frozenset(seen),
             sources=frozenset(sources - {column}),
             unknown=tuple(sorted(unknown.items())),
+            filters=tuple(filters),
+            filters_unknown=tuple(sorted(filters_unknown)),
         )
 
     def lineage_report(self) -> list[dict]:
@@ -366,6 +376,10 @@ class Pipeline:
             }
             if record.reason:
                 row["reason"] = record.reason
+            if record.filters is None:
+                row["filters_unknown"] = True
+            else:
+                row["filters"] = [item.to_json() for item in record.filters]
             rows.append(row)
         return rows
 
@@ -1777,6 +1791,22 @@ class _Analysis:
                     else:
                         records[ref] = ColumnLineage(ref, frozenset(leaves), "traced", transform)
                     direct[ref] = frozenset(leaves)
+                try:
+                    found_filters = model_filters(
+                        qualified,
+                        lambda table: pipeline.resolve(table) or _table_name_for_schema(table),
+                        pipeline.models[writer].masked_expressions,
+                    )
+                except Exception:
+                    found_filters = None
+                for name in names:
+                    ref = ColumnRef(key, name)
+                    record = records.get(ref)
+                    if record is None or name == "*":
+                        continue
+                    records[ref] = replace(
+                        record, filters=_column_filters(found_filters, name, None if not unit else writer)
+                    )
                 for ref, before in prior.items():
                     records[ref] = _merge_records(before, records[ref])
                     if ref in direct or ref in prior_direct:
@@ -1791,7 +1821,7 @@ class _Analysis:
                         if record is None or not any(_last_part(src.table) in hidden for src in record.sources):
                             continue
                         kept = frozenset(src for src in record.sources if _last_part(src.table) not in hidden)
-                        records[ref] = ColumnLineage(ref, kept, "unknown", "unknown", "temporary_table")
+                        records[ref] = ColumnLineage(ref, kept, "unknown", "unknown", "temporary_table", record.filters)
                         direct[ref] = kept
                     opaque_readers_of.update(upstream.get(key, ()))
                 if skipped_columns:
@@ -1952,15 +1982,33 @@ def _masked_reads(
     return found
 
 
+def _column_filters(found, name: str, writer: str | None) -> tuple[ColumnFilter, ...] | None:
+    """The filters of one output column: the model's row filters and that column's own value filters.
+
+    A statement other than the model's own query (an operation writing into the table) says which one it is in each scope.
+    """
+
+    if found is None:
+        return None
+    rows, values = found
+    result = rows + tuple(values.get(name, ()))
+    if writer is not None:
+        result = tuple(replace(item, scope=f"{writer}: {item.scope}") for item in result)
+    return result
+
+
 def _merge_records(before: ColumnLineage, after: ColumnLineage) -> ColumnLineage:
     """Two writers feed one column: its sources are both sets, and it is only as known as the less known of them."""
 
     sources = before.sources | after.sources
+    filters = None
+    if before.filters is not None and after.filters is not None:
+        filters = before.filters + tuple(item for item in after.filters if item not in before.filters)
     if "unknown" in (before.status, after.status):
-        return ColumnLineage(after.column, sources, "unknown", "unknown", after.reason or before.reason)
+        return ColumnLineage(after.column, sources, "unknown", "unknown", after.reason or before.reason, filters)
     status = "traced" if "traced" in (before.status, after.status) else "constant"
     transform = before.transform if before.transform == after.transform else "union"
-    return ColumnLineage(after.column, sources, status, transform)
+    return ColumnLineage(after.column, sources, status, transform, None, filters)
 
 
 _TRANSFORM_RANK = {"passthrough": 0, "renamed": 1, "expression": 2, "aggregate": 3, "window": 4}
