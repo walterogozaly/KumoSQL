@@ -141,8 +141,9 @@ def test_ignored_statements_read_nothing_and_decoys_in_text_are_not_reads():
     )
     assert reads(a) == ["real"]
     assert kinds(a, UNKNOWN) == []
-    assert kinds(a, IGNORED) == ["assert", "declare", "load_data", "set", "transaction", "transaction"]
-    assert [(w.table.name, w.kind) for w in a.writes] == [("old", "drop")]
+    assert kinds(a, IGNORED) == ["assert", "declare", "set", "transaction", "transaction"]
+    assert kinds(a, KEPT)[:1] == ["drop"] and "load_data" in kinds(a, KEPT)  # a load writes its table from files; it reads none
+    assert sorted((w.table.name, w.kind) for w in a.writes) == [("loaded", "load_data"), ("old", "drop")]
 
 
 def test_kept_statement_kinds_and_writes():

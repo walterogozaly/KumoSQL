@@ -2,7 +2,7 @@
   "suite": "Lineage goldens: DataHub (sqlglot output)",
   "order": 251,
   "size": 18,
-  "score": "18/18 matched (3 only to a struct's root column), 0 unknown, 0 wrong",
+  "score": "18/18 matched (1 to exact struct fields where the golden names the root column), 0 unknown, 0 wrong",
   "metric": "DataHub's lineage goldens (Apache-2.0, commit 8a117ba1f5). The goldens are sqlglot's own output after review, so agreement is not independent evidence; read this row as regression coverage of BigQuery shapes, not as an accuracy score. Each case is one SQL statement with its expected table and column lineage; KumoSQL must produce exactly it or say unknown.",
   "correctness": "0 cases claim a table or edge the oracle does not have; 0 confident misses",
   "coverage": {
@@ -11,10 +11,10 @@
   },
   "docs": "docs/evals/lineage-goldens-bench.md",
   "command": "python tools/lineage_goldens_bench.py --write-results",
-  "caveats": "Cases left out: 81 (other dialects, upstream-skipped tests, USE state, not BigQuery); 2 upstream tests could not be harvested. Table reads and explicit writes include DML, table DDL, LIKE/CLONE and all script targets; this does not establish complete column lineage for those statements. Physical STRUCT sub-fields remain coarse at the root column.",
+  "caveats": "Cases left out: 81 (other dialects, upstream-skipped tests, USE state, not BigQuery); 2 upstream tests could not be harvested. Table reads and explicit writes include DML, table DDL, LIKE/CLONE and all script targets; this does not establish complete column lineage for those statements. A struct field the SQL reads by a plain name chain is traced to that field; a subscripted, called or otherwise unresolved read stays at the root column.",
   "analysis": "48/48 expected column edges found (column cases only; recall counts edges reported unknown)",
   "evidence": "executed",
-  "date": "2026-10-03",
-  "held_out": "Held out: the other-dialect cases (Snowflake, MySQL, T-SQL and so on, read as BigQuery) were never adjudicated or used to shape the adapter, so they are a generalisation check; current run: datahub: 40/81 exact, 15 unknown, 16 missed, 8 wrong; openlineage: 14/46 exact, 0 unknown, 11 missed, 21 wrong (one OpenLineage case moved from unknown to exact when WITH names became scoped per reference; it was not tuned on). Their wrong/missed counts are dialect differences and are not in the headline. The in-scope cases are not held out: each mismatch was read while building the adapter.",
-  "performance": "112 in-scope cases in 4.1 s (sqlglot 30.21.0)"
+  "date": "2026-10-05",
+  "held_out": "Held out: the other-dialect cases (Snowflake, MySQL, T-SQL and so on, read as BigQuery) were never adjudicated or used to shape the adapter, so they are a generalisation check; current run: datahub: 41/80 exact, 15 unknown, 16 missed, 8 wrong; openlineage: 11/29 exact, 0 unknown, 6 missed, 12 wrong. Their wrong/missed counts are dialect differences and are not in the headline. The in-scope cases are not held out: each mismatch was read while building the adapter.",
+  "performance": "112 in-scope cases in 4.5 s (sqlglot 30.21.0)"
 }

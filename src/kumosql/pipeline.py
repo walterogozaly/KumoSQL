@@ -51,7 +51,7 @@ from .lineage_soundness import (
 from .scripts import KEPT, ScriptAnalysis, analyse_script, collect_procedures, collect_table_functions, column_words
 from .set_operations import is_by_name, positionalize
 from .timing import Progress, stage
-from .ast_utils import binding_cte, is_function_table, quiet_parser as _quiet_parser, set_with_clause, star_modifier, top_level_query, with_clause
+from .ast_utils import binding_cte, field_path, is_function_table, quiet_parser as _quiet_parser, set_with_clause, star_modifier, top_level_query, with_clause
 from .resilience import (
     PipelineLoadError,  # noqa: F401
     build_completeness,
@@ -332,7 +332,7 @@ class Pipeline:
             if item in seen:
                 continue
             seen.add(item)
-            record = analysis.records.get(item)
+            record, hop = _one_hop(analysis.records, item)
             if record is None:
                 reason = analysis.untraced_reason(item, self.models)
                 if reason:
@@ -342,7 +342,7 @@ class Pipeline:
                 continue
             if record.status == "unknown":
                 unknown[item] = record.reason or "unknown"
-            pending.extend(sorted(record.sources))
+            pending.extend(sorted(hop))
         seen.discard(column)
         return ColumnTrace(
             column=column,
@@ -359,7 +359,7 @@ class Pipeline:
             row = {
                 "node": ref.table,
                 "column": ref.column,
-                "sources": [{"node": s.table, "column": s.column} for s in sorted(record.sources)],
+                "sources": [_source_row(s) for s in sorted(record.sources)],
                 "transform": record.transform,
                 "status": record.status,
                 "complete": self.trace_column(ref).complete,
@@ -372,7 +372,8 @@ class Pipeline:
     def upstream_columns(self, column: ColumnRef) -> frozenset[ColumnRef]:
         """Every column, across all models and sources, that feeds ``column``."""
 
-        return _closure(column, self._analyse().lineage)
+        analysis = self._analyse()
+        return _closure(column, analysis.lineage, analysis.records)
 
     def downstream_columns(self, column: ColumnRef) -> frozenset[ColumnRef]:
         """Every model column, across the pipeline, whose value is computed from ``column``.
@@ -381,7 +382,8 @@ class Pipeline:
         column here although its rows depend on it. :meth:`assess_change` follows those too.
         """
 
-        return _closure(column, self._analyse().reverse_lineage)
+        analysis = self._analyse()
+        return _closure(column, analysis.reverse_lineage, analysis.records, reverse=True)
 
     def consumed_columns(self) -> dict[str, frozenset[ColumnRef]]:
         """For each model, every upstream column it references anywhere."""
@@ -1633,7 +1635,7 @@ class _Analysis:
                             owner = pipeline.resolve(source) or _table_name_for_schema(source)
                             known = schema.get(owner)
                             if known is None or column.name.lower() in {c.lower() for c in known}:
-                                used.add(ColumnRef(owner, column.name))
+                                used.add(ColumnRef(owner, column.name, field_path(column)))
                         current = current.parent
 
                 for scope in traverse_scope(pruned):
@@ -1643,7 +1645,7 @@ class _Analysis:
                             unresolved(scope, column)
                             continue
                         owner = pipeline.resolve(table) or _table_name_for_schema(table)
-                        used.add(ColumnRef(owner, column.name))
+                        used.add(ColumnRef(owner, column.name, field_path(column)))
                 if pruned is not qualified:
                     # Pruning drops columns the outer query never uses, which is right for a ``*`` that was
                     # expanded, but a column the SQL names in a CTE or subquery is still read: dropping it
@@ -1657,7 +1659,7 @@ class _Analysis:
                                 unresolved(scope, column)
                                 continue
                             owner = pipeline.resolve(table) or _table_name_for_schema(table)
-                            used.add(ColumnRef(owner, column.name))
+                            used.add(ColumnRef(owner, column.name, field_path(column)))
                 if before_by_name is not None:
                     # A column a by-name set operation drops (an extra under LEFT / INNER) is still read by the SQL.
                     for scope in traverse_scope(before_by_name):
@@ -1665,7 +1667,7 @@ class _Analysis:
                             table = _source_table(scope, column)
                             if table is not None:
                                 owner = pipeline.resolve(table) or _table_name_for_schema(table)
-                                used.add(ColumnRef(owner, column.name))
+                                used.add(ColumnRef(owner, column.name, field_path(column)))
                 used.update(excepted)
                 consumed[key] = frozenset(used) | consumed.get(key, frozenset()) if unit else frozenset(used)
                 deciding = condition_columns(qualified, lambda table: pipeline.resolve(table) or _table_name_for_schema(table))
@@ -2009,12 +2011,13 @@ def _scan_lineage(
                 asked = parent.name.split(".")[-1].strip('"`')
                 if asked != "*":
                     column_name = asked
-            leaf = ColumnRef(owner, column_name)
+            root = ColumnRef(owner, column_name)
             known = {c.lower() for c in schema.get(owner, {})}
-            if known and leaf.column.lower() not in known:
-                reason = reason or "unknown_column"
+            if known and root.column.lower() not in known:
+                reason = reason or "unknown_column"  # the root column decides: fields below it are not in the schema map
             else:
-                leaves.add(leaf)
+                alias = item.name.rsplit(".", 1)[0].strip('"`') if "." in item.name else ""
+                leaves.update(_field_leaves(root, alias, parent))
         elif isinstance(item.source, exp.Placeholder):
             reason = reason or "unresolved_column"
         elif isinstance(item.source, exp.Unnest) and item.source.find(exp.Column) is None:
@@ -2032,6 +2035,28 @@ def _scan_lineage(
     if reason is None and not leaves and reads_column and not literal_unnest:
         reason = "unresolved_column"
     return leaves, reason, "union" if is_union else transform
+
+
+def _field_leaves(root: ColumnRef, alias: str, parent) -> set[ColumnRef]:
+    """The leaf for a column read from a table: the struct fields the reading expression takes from it, or the root column.
+
+    sqlglot's lineage stops at the root column of a struct (``t.widget`` for ``widget.asset.id``). The fields are read
+    off the expression that reads it, in the node one step up. A read of the whole column, or any read whose fields
+    are not a plain name chain (a subscript, a function call), keeps the root column: coarse, never guessed.
+    """
+
+    expression = getattr(parent, "expression", None)
+    if expression is None:
+        return {root}
+    reads = [
+        column
+        for column in expression.find_all(exp.Column)
+        if column.name.lower() == root.column.lower() and (not alias or column.table.lower() == alias.lower())
+    ]
+    paths = {field_path(column) for column in reads}
+    if not reads or () in paths:
+        return {root}
+    return {ColumnRef(root.table, root.column, path) for path in paths}
 
 
 def _ancestors(item, parent_of: dict):
@@ -2113,15 +2138,100 @@ def _topological_order(
     return order
 
 
+def _source_row(ref: ColumnRef) -> dict:
+    row = {"node": ref.table, "column": ref.column}
+    if ref.path:
+        row["field"] = ".".join(ref.path)
+    return row
+
+
+def _narrows(record: ColumnLineage | None) -> bool:
+    """A column that is exactly one source column, unchanged: a field of it is the same field of the source."""
+
+    return (
+        record is not None
+        and record.status == "traced"
+        and record.transform in ("passthrough", "renamed")
+        and len(record.sources) == 1
+        and not next(iter(record.sources)).path
+    )
+
+
+def _one_hop(
+    records: dict[ColumnRef, ColumnLineage], ref: ColumnRef
+) -> tuple[ColumnLineage | None, frozenset[ColumnRef]]:
+    """The lineage record of ``ref`` and the columns it is built from, one hop back.
+
+    A struct field of a model column (``m.widget.asset.id``) has no record of its own: it takes its root column's.
+    When that column is a plain copy of one source column the field carries over to it; otherwise the root column's
+    sources stand (coarse, which can only add an edge, never lose one).
+    """
+
+    record = records.get(ref)
+    if record is not None or not ref.path:
+        return record, record.sources if record is not None else frozenset()
+    record = records.get(ref.root)
+    if record is None:
+        return None, frozenset()
+    if _narrows(record):
+        (source,) = record.sources
+        return record, frozenset({ColumnRef(source.table, source.column, ref.path)})
+    return record, record.sources
+
+
+def reverse_index(edges: dict[ColumnRef, frozenset[ColumnRef]]) -> dict[tuple[str, str], list[ColumnRef]]:
+    """Group the keys of a reverse lineage map by table and root column, so field paths can be matched by prefix."""
+
+    index: dict[tuple[str, str], list[ColumnRef]] = defaultdict(list)
+    for ref in edges:
+        index[(ref.table, ref.column.lower())].append(ref)
+    return index
+
+
+def reverse_hops(
+    ref: ColumnRef,
+    edges: dict[ColumnRef, frozenset[ColumnRef]],
+    index: dict[tuple[str, str], list[ColumnRef]],
+    records: dict[ColumnRef, ColumnLineage],
+) -> set[ColumnRef]:
+    """The model columns built from ``ref``, one hop on: those whose source is the same field or one inside or around it.
+
+    A column that is a plain copy of the source keeps the field path of ``ref`` (the copy's own field), so the next hop
+    does not widen to the whole struct. Anything else is the whole column.
+    """
+
+    out: set[ColumnRef] = set()
+    for key in index.get((ref.table, ref.column.lower()), ()):
+        if not key.overlaps(ref):
+            continue
+        for dest in edges[key]:
+            copy = not key.path and ref.path and _narrows(records.get(dest))
+            out.add(ColumnRef(dest.table, dest.column, ref.path) if copy else dest)
+    return out
+
+
 def _closure(
-    start: ColumnRef, edges: dict[ColumnRef, frozenset[ColumnRef]]
+    start: ColumnRef,
+    edges: dict[ColumnRef, frozenset[ColumnRef]],
+    records: dict[ColumnRef, ColumnLineage] | None = None,
+    reverse: bool = False,
 ) -> frozenset[ColumnRef]:
+    records = records if records is not None else {}
+    index = reverse_index(edges) if reverse else {}
     seen: set[ColumnRef] = set()
-    pending = deque(edges.get(start, ()))
+
+    def step(ref: ColumnRef):
+        if reverse:
+            return reverse_hops(ref, edges, index, records)
+        if ref in edges or not ref.path:
+            return edges.get(ref, ())
+        return _one_hop(records, ref)[1] if records else edges.get(ref.root, ())
+
+    pending = deque(step(start))
     while pending:
         item = pending.popleft()
         if item in seen:
             continue
         seen.add(item)
-        pending.extend(edges.get(item, ()))
+        pending.extend(step(item))
     return frozenset(seen)

@@ -13,8 +13,8 @@
   "held_out": "none",
   "docs": "docs/scripts.md#evaluation",
   "command": "python tools/script_bench.py --write-results",
-  "date": "2026-10-05",
+  "date": "2026-10-06",
   "caveats": "Answers come from the generator, not a parser, but the families are ones KumoSQL's author could think of and were tuned against while building the feature; there is no held-out family. The public examples are the scripting cases in tests/fixtures/bq_syntax with labels written by hand. A script that mixes the families with the same seed is not independent of them.",
   "analysis": "Edges: 4200/4200 found, 0 extra. Output columns traced through temporary-table chains, MERGE clauses (ON and condition columns counted as read), INSERT VALUES, table-function calls and scalar function calls: 1770/1770 exact.",
-  "performance": "1900 generated scripts in 16.3 s"
+  "performance": "1900 generated scripts in 32.2 s"
 }

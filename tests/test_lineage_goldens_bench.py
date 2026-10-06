@@ -87,7 +87,10 @@ def test_openlineage_independent_oracle_floor(result):
 def test_datahub_goldens_floor(result):
     t = result["datahub"]["in"]
     assert t["wrong"] == 0 and t["missed"] == 0, [r for r in result["rows"] if r["corpus"] == "datahub" and r["scope"] == "in" and r["outcome"] in {"wrong", "missed"}]
-    assert t["total"] == 18 and t["exact"] >= 15 and t["exact"] + t["coarse"] == 18
+    assert t["total"] == 18 and t["exact"] + t["coarse"] + t["finer"] == 18
+    # The three struct cases that used to meet only the root column now name the field; the one `finer` case reads a
+    # field where the golden names the root column.
+    assert t["coarse"] == 0 and t["exact"] >= 17 and t["finer"] <= 1
 
 
 def test_every_disputed_case_really_disagrees_with_the_oracle(result):

@@ -1,0 +1,4 @@
+dev.json.gz and heldout.json.gz hold the test cases of googlesql/compliance/testdata/*.test from
+https://github.com/google/googlesql (formerly ZetaSQL) at commit d82db99a923a46571f543a13899dc791a7b6f743,
+split by file name (tools/googlesql_conformance.py, split_of). Licensed under the Apache License 2.0 (LICENSE here).
+The cases are unchanged apart from being parsed into JSON by `python tools/googlesql_conformance.py --harvest DIR`.

@@ -11,7 +11,8 @@ OpenLineage uses a different parser, so it provides an independent comparison. D
 ## What the labels mean
 
 - **Exact** matches all expected connections.
-- **Coarse** traces a nested field only to its containing column, with no extra connection.
+- **Coarse** traces a nested field only to its containing column, with no extra connection. No DataHub case needs this any more: KumoSQL now names the field a query reads (`widget.asset.id`), so those cases are exact.
+- **Finer** is the reverse: the expected result names a whole nested column and KumoSQL names the exact field the SQL reads. It counts as a match but is kept apart from exact, and the stored expectation is not edited.
 - **Unknown** admits incomplete tracing.
 - **Missed** or **wrong** is a confident missing or extra dependency.
 - **Disputed** records a reviewed difference in what the two tools mean by lineage.
@@ -24,7 +25,10 @@ The table checks include statements that change tables. A rename keeps the old i
 and a script writing two tables checks both outputs. A partition name uses the base table's schema when that schema
 is known. The full reference records the current scores and parser version.
 
-Matching these table connections does not prove complete column tracing. Nested fields of a stored STRUCT still
-trace only to the containing column, and unsupported column shapes remain unknown.
+Matching these table connections does not prove complete column tracing. A nested field read by name is traced to that
+field; a read that cannot be followed by name (an array subscript, a function call, the whole struct) still traces to the
+containing column, and unsupported column shapes remain unknown. The only nested cases here are four DataHub ones, and
+DataHub's expectations come from the same parser family, so this shows the field names are read correctly, not how often
+real nested queries trace well.
 
 The full guide lists source versions, exclusions, disputes, and development exposure. Use it to see whether a result came from a genuinely independent test and which mismatches were inspected during development.

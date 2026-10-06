@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="kumosql-session-token" content="__KUMOSQL_SESSION_TOKEN__">
+  <script src="/assets/session.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Reduce · KumoSQL</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/assets/shell.css">
+  <script src="/assets/shell.js"></script>
+  <link rel="stylesheet" href="/assets/shared-models.css">
+  <link rel="stylesheet" href="/assets/reduce.css">
+  <script defer src="/assets/patch-view.js"></script>
+  <script defer src="/assets/reduce.js"></script>
+</head>
+<body>
+  <main class="rd-page" aria-label="Reduce">
+    <header class="rd-head">
+      <h1>Reduce</h1>
+      <span id="rd-status" class="rd-status" role="status" aria-live="polite"></span>
+    </header>
+    <div class="rd-layout">
+      <section class="rd-actions" aria-label="Outputs to keep">
+        <div class="rd-toolbar">
+          <input id="rd-filter" type="search" placeholder="Filter actions" aria-label="Filter actions">
+          <button id="rd-all" type="button" class="secondary-button">Select shown</button>
+          <button id="rd-none" type="button" class="secondary-button">Clear</button>
+        </div>
+        <div id="rd-list" class="rd-list"></div>
+        <div class="rd-options" aria-label="Options">
+          <label><input id="rd-drop-only" type="checkbox"> Drop only</label>
+          <label><input id="rd-keep-assertions" type="checkbox"> Keep assertions</label>
+          <label><input id="rd-strict" type="checkbox"> Strict</label>
+          <label>Table type
+            <select id="rd-table-type" aria-label="New table type">
+              <option value="view">View</option>
+              <option value="table">Table</option>
+            </select>
+          </label>
+          <span id="rd-count" class="rd-count"></span>
+          <button id="rd-run" type="button" class="primary-button" disabled>Run</button>
+        </div>
+      </section>
+      <section id="rd-results" class="rd-results" aria-label="Result"></section>
+    </div>
+  </main>
+</body>
+</html>

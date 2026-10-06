@@ -61,7 +61,9 @@ For comparing slow evals between code versions, see [Eval diff](eval-diff.md).
 | [Analytical SQL coverage](analytical-sql-coverage.md) | Which stages handle large analytical queries? |
 | [BigQuery syntax coverage](bigquery-syntax-coverage.md) | Is each syntax feature supported or explicitly declined? |
 | [BigQuery behavior](bigquery-behavior-eval.md) | Do supported rewrites preserve tested BigQuery-specific behavior, and does the BigQuery to DuckDB translation compute the values BigQuery does? |
+| [GoogleSQL type inference](googlesql-types.md) | Does the type checker name the column types Google's compliance tests print? |
 | [GoogleSQL expected rows](googlesql-expected-results.md) | Does the local BigQuery translation return the rows Google's compliance tests expect? |
+| [GoogleSQL conformance](googlesql-conformance.md) | Does the new Python evaluator return Google's expected answers, or say it cannot? |
 | [SQLFluff fixtures](sqlfluff-fixtures.md) | Which formatting and lint fixes preserve meaning? |
 | [Lineage and impact](lineage-bench.md) | Are dependencies and change effects traced correctly? |
 | [Lineage goldens](lineage-goldens-bench.md) | Do results match other projects' expected lineage? |
