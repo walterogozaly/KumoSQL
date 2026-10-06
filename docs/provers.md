@@ -236,6 +236,10 @@ SQL-IQ's SQL Equivalence Judge, SQL Judge and Error Classification tasks are sco
 
 `kumosql.bounded_equivalence` is a third level between a proof and executed datasets: a z3 check that two queries agree on every database with at most N rows per table, written from the VeriEQL paper (OOPSLA 2024) and sharing none of its code. Its answer reads "bounded, N rows" and is never called a proof; every counterexample is replayed on DuckDB. See [bounded-verification.md](evals/bounded-verification.md).
 
+### Declared facts follow the full table spelling
+
+The self-witnessed `EXISTS` and self-domain-join decorrelation rewrites use the full table spelling when looking up schema columns and NOT NULL facts. A declaration for `t` does not establish that `other_ds.t` has the same columns or non-null values. Otherwise, a nullable `other_ds.t.x` could be treated as non-null because a different table `t.x` is declared non-null. The regression cases and their DuckDB witnesses are in `tests/test_decorrelation_fact_spelling.py`.
+
 ## Proof search performance
 
 Algebraic fallback levels reuse normalization within a single query pair and fixed proof context. The cached value includes normalization assumptions. Recursive and conditional proofs create separate caches, so different constraints, schemas, types and dialects never reuse a result from another proof. Solver calls and proof safeguards still run.

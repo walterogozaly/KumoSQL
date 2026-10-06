@@ -798,6 +798,12 @@ def table_parts(table: exp.Table) -> list[str]:
     return [p.name.lower() for p in (table.args.get("catalog"), table.args.get("db"), table.this) if p is not None and p.name]
 
 
+def declared_key(table: exp.Table) -> str:
+    """Return the full table spelling under which its schema and constraints are declared."""
+
+    return ".".join(table_parts(table))
+
+
 def same_table(a: exp.Table, b: exp.Table, dialect: str = "bigquery") -> bool:
     """Whether two table references certainly name one relation: every part (catalog, dataset, table) matches.
 

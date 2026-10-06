@@ -318,7 +318,7 @@ _DENIED = {
     # values or semantics that differ between BigQuery and DuckDB, or are nondeterministic by design
     "Rand", "Uuid", "AnyValue", "ArrayAgg", "Struct", "JSONExtract", "JSONExtractScalar", "ParseJSON", "RegexpExtract",
     "RegexpReplace", "RegexpLike", "Format", "StrToTime", "StrToDate", "TimeToStr", "UnixToTime", "Explode",
-    "GenerateSeries", "GenerateDateArray", "Lateral", "TableSample", "Pivot", "Unpivot", "Collate", "Hll",
+    "GenerateSeries", "GenerateDateArray", "TableSample", "Pivot", "Unpivot", "Collate", "Hll",
     "ApproxDistinct", "ApproxQuantile", "Quantile", "PercentileCont", "PercentileDisc", "Stddev", "StddevPop",
     "StddevSamp", "Variance", "VariancePop", "Corr", "CovarPop", "CovarSamp", "Bytes", "Unhex", "MD5", "SHA", "SHA2",
     "Initcap", "ArrayToString", "Split", "StringToArray", "Repeat", "Lpad", "Rpad", "Translate", "Soundex",
