@@ -87,6 +87,29 @@ PICKS = cx.Spec({"T": cx.Table("T", [cx.Column("ID", "INT", not_null=True), cx.C
 GROUPED = "(SELECT k FROM T GROUP BY k) AS g"
 
 
+def test_verieql_calcite_pair_245_does_not_report_arbitrary_picks_as_a_counterexample():
+    # The two queries may each choose any SAL value. Row shuffles do not necessarily move a pick
+    # whose order follows the join hash order, so this needs the guarded-pick check in Searcher._stable.
+    emp = cx.Spec({
+        "EMP": cx.Table(
+            "EMP",
+            [cx.Column("EMPNO", "INT", not_null=True), cx.Column("SAL", "INT", not_null=True)],
+            primary_key=("EMPNO",),
+        )
+    })
+    left = (
+        "SELECT SINGLE_VALUE(t0.SAL) FROM EMP INNER JOIN "
+        "(SELECT SAL FROM EMP GROUP BY SAL) AS t0 ON EMP.SAL = t0.SAL"
+    )
+    right = (
+        "SELECT SINGLE_VALUE(t4.SAL) FROM "
+        "(SELECT SAL FROM EMP GROUP BY SAL) AS t3 INNER JOIN "
+        "(SELECT SAL FROM EMP GROUP BY SAL) AS t4 ON t3.SAL = t4.SAL"
+    )
+
+    assert cx.find_counterexample(emp, left, right, dialect="mysql", trials=150, seed=1) is None
+
+
 @pytest.mark.parametrize(
     "left,right,why",
     [
