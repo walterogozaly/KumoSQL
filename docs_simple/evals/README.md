@@ -49,6 +49,7 @@ For comparing slow evals between code versions, see [Eval diff](eval-diff.md).
 | [Transformation workloads](transformation-bench.md) | What happens on standard workloads with real data? |
 | [LLM-R2 query sets](llmr2-bench.md) | How do the rules behave across many queries? |
 | [Materialized-view rewriting](mv-benchmark.md) | Can shared joins supply other queries? |
+| [STATS-CEB runtime prediction](stats-ceb-materialization-runtime.md) | Can a runtime model predict held-out query savings from stored views? |
 | [Table minimization](table-minimization.md) | Can the search remove models while protecting outputs? |
 | [Project reduction](project-reduction.md) | How small can a whole Dataform project get while its chosen outputs stay the same? |
 | [Duplicate detection](duplicate-detection.md) | Can it find copies without confusing similar queries? |

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
+import sys
+
 import pytest
 
 from kumosql.joinorder.bench.materialize import (
@@ -13,6 +17,13 @@ from kumosql.joinorder.bench.materialize import (
 )
 from kumosql.joinorder.bench.materialize_model import evaluate_pairs, make_pairs
 from kumosql.joinorder.runtime_model import Pair
+
+_BENCH_PATH = Path(__file__).resolve().parent.parent / "tools" / "materialize_stats_bench.py"
+_BENCH_SPEC = importlib.util.spec_from_file_location("materialize_stats_bench", _BENCH_PATH)
+assert _BENCH_SPEC and _BENCH_SPEC.loader
+materialize_stats_bench = importlib.util.module_from_spec(_BENCH_SPEC)
+sys.modules["materialize_stats_bench"] = materialize_stats_bench
+_BENCH_SPEC.loader.exec_module(materialize_stats_bench)
 
 
 class _WorkFeatures:
@@ -127,3 +138,28 @@ def test_evaluation_requires_an_explicit_training_policy():
 def test_wrong_result_pairs_are_rejected_before_model_fitting():
     with pytest.raises(ValueError, match="wrong-result reader pairs"):
         make_pairs([{"wrong": True}], object())
+
+
+def test_stats_diagnostic_sample_is_stable_and_preserves_the_query_split():
+    work = Workload(
+        {f"q{i:03d}": "SELECT 1" for i in range(100)},
+        {"t": ["id"]},
+        {f"q{i:03d}": i for i in range(100)},
+    )
+
+    first = materialize_stats_bench.sampled_workload(work, 24)
+    second = materialize_stats_bench.sampled_workload(work, 24)
+
+    assert len(first.queries) == 24
+    assert first.queries == second.queries
+    assert first.cards == second.cards
+    assert first.schema == work.schema
+    assert set(first.dev) | set(first.held_out) == set(first.queries)
+    assert not (set(first.dev) & set(first.held_out))
+
+
+def test_stats_full_workload_is_not_copied_or_sampled():
+    work = Workload({"q000": "SELECT 1"}, {"t": ["id"]})
+
+    assert materialize_stats_bench.sampled_workload(work, None) is work
+    assert materialize_stats_bench.sampled_workload(work, 10) is work
