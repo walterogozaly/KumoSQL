@@ -204,6 +204,7 @@ EVAL_FILES = {
     "test_reduction_bench.py",
     "test_soundness_fuzz.py",
     "test_spider_esm_bench.py",
+    "test_spider_gold_bench.py",
     "test_sample_db_bench.py",
     "test_sample_db_pagila.py",
     "test_sample_db_oracle.py",

@@ -218,7 +218,7 @@ def rewrite_guarded(task: tuple[Gold, spider_data.Schema], timeout: float = QUER
     """``rewrite_query`` in its own process: a query that runs past ``timeout`` seconds, or crashes z3, is unknown."""
 
     gold = task[0]
-    context = multiprocessing.get_context("fork")
+    context = multiprocessing.get_context("spawn" if os.name == "nt" else "fork")
     receiver, sender = context.Pipe(duplex=False)
     process = context.Process(target=_worker, args=(task, sender), daemon=True)
     started = time.time()

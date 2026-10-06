@@ -28,6 +28,7 @@ For comparing slow evals between code versions, see [Eval diff](eval-diff.md).
 | [LLM-SQL-Solver](llm-sql-solver.md) | Does the checker reject wrong query pairs and handle expert labels? |
 | [QUITE LLM rewrites](quite.md) | When language models rewrite a query, which rewrites can be proved right, and are any wrongly proved? |
 | [Spider ESM false negatives](spider-esm.md) | Can the checker confirm query pairs that Spider's authors judged equivalent by hand? |
+| [Spider gold query rewrites](spider-gold.md) | Do proof-gated rewrites keep Spider's original gold queries the same on valid databases? |
 | [Join rewrites](join-rewrites.md) | When does changing a join type preserve results? |
 | [Optimizer wrong-result bugs](optimizer-bugs.md) | Does the prover avoid accepting known faulty rewrites? |
 | [Arcwise corrections of BIRD](arcwise-corrections.md) | Does the checker see that a human-corrected BIRD query differs from the original? |
