@@ -85,6 +85,20 @@ def test_chain_folds_into_the_protected_tables_with_proofs():
     json.dumps(data)
 
 
+def test_literal_projected_group_key_is_removed_before_folding():
+    tables = {
+        "stage": "SELECT 6 AS a, b FROM x",
+        "result": "SELECT stage.a, stage.b, COUNT(*) AS c FROM stage "
+        "GROUP BY GROUPING SETS ((stage.a, stage.b)) ORDER BY stage.b",
+    }
+    result = minimize_tables(
+        tables, ["result"], sources={"x": {"columns": {"a": "INT64", "b": "INT64"}}}
+    )
+    assert result.tables == {"result": "SELECT 6 AS a, b, COUNT(*) AS c FROM x GROUP BY b ORDER BY b"}
+    assert result.proofs["result"].status == "proved"
+    assert result.score < result.original_score
+
+
 def test_unprotected_tables_nobody_needs_are_dropped_and_the_rest_left_alone():
     tables = {
         "report": "SELECT customer_id, SUM(amount) AS total FROM orders GROUP BY customer_id",

@@ -710,6 +710,39 @@ def _star_columns(star: exp.Star, columns: list[tuple[str, _Val]]) -> list[tuple
     return out
 
 
+def _simple_group_keys(group: exp.Expression) -> list[exp.Expression] | None:
+    """Group keys for ordinary lists, tuple item sets, or one nonempty grouping set.
+
+    A single grouping set is exactly an ordinary grouped aggregate. Empty or multiple sets, ROLLUP,
+    CUBE, and WITH TOTALS can change the number of rows (especially on empty input), so they remain
+    unsupported here.
+    """
+
+    if any(group.args.get(name) for name in ("rollup", "cube", "grouping_sets", "totals")):
+        return None
+    items = list(group.expressions)
+    extended = tuple(getattr(exp, name) for name in ("Rollup", "Cube", "GroupingSets") if hasattr(exp, name))
+    if any(isinstance(item, extended) for item in items):
+        if len(items) != 1 or not isinstance(items[0], exp.GroupingSets) or len(items[0].expressions) != 1:
+            return None
+        only_set = items[0].expressions[0]
+        if isinstance(only_set, exp.Paren):
+            only_set = only_set.this
+        if any(isinstance(only_set, kind) for kind in extended):
+            return None
+        if isinstance(only_set, exp.Tuple):
+            return list(only_set.expressions) if only_set.expressions else None
+        return [only_set]
+
+    if len(items) == 1 and isinstance(items[0], exp.Paren):
+        items[0] = items[0].this
+    if len(items) == 1 and isinstance(items[0], exp.Tuple):
+        return list(items[0].expressions) if items[0].expressions else None
+    if any(isinstance(item, exp.Tuple) and not item.expressions for item in items):
+        return None
+    return items
+
+
 # --------------------------------------------------------------------------
 # Compiler: sqlglot AST -> normal form
 # --------------------------------------------------------------------------
@@ -1448,9 +1481,10 @@ class _Compiler:
 
         keys: list[_Val] = []
         if group is not None:
-            if extended_grouping(group):
+            group_keys = _simple_group_keys(group)
+            if group_keys is None:
                 raise Unsupported("GROUP BY ROLLUP / CUBE / GROUPING SETS / ()")
-            for key_expr in group.expressions:
+            for key_expr in group_keys:
                 if isinstance(key_expr, exp.Literal) and not key_expr.is_string:
                     if not key_expr.this.isdigit():
                         raise Unsupported(f"GROUP BY {key_expr.this}")

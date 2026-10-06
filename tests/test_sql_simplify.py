@@ -4,6 +4,7 @@ import pytest
 import sqlglot
 from sqlglot import exp
 
+from kumosql.ast_utils import drop_constant_projected_group_keys
 from kumosql.formatting import complexity
 from kumosql.sql_simplify import simpler_forms, tidy
 
@@ -202,6 +203,44 @@ def test_garbage_gives_nothing(sql):
 
 def test_already_simple_query_gives_nothing():
     assert simpler_forms("SELECT id FROM m.orders WHERE amount > 0", COLUMNS) == []
+
+
+@pytest.mark.parametrize(
+    "group_by",
+    [
+        "GROUPING SETS ((s.a, s.b))",
+        "(s.a, s.b)",
+        "((s.a), s.b)",
+        "((s.a, s.b))",
+    ],
+)
+def test_constant_projected_group_key_is_dropped_before_integer_render(group_by):
+    sql = (
+        "SELECT s.a, s.b, COUNT(*) AS c FROM (SELECT 6 AS a, b FROM x) AS s "
+        f"GROUP BY {group_by} ORDER BY s.b"
+    )
+    expected = "SELECT 6 AS a, b, COUNT(*) AS c FROM x GROUP BY b ORDER BY b"
+    out = simpler_forms(sql, {"x": ["a", "b"]})
+    assert expected in out
+    assert proven(sql, expected, {"x": ["a", "b"]})
+
+
+def test_constant_group_key_rewrite_keeps_empty_and_multiple_sets_and_joins():
+    cases = [
+        "SELECT s.a, COUNT(*) AS c FROM (SELECT 6 AS a FROM x) AS s GROUP BY s.a",
+        "SELECT s.a, s.b, COUNT(*) AS c FROM (SELECT 6 AS a, b FROM x) AS s "
+        "GROUP BY GROUPING SETS ((s.a, s.b), (s.b))",
+        "SELECT s.a, s.b, GROUPING(s.a) AS g, COUNT(*) AS c FROM (SELECT 6 AS a, b FROM x) AS s "
+        "GROUP BY GROUPING SETS ((s.a, s.b))",
+        "SELECT s.a, y.b, COUNT(*) AS c FROM (SELECT 6 AS a FROM x) AS s "
+        "LEFT JOIN y ON TRUE GROUP BY s.a, y.b",
+        "SELECT 1 AS a, b, COUNT(*) AS c FROM x GROUP BY 1, b",
+    ]
+    for sql in cases:
+        tree = sqlglot.parse_one(sql, read="bigquery")
+        before = tree.sql(dialect="bigquery")
+        assert not drop_constant_projected_group_keys(tree)
+        assert tree.sql(dialect="bigquery") == before
 
 
 def test_a_star_except_source_is_not_folded_into_its_table():

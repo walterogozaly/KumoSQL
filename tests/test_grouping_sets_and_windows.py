@@ -44,6 +44,23 @@ def test_a_repeated_set_is_left_alone():
     assert "GROUPING SETS ((a), (a))" in _sets("SELECT a FROM t GROUP BY GROUPING SETS ((a), (a))")
 
 
+def test_a_single_grouping_set_and_tuple_group_items_match_ordinary_group_by():
+    right = "SELECT 6 AS a, b, COUNT(*) AS c FROM x GROUP BY b"
+    sources = {"x": ["a", "b"]}
+    for group in (
+        "GROUPING SETS ((s.a, s.b))",
+        "(s.a, s.b)",
+        "((s.a), s.b)",
+        "((s.a, s.b))",
+    ):
+        left = (
+            "SELECT s.a, s.b, COUNT(*) AS c FROM (SELECT 6 AS a, b FROM x) AS s "
+            f"GROUP BY {group}"
+        )
+        result = prove_equivalent_algebraic(left, right, schema=sources, dialect="bigquery")
+        assert result.proven, result.reason
+
+
 def test_rollup_over_a_union_is_proven_against_the_pushed_down_aggregate():
     left = "SELECT deptno, job, SUM(mgr) FROM (SELECT * FROM emp UNION ALL SELECT * FROM emp) AS t1 GROUP BY ROLLUP(deptno, job)"
     right = (

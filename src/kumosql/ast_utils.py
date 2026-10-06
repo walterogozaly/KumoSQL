@@ -1011,6 +1011,95 @@ def extended_grouping(group: exp.Expression | None) -> bool:
     return any(isinstance(e, _EXTENDED_GROUPING) or (isinstance(e, exp.Tuple) and not e.expressions) for e in group.expressions)
 
 
+def drop_constant_projected_group_keys(tree: exp.Expression) -> bool:
+    """Drop a key that names a literal column of a single, unjoined derived source.
+
+    The source column is a real expression, while rendering its value into BigQuery's GROUP BY can
+    turn an integer into a column ordinal. Reduce it before inlining the source. Multiple grouping
+    sets, empty groups, joins, and a constant-only key are left alone.
+    """
+
+    cte_bodies: dict[str, exp.Select | None] = {}
+    for cte in tree.find_all(exp.CTE):
+        name = cte.alias_or_name.lower()
+        body = cte.this if isinstance(cte.this, exp.Select) else None
+        cte_bodies[name] = body if name not in cte_bodies else None
+
+    changed = False
+    for select in tree.find_all(exp.Select):
+        group = select.args.get("group")
+        if group is None or group.args.get("all") or select.args.get("joins"):
+            continue
+        sources = select_sources(select)
+        if len(sources) != 1:
+            continue
+        if any(
+            isinstance(node, exp.Func) and node.sql_name().upper().startswith("GROUPING")
+            for node in select.walk()
+        ):
+            continue
+
+        source = sources[0]
+        if isinstance(source, exp.Subquery) and isinstance(source.this, exp.Select):
+            body = source.this
+        elif isinstance(source, exp.Table) and not source.args.get("db") and not source.args.get("catalog"):
+            body = cte_bodies.get(source.name.lower())
+        else:
+            continue
+        if body is None or not source.alias_or_name:
+            continue
+
+        projected: dict[str, exp.Expression | None] = {}
+        for item in body.expressions:
+            value = item.this if isinstance(item, exp.Alias) else item
+            name = item.alias_or_name.lower()
+            if not name:
+                continue
+            if name in projected:
+                projected[name] = None
+            elif isinstance(value, (exp.Literal, exp.Boolean, exp.Null)):
+                projected[name] = value
+            else:
+                projected[name] = None
+
+        alias = source.alias_or_name.lower()
+
+        def is_constant_group_key(item: exp.Expression) -> bool:
+            while isinstance(item, exp.Paren):
+                item = item.this
+            return isinstance(item, exp.Column) and item.table.lower() == alias and projected.get(item.name.lower()) is not None
+
+        items = list(group.expressions)
+        grouping_sets = len(items) == 1 and isinstance(items[0], exp.GroupingSets)
+        tuple_group = len(items) == 1 and (
+            isinstance(items[0], exp.Tuple)
+            or isinstance(items[0], exp.Paren) and isinstance(items[0].this, exp.Tuple)
+        )
+        if grouping_sets:
+            sets = items[0].expressions
+            if len(sets) != 1:
+                continue
+            only_set = sets[0]
+            if isinstance(only_set, exp.Tuple):
+                grouped = list(only_set.expressions)
+            elif isinstance(only_set, exp.Paren) and isinstance(only_set.this, exp.Tuple):
+                grouped = list(only_set.this.expressions)
+            else:
+                grouped = [only_set]
+        elif tuple_group:
+            only_set = items[0].this if isinstance(items[0], exp.Paren) else items[0]
+            grouped = list(only_set.expressions)
+        else:
+            grouped = items
+
+        kept = [item for item in grouped if not is_constant_group_key(item)]
+        if len(kept) == len(grouped) or not kept:
+            continue
+        group.set("expressions", kept)
+        changed = True
+    return changed
+
+
 def visible_ctes(node: exp.Expression, top: exp.Expression | None = None) -> set[str]:
     """Names of the WITH tables in scope at ``node``, looking up to ``top`` (its own WITH included; default: the root).
 

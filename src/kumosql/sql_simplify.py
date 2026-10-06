@@ -44,7 +44,7 @@ from typing import Callable, Mapping, Sequence
 import sqlglot
 from sqlglot import exp
 
-from .ast_utils import star_modified
+from .ast_utils import drop_constant_projected_group_keys, star_modified
 
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
 
@@ -737,6 +737,16 @@ def _optimizer_forms(tree: exp.Expression, schema: dict | None, volatile: bool) 
         folded = chain(folded, merge_subqueries)
     folded = chain(folded, eliminate_joins, eliminate_ctes)
     out.append(folded)
+    constant_groups = qualified.copy()
+    if drop_constant_projected_group_keys(constant_groups):
+        # Do this before merge_subqueries turns the source column into a bare integer, which BigQuery
+        # would read as a SELECT-list ordinal. Keep the optimizer's star and outer-join guards too.
+        candidate = (
+            chain(constant_groups, pushdown_projections, merge_subqueries, eliminate_joins, eliminate_ctes)
+            if can_merge
+            else constant_groups
+        )
+        out.append(candidate)
     try:
         having = _fold_outer_filters(folded.copy())
     except Exception:  # noqa: BLE001
