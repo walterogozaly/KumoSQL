@@ -75,6 +75,13 @@ _MACRO_DEFINITIONS = (
     f"WHEN isinf(CAST(a / b AS DOUBLE)) THEN {_fail('floating point overflow')} ELSE a / b END",
     f"CREATE OR REPLACE TEMP MACRO kumo_bq_mul(a, b) AS CASE WHEN typeof(a) = {_NUMERIC} AND typeof(b) = {_NUMERIC} "
     f"THEN {_fail('NUMERIC product rounds to 9 digits')} "
+    f"WHEN typeof(a) IN {_INTEGERS} AND typeof(b) IN {_INTEGERS} "
+    f"AND ((a IS NOT NULL AND TRY_CAST(a AS BIGINT) IS NULL) OR (b IS NOT NULL AND TRY_CAST(b AS BIGINT) IS NULL)) "
+    f"THEN {_fail('INT64 overflow')} "
+    f"WHEN typeof(a) IN {_INTEGERS} AND typeof(b) IN {_INTEGERS} "
+    "AND (CAST(TRY_CAST(a AS BIGINT) AS HUGEINT) * CAST(TRY_CAST(b AS BIGINT) AS HUGEINT) > 9223372036854775807 "
+    "OR CAST(TRY_CAST(a AS BIGINT) AS HUGEINT) * CAST(TRY_CAST(b AS BIGINT) AS HUGEINT) < -9223372036854775808) "
+    f"THEN {_fail('INT64 overflow')} "
     f"WHEN isinf(CAST(a * b AS DOUBLE)) THEN {_fail('floating point overflow')} ELSE a * b END",
     # SAFE_DIVIDE is NULL where division fails: a zero divisor or an overflowing quotient.
     "CREATE OR REPLACE TEMP MACRO kumo_bq_safe_div(a, b) AS CASE WHEN b = 0 THEN NULL "
