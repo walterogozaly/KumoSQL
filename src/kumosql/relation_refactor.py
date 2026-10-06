@@ -1,19 +1,21 @@
 """Conservatively migrate project readers across a declared relation equivalence.
 
-This first project-refactor slice handles a declaration whose two sides are plain
-projections from one table. It substitutes only direct columns described by the
-declaration and preserves a consumer's output names. Every result remains conditional
-on the persisted relation declaration and its freshness scope.
+This project-refactor slice handles plain projections from one table, with an exact
+derived-query match for filtered declarations. It substitutes only columns described
+by the declaration and preserves a consumer's output names. Every result remains
+conditional on the persisted relation declaration and its freshness scope.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 import tempfile
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 
 from . import relation_declarations
 from .pipeline import load_sqlx_project
@@ -42,6 +44,7 @@ class QueryRewrite:
     sql: str
     changed: bool
     reason: str = ""
+    operation: str = "replace_relation"
 
 
 @dataclass(frozen=True)
@@ -49,9 +52,15 @@ class ConsumerChange:
     model: str
     path: str
     output_columns: tuple[str, ...]
+    operation: str = "replace_relation"
 
     def to_json(self) -> dict:
-        return {"model": self.model, "path": self.path, "output_columns": list(self.output_columns)}
+        return {
+            "model": self.model,
+            "path": self.path,
+            "output_columns": list(self.output_columns),
+            "operation": self.operation,
+        }
 
 
 @dataclass
@@ -107,6 +116,8 @@ class ProjectRefactor:
 class _Side:
     table_parts: tuple[str, ...]
     columns_by_output: dict[str, str]
+    output_names: tuple[str, ...]
+    filtered: bool
 
 
 def _query(sql: str) -> exp.Select:
@@ -120,6 +131,18 @@ def _table_parts(table: exp.Table) -> tuple[str, ...]:
     return tuple(part.name.casefold() for part in table.parts)
 
 
+def _plain_source_table(table: exp.Expression) -> bool:
+    if not isinstance(table, exp.Table) or not isinstance(table.this, exp.Identifier):
+        return False
+    allowed = {"this", "db", "catalog", "alias"}
+    if any(key not in allowed and value is not None for key, value in table.args.items()):
+        return False
+    return all(
+        table.args.get(key) is None or isinstance(table.args[key], exp.Identifier)
+        for key in ("db", "catalog")
+    ) and (table.args.get("alias") is None or isinstance(table.args["alias"], exp.TableAlias))
+
+
 def _direct_side(sql: str) -> _Side:
     """Read the narrow declaration form this rewrite can substitute by congruence."""
 
@@ -128,12 +151,18 @@ def _direct_side(sql: str) -> _Side:
     except (sqlglot.errors.ParseError, RelationRefactorError) as error:
         raise RelationRefactorError(f"unsupported declaration side: {error}") from error
     from_clause = query.args.get("from_")
-    if from_clause is None or not isinstance(from_clause.this, exp.Table) or from_clause.expressions:
+    if from_clause is None or not _plain_source_table(from_clause.this) or from_clause.expressions:
         raise RelationRefactorError("declaration sides need exactly one direct table")
     if query.args.get("joins"):
         raise RelationRefactorError("declaration sides with joins are not supported")
-    if any(query.args.get(key) for key in ("where", "group", "having", "qualify", "order", "limit", "offset", "distinct")):
-        raise RelationRefactorError("declaration sides must preserve the full input row set")
+    if any(query.args.get(key) for key in ("group", "having", "qualify", "order", "limit", "offset", "distinct")):
+        raise RelationRefactorError("declaration sides may only project and filter a single input relation")
+    where = query.args.get("where")
+    if where is not None:
+        if any(isinstance(node, exp.Select) for node in where.walk()):
+            raise RelationRefactorError("declaration filters with subqueries are not supported")
+        if any(isinstance(node, exp.Func) and not isinstance(node, (exp.Cast, exp.TryCast)) for node in where.walk()):
+            raise RelationRefactorError("declaration filters with function calls are not supported")
     columns: dict[str, str] = {}
     seen_sources: set[str] = set()
     for projection in query.expressions:
@@ -149,7 +178,15 @@ def _direct_side(sql: str) -> _Side:
         seen_sources.add(source_name.casefold())
     if not columns:
         raise RelationRefactorError("declaration side has no direct output columns")
-    return _Side(_table_parts(from_clause.this), columns)
+    return _Side(
+        _table_parts(from_clause.this),
+        columns,
+        tuple(
+            projection.alias if isinstance(projection, exp.Alias) else projection.name
+            for projection in query.expressions
+        ),
+        query.args.get("where") is not None,
+    )
 
 
 def _declaration_mapping(declaration: relation_declarations.RelationDeclaration) -> tuple[_Side, _Side, dict[str, str]]:
@@ -172,6 +209,123 @@ def _declaration_mapping(declaration: relation_declarations.RelationDeclaration)
     return old, preferred, mapping
 
 
+def _same_declared_query(
+    candidate: exp.Expression,
+    declared_sql: str,
+    resolve_relation: Callable[[exp.Table], str | None] | None = None,
+) -> bool:
+    """Compare a derived query to one declaration side, ignoring source spelling and formatting."""
+
+    try:
+        declared = _query(declared_sql)
+    except (sqlglot.errors.ParseError, RelationRefactorError):
+        return False
+    candidate_from = candidate.args.get("from_") if isinstance(candidate, exp.Select) else None
+    declared_from = declared.args.get("from_")
+    if candidate_from is None or declared_from is None:
+        return False
+    candidate_table, declared_table = candidate_from.this, declared_from.this
+    if not _plain_source_table(candidate_table) or not _plain_source_table(declared_table):
+        return False
+    if resolve_relation is not None:
+        candidate_key = resolve_relation(candidate_table)
+        declared_key = resolve_relation(declared_table)
+        same_source = bool(candidate_key and declared_key and candidate_key.casefold() == declared_key.casefold())
+    else:
+        same_source = _same_relation(_table_parts(candidate_table), _table_parts(declared_table))
+    if not same_source:
+        return False
+
+    left, right = candidate.copy(), declared.copy()
+    for tree in (left, right):
+        from_clause = tree.args["from_"]
+        from_clause.set("this", exp.Table(this=exp.to_identifier("__kumo_declared_source__")))
+        for node in tree.walk():
+            node.args.pop("comments", None)
+        normalize_identifiers(tree, dialect="bigquery")
+    return left == right
+
+
+def _filtered_subquery_rewrite(
+    sql: str,
+    declaration: relation_declarations.RelationDeclaration,
+    old: _Side,
+    preferred: _Side,
+    resolve_relation: Callable[[exp.Table], str | None] | None = None,
+) -> QueryRewrite:
+    """Replace one exact filtered derived relation while preserving its output names and order."""
+
+    try:
+        tree = sqlglot.parse_one(sql, read="bigquery")
+    except sqlglot.errors.ParseError as error:
+        return QueryRewrite(sql, False, f"unsupported consumer query: {error}")
+    if not isinstance(tree, exp.Select):
+        return QueryRewrite(sql, False, "consumer is not a SELECT")
+    from_clause = tree.args.get("from_")
+    if from_clause is None:
+        return QueryRewrite(sql, False)
+
+    relations = [from_clause.this, *(from_clause.expressions or []),
+                 *(join.this for join in tree.args.get("joins") or [])]
+    old_sql = declaration.right_sql if declaration.preferred_side == "left" else declaration.left_sql
+    preferred_sql = declaration.left_sql if declaration.preferred_side == "left" else declaration.right_sql
+    matches = [relation for relation in relations
+               if isinstance(relation, exp.Subquery)
+               and _same_declared_query(relation.this, old_sql, resolve_relation)]
+    if not matches:
+        contains_old = any(
+            isinstance(node, exp.Table) and _same_relation(_table_parts(node), old.table_parts)
+            for node in tree.find_all(exp.Table)
+        )
+        reason = (
+            "filtered declarations require an exact structural match as a top-level FROM or JOIN subquery"
+            if contains_old else ""
+        )
+        return QueryRewrite(sql, False, reason)
+    if len(matches) != 1:
+        return QueryRewrite(sql, False, "the declared filtered query occurs more than once")
+    if tree.args.get("with_") or sum(1 for node in tree.find_all(exp.Select)) != 2:
+        return QueryRewrite(sql, False, "CTEs or other nested SELECTs need a separate scope analysis")
+
+    if declaration.preferred_side == "left":
+        output_mapping = {right_name.casefold(): left_name for left_name, right_name in declaration.output_mapping}
+    else:
+        output_mapping = {left_name.casefold(): right_name for left_name, right_name in declaration.output_mapping}
+    if any(name.casefold() not in output_mapping for name in old.output_names):
+        return QueryRewrite(sql, False, "the declaration does not map every filtered query output")
+
+    try:
+        preferred_query = _query(preferred_sql)
+    except (sqlglot.errors.ParseError, RelationRefactorError) as error:
+        return QueryRewrite(sql, False, f"unsupported preferred declaration side: {error}")
+    alias = "__kumo_preferred_relation"
+    source = exp.Subquery(
+        this=preferred_query.copy(),
+        alias=exp.TableAlias(this=exp.to_identifier(alias)),
+    )
+    projections = []
+    for projection, old_name in zip(_query(old_sql).expressions, old.output_names):
+        old_identifier = projection.args.get("alias") if isinstance(projection, exp.Alias) else projection.this
+        if not isinstance(old_identifier, exp.Identifier):
+            return QueryRewrite(sql, False, "filtered declaration outputs must be direct columns")
+        preferred_name = output_mapping[old_name.casefold()]
+        selected = exp.column(preferred_name, table=alias)
+        projections.append(
+            exp.alias_(
+                selected,
+                old_identifier.name,
+                quoted=bool(old_identifier.args.get("quoted")),
+            )
+        )
+    replacement = exp.select(*projections).from_(source)
+    matches[0].set("this", replacement)
+    return QueryRewrite(
+        tree.sql(dialect="bigquery", pretty=True),
+        True,
+        operation="replace_exact_filtered_query",
+    )
+
+
 def _same_relation(actual: tuple[str, ...], declared: tuple[str, ...]) -> bool:
     return bool(actual and declared) and (actual == declared or actual[-len(declared):] == declared or declared[-len(actual):] == actual)
 
@@ -182,18 +336,26 @@ def _set_identifier(node: exp.Expression, arg: str, name: str) -> None:
     node.set(arg, exp.to_identifier(name, quoted=quoted))
 
 
-def rewrite_consumer_query(sql: str, declaration: relation_declarations.RelationDeclaration) -> QueryRewrite:
+def rewrite_consumer_query(
+    sql: str,
+    declaration: relation_declarations.RelationDeclaration,
+    *,
+    resolve_relation: Callable[[exp.Table], str | None] | None = None,
+) -> QueryRewrite:
     """Substitute one declared source relation in a supported consumer SELECT.
 
-    The declaration sides must be projection-only queries over one table. CTEs and
-    nested SELECTs, stars, USING/NATURAL joins, unqualified columns in joins, and
-    columns outside the declared mapping are refused.
+    Unfiltered declaration sides may replace a direct table relation. If either side
+    filters rows, only an exact derived-query match is supported. CTEs and nested
+    SELECTs, stars, USING/NATURAL joins, unqualified columns in joins, and columns
+    outside the declared mapping are refused.
     """
 
     try:
         old, _preferred, columns = _declaration_mapping(declaration)
     except RelationRefactorError as error:
         return QueryRewrite(sql, False, str(error))
+    if old.filtered or _preferred.filtered:
+        return _filtered_subquery_rewrite(sql, declaration, old, _preferred, resolve_relation)
     try:
         tree = sqlglot.parse_one(sql, read="bigquery")
     except sqlglot.errors.ParseError as error:
@@ -359,7 +521,11 @@ def refactor_project(root: str | Path, declaration: relation_declarations.Relati
             skipped.append({"model": key, "path": model.path.replace("\\", "/"),
                             "reason": "explicit dependency on the old relation needs ordering review"})
             continue
-        query = rewrite_consumer_query(project.sql.get(key, model.sql), declaration)
+        query = rewrite_consumer_query(
+            project.sql.get(key, model.sql),
+            declaration,
+            resolve_relation=resolve,
+        )
         if query.reason:
             skipped.append({"model": key, "path": model.path.replace("\\", "/"), "reason": query.reason})
         if not query.changed:
@@ -370,7 +536,9 @@ def refactor_project(root: str | Path, declaration: relation_declarations.Relati
         if after_text == text:
             continue
         files.append(FileChange(model.path.replace("\\", "/"), "modify", text, after_text))
-        changes.append(ConsumerChange(key, model.path.replace("\\", "/"), before_columns))
+        changes.append(
+            ConsumerChange(key, model.path.replace("\\", "/"), before_columns, query.operation)
+        )
 
     files.sort(key=lambda item: item.path)
     output_names_order_preserved = not files

@@ -7,8 +7,10 @@ python -m kumosql refactor-project path/to/project --declaration DECLARATION_ID
 python -m kumosql refactor-project path/to/project --declaration DECLARATION_ID --write
 ```
 
-The first version supports direct column projections from one table, with no filter or join on either declaration side. It maps declared columns in supported readers, keeps selected output names and order, and updates SQLX `ref()` calls. The planner skips stars, CTEs and nested queries, `USING` or `NATURAL` joins, undeclared columns, ambiguous unqualified columns, and explicit dependencies on the old relation. It requires an `all_snapshots` freshness scope and refuses incremental or operation models.
+For an unfiltered declaration, the planner supports direct column projections from one table and replaces matching table reads. For filtered declarations, a reader must contain the exact old `SELECT` as a top-level `FROM` or `JOIN` subquery; the preferred query is wrapped with a projection that restores the old output names and order. Formatting, identifier case, and source-table qualification may differ, but the filter and projections must match structurally. Raw-table readers, changed filters, stars, CTEs, and other nested queries stay unchanged.
 
-The report records the declaration ID, evidence, scope, changed readers and skipped readers. `--write` applies changes only after the project reload confirms output names and order. This is conditional on the user's relation declaration; it is not an independent equivalence proof or a warehouse freshness check.
+Both forms update SQLX `ref()` calls and require an `all_snapshots` freshness scope. The planner skips `USING` or `NATURAL` joins, undeclared columns, ambiguous unqualified columns, explicit dependencies on the old relation, and incremental or operation models.
+
+The report records each rewrite operation, declaration ID, evidence, scope, changed readers and skipped readers. `--write` applies changes only after the project reload confirms output names and order. This is conditional on the user's relation declaration; it is not an independent equivalence proof or a warehouse freshness check.
 
 [Full reference](../docs/relation-refactoring.md).

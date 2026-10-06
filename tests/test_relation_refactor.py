@@ -11,6 +11,10 @@ SCHEMAS = {
     "table_y": {"col_old": "STRING"},
     "table_x": {"col_new": "STRING"},
 }
+FILTERED_SCHEMAS = {
+    "table_y": {"col_old": "STRING", "category": "STRING", "is_current": "BOOL"},
+    "table_x": {"category": "STRING", "col_new": "STRING", "is_active": "BOOL"},
+}
 
 
 def _declaration(*, scope=None):
@@ -21,6 +25,17 @@ def _declaration(*, scope=None):
         preferred_side="right",
         scope=scope or relation_declarations.Scope("all_snapshots"),
         declaration_id="39e18a5d-3cc8-4052-87f1-2309b761eb53",
+    )
+
+
+def _filtered_declaration():
+    return relation_declarations.prepare(
+        "SELECT col_old AS value, category FROM table_y WHERE is_current = TRUE",
+        "SELECT category, col_new AS value FROM table_x WHERE is_active = TRUE",
+        FILTERED_SCHEMAS,
+        preferred_side="right",
+        scope=relation_declarations.Scope("all_snapshots"),
+        declaration_id="f6ef0e2b-59d6-4c71-a488-026e8f741995",
     )
 
 
@@ -87,20 +102,75 @@ def test_missing_scope_and_unmapped_consumer_column_are_refused():
     assert not unmapped.changed and "undeclared column" in unmapped.reason
 
 
-def test_filtered_or_distinct_declaration_sides_are_refused():
-    for left in (
-        "SELECT col_old AS value FROM table_y WHERE col_old IS NOT NULL",
+def test_distinct_declaration_sides_are_refused():
+    declaration = relation_declarations.prepare(
         "SELECT DISTINCT col_old AS value FROM table_y",
-    ):
+        "SELECT col_new AS value FROM table_x",
+        SCHEMAS,
+        preferred_side="right",
+        scope=relation_declarations.Scope("all_snapshots"),
+    )
+    result = rewrite_consumer_query("SELECT col_old FROM table_y", declaration)
+
+    assert not result.changed and "declaration side" in result.reason
+
+
+def test_filtered_declaration_replaces_only_an_exact_derived_query_and_keeps_column_order():
+    declaration = _filtered_declaration()
+    query = (
+        "SELECT s.category, COUNT(*) AS n FROM ("
+        "SELECT col_old AS value, category FROM demo.raw.table_y WHERE is_current = TRUE"
+        ") AS s GROUP BY s.category"
+    )
+    result = rewrite_consumer_query(
+        query,
+        declaration,
+        resolve_relation=lambda table: table.name.casefold(),
+    )
+
+    assert result.changed and not result.reason
+    assert result.operation == "replace_exact_filtered_query"
+    assert "FROM table_x" in result.sql
+    assert "is_active = TRUE" in result.sql
+    # The preferred query lists category first; the wrapper restores the old interface order.
+    assert "SELECT\n    __kumo_preferred_relation.value AS value,\n    __kumo_preferred_relation.category AS category" in result.sql
+    assert "GROUP BY\n  s.category" in result.sql
+
+
+def test_filtered_declaration_does_not_rewrite_raw_or_differently_filtered_readers():
+    declaration = _filtered_declaration()
+    direct = rewrite_consumer_query(
+        "SELECT col_old FROM table_y",
+        declaration,
+        resolve_relation=lambda table: table.name.casefold(),
+    )
+    mismatch = rewrite_consumer_query(
+        "SELECT s.value FROM ("
+        "SELECT col_old AS value, category FROM table_y WHERE is_current = FALSE"
+        ") AS s",
+        declaration,
+        resolve_relation=lambda table: table.name.casefold(),
+    )
+
+    assert not direct.changed and "exact structural match" in direct.reason
+    assert not mismatch.changed and "exact structural match" in mismatch.reason
+
+
+def test_filtered_declaration_with_function_or_subquery_predicate_is_refused():
+    for predicate in ("LOWER(col_old) = 'x'", "EXISTS (SELECT 1 FROM table_z)"):
         declaration = relation_declarations.prepare(
-            left,
+            f"SELECT col_old AS value FROM table_y WHERE {predicate}",
             "SELECT col_new AS value FROM table_x",
             SCHEMAS,
             preferred_side="right",
             scope=relation_declarations.Scope("all_snapshots"),
         )
-        result = rewrite_consumer_query("SELECT col_old FROM table_y", declaration)
-        assert not result.changed and "declaration side" in result.reason
+        result = rewrite_consumer_query(
+            f"SELECT s.value FROM (SELECT col_old AS value FROM table_y WHERE {predicate}) AS s",
+            declaration,
+        )
+
+        assert not result.changed and "filters with" in result.reason
 
 
 def test_cte_shadowing_and_using_join_are_refused():
@@ -150,6 +220,40 @@ def test_project_migration_updates_sqlx_refs_and_leaves_unrelated_reader_alone(t
     assert [file.path for file in result.files] == ["definitions/report.sqlx"]
     assert '${ref("table_x")}' in result.files[0].after
     assert "col_new AS col_old" in result.files[0].after
+
+
+def test_project_filtered_migration_rewrites_matching_subquery_only(tmp_path):
+    root = _project(
+        tmp_path / "filtered-shop",
+        (
+            "table_y",
+            "SELECT CAST('x' AS STRING) AS col_old, 'a' AS category, TRUE AS is_current",
+        ),
+        (
+            "table_x",
+            "SELECT 'a' AS category, CAST('x' AS STRING) AS col_new, TRUE AS is_active",
+        ),
+        (
+            "report",
+            "SELECT s.category, COUNT(*) AS n FROM ("
+            "SELECT col_old AS value, category FROM ${ref(\"table_y\")} WHERE is_current = TRUE"
+            ") AS s GROUP BY s.category",
+        ),
+        ("raw_reader", "SELECT col_old FROM ${ref(\"table_y\")}"),
+        ("unrelated", "SELECT 1 AS n"),
+    )
+
+    result = refactor_project(root, _filtered_declaration())
+
+    assert result.output_names_order_preserved
+    assert [change.model for change in result.changes] == ["report"]
+    assert result.changes[0].operation == "replace_exact_filtered_query"
+    assert [file.path for file in result.files] == ["definitions/report.sqlx"]
+    assert '${ref("table_x")}' in result.files[0].after
+    assert "__kumo_preferred_relation.value AS value" in result.files[0].after
+    assert '${ref("table_y")}' in (root / "definitions" / "raw_reader.sqlx").read_text(encoding="utf-8")
+    assert any(item.get("model") == "raw_reader" and "exact structural match" in item["reason"]
+               for item in result.skipped)
 
 
 def test_project_migration_skips_unmapped_readers_without_rewriting_them(tmp_path):
