@@ -1,0 +1,29 @@
+{
+  "job": "master",
+  "kind": "master",
+  "ref": "master",
+  "sha": "fb918cff66296d75c5eaa5e6ea0f0d52c3a788de",
+  "leg": "compiled-routine",
+  "mode": "routine",
+  "status": "finished",
+  "exit": 1,
+  "seconds": 529.9,
+  "workers": 4,
+  "notes": [],
+  "finished": "2026-10-06T16:27:42Z",
+  "machine": {
+    "system": "Linux",
+    "release": "6.18.40.1-microsoft-standard-WSL2",
+    "cpus": 6,
+    "python": "3.12.3"
+  },
+  "passed": 12383,
+  "failed": [
+    "tests/test_pipeline.py::test_lineage_report_rows_and_pipeline_report_section"
+  ],
+  "errors": [],
+  "skipped": 121,
+  "tests": 12505,
+  "known_failed": [],
+  "tail": "..............................................x.......x................. [ 93%]\n..........x..................................x.......................... [ 94%]\n..x...x.....................x......................x.....x......x....... [ 95%]\n...........................x.............x.............................. [ 95%]\n........................................................................ [ 96%]\n..........................................................x............. [ 96%]\n..........................................x......x...................... [ 97%]\n...............................................x........................ [ 97%]\n...x.................................xx......x.x.................x...... [ 98%]\n..x..x..........x...x.........x...x.......................x.....x.....x. [ 99%]\nx.....x.x..........x.....x.........x..............x................x.... [ 99%]\n..........x.............x........................                        [100%]\n=================================== FAILURES ===================================\n_____________ test_lineage_report_rows_and_pipeline_report_section _____________\n[gw0] linux -- Python 3.12.3 <runner>/work/venvs/compiled/bin/python\n\n    def test_lineage_report_rows_and_pipeline_report_section():\n        pipeline = lineage_pipeline(s=\"SELECT * FROM `p.ext.unknown_table`\", t=\"SELECT id AS k FROM `p.raw.a`\")\n    \n        rows = {(r[\"node\"], r[\"column\"]): r for r in pipeline.lineage_report()}\n    \n>       assert rows[(\"p.m.t\", \"k\")] == {\n            \"node\": \"p.m.t\",\n            \"column\": \"k\",\n            \"sources\": [{\"node\": \"p.raw.a\", \"column\": \"id\"}],\n            \"transform\": \"renamed\",\n            \"status\": \"traced\",\n            \"complete\": True,\n        }\nE       AssertionError: assert {'node': 'p.m...renamed', ...} == {'node': 'p.m...renamed', ...}\nE         \nE         Omitting 6 identical items, use -vv to show\nE         Left contains 1 more item:\nE         {'filters': []}\nE         Use -v to get more diff\n\ntests/test_pipeline.py:470: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_pipeline.py::test_lineage_report_rows_and_pipeline_report_section\n1 failed, 12383 passed, 14 skipped, 107 xfailed in 506.77s (0:08:26)"
+}
