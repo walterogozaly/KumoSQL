@@ -32,6 +32,10 @@ TEMPLATES = [
     f"SELECT {{MAX|MIN|SUM|COUNT}}(p.n) AS a FROM t LEFT JOIN p ON p.tid = t.id WHERE t.x {{> 0|IS NULL}}",
     f"SELECT t.id FROM (SELECT t.id, t.x FROM t LEFT JOIN p ON p.tid = t.id) AS t WHERE t.x > 0",
     f"SELECT q.id FROM (t LEFT JOIN (p JOIN u ON u.k = p.tid) ON p.tid = t.id) AS q",
+    "SELECT s.x, r.n FROM (SELECT x FROM t GROUP BY x) AS s LEFT JOIN (SELECT n FROM p GROUP BY n) AS r ON s.x = r.n",
+    "SELECT s.x, r.n FROM (SELECT x FROM t GROUP BY x, id) AS s LEFT JOIN (SELECT n FROM p GROUP BY n) AS r ON s.x = r.n",
+    "SELECT t.id, e.n FROM t LEFT JOIN p AS e ON e.tid = t.id WHERE NOT EXISTS (SELECT 1 FROM p AS s WHERE s.tid = t.id)",
+    "SELECT t.id, e.n FROM t LEFT JOIN p AS e ON e.tid = t.id WHERE NOT EXISTS (SELECT 1 FROM p AS s WHERE s.tid = t.id AND s.n > 0)",
 ]
 
 
