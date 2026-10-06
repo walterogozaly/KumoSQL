@@ -20,7 +20,7 @@ No LLM runs at evaluation time.
 | `assert_kept` | 1 in 2 | A standalone assertion on a kept output (it must stay) |
 | `assert_inner` | 1 in 2 | A standalone assertion on an intermediate table (dropped and listed, or kept when awaited) |
 | `config_assertion` | 1 in 2 | `assertions: {nonNull: [...]}` in an intermediate's config (it must stay proved equal while it survives) |
-| `vars` | 1 in 3 | One string literal read from `${dataform.projectConfig.vars.v1}` (an unknown constant to the prover) |
+| `vars` | 1 in 3 | One string literal read from `${dataform.projectConfig.vars.v1}` (an unknown value, not treated as any known literal) |
 | `incremental` | 1 in 5 | One intermediate is an incremental table (kept as written, with everything it reads) |
 | `dependency` | 1 in 3 | A kept output lists the intermediate's assertion in `dependencies` |
 | `views` | 1 in 2 | Every other table is a view |
@@ -41,26 +41,26 @@ Each patch is applied to a copy of the project.
 
 ## Scores
 
-Measured 2026-10-04 (`python tools/reduction_bench.py --jobs 4`; the complexity score changed on 2026-10-04, so the real-project and Jaffle Shop totals moved a little: comma-joined FROM items count as joins and `IF()` as a CASE). Complexity is summed over the cases; "dropping alone" is `reduce-project --drop-only`, which deletes what the kept outputs do not need and rewrites nothing.
+Measured 2026-10-06 (`python tools/reduction_bench.py --jobs 4` on dev, followed by one `--split held_out --jobs 4` run). Complexity is summed over the cases; "dropping alone" is `reduce-project --drop-only`, which deletes what the kept outputs do not need and rewrites nothing. No individual held-out case inputs or transformations were reviewed or tuned.
 
 | Split | Cases | Reduced | Wrong | Re-proved | Complexity | Dropping alone | Beyond dropping |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Dev, converted | 270 | 240 | 0 | 270 | 5,056.5 -> 3,547.0 (-29.9%) | -14.2% | 220 |
-| Dev, real projects | 40 | 36 | 0 | 40 | 5,207.2 -> 3,801.9 (-27.0%) | -26.8% | 7 |
-| Dev, Jaffle Shop | 6 | 6 | 0 | 6 | 198 -> 61 (-69.2%) | -59.1% | 6 |
-| **Dev, all** | **316** | **282** | **0** | **316** | **10,461.7 -> 7,409.9 (-29.2%)** | **-21.3%** | **233** |
-| Held out, converted | 64 | 59 | 0 | 64 | 1,144.5 -> 821.5 (-28.2%) | -10.2% | 56 |
-| Held out, real projects | 6 | 6 | 0 | 6 | 1,002.9 -> 773.7 (-22.9%) | -22.8% | 1 |
+| Dev, converted | 270 | 250 | 0 | 270 | 5,056.5 -> 3,459.0 (-31.6%) | -14.2% | 233 |
+| Dev, real projects | 40 | 32 | 0 | 40 | 5,255.1 -> 3,841.2 (-26.9%) | -26.6% | 4 |
+| Dev, Jaffle Shop | 6 | 6 | 0 | 6 | 198 -> 60 (-69.7%) | -59.1% | 6 |
+| **Dev, all** | **316** | **288** | **0** | **316** | **10,509.6 -> 7,360.2 (-30.0%)** | **-21.3%** | **243** |
+| Held out, converted | 64 | 61 | 0 | 64 | 1,144.5 -> 811.0 (-29.1%) | -10.2% | 58 |
+| Held out, real projects | 6 | 5 | 0 | 6 | 1,012.4 -> 779.8 (-23.0%) | -22.6% | 1 |
 
-- **Executed:** on DuckDB, 220 converted dev projects agree with the original on every check database and 50 are the same SQL; all 6 Jaffle Shop reductions agree on the seeds and 60 random databases.
-- **Quality:** the converted tables reach 65.6% of the minimization reference's reduction (66.3% held out), against 80% for the [table minimizer](table-minimization.md) on the same cases as plain tables. The difference is the Dataform features: incremental tables and models with a project variable in a value stay as written, assertions keep their tables or are dropped, and a rewrite has to lower the score.
-- **Proof rate:** 787 of the 1,267 steps the search tried were proved (62.1%); the rest were rejected and listed.
-- **Actions:** 4,329 -> 2,557 on the dev split (dropping alone: 3,106). 302 assertions over removed or rewritten tables were dropped, each listed with the reason.
+- **Executed:** on DuckDB, 233 converted dev projects agree with the original on every check database and 37 are the same SQL; all 6 Jaffle Shop reductions agree on the seeds and 60 random databases.
+- **Quality:** the converted tables reach 71.6% of the minimization reference's reduction (68.6% held out), against 80% for the [table minimizer](table-minimization.md) on the same cases as plain tables. The difference is the Dataform features: incremental tables stay as written, project variables used as exact string values are now treated as unknown values, other unsupported SQLX forms stay as written, assertions keep their tables or are dropped, and a rewrite has to lower the score.
+- **Proof rate:** 849 of the 1,448 steps the search tried were proved (58.6%); the rest were rejected and listed.
+- **Actions:** 4,329 -> 2,505 on the dev split (dropping alone: 3,105). 322 assertions over removed or rewritten tables were dropped, each listed with the reason.
 - **Shared tables:** no dev case gained a new shared table, and one held-out case reused an existing table for a repeated query. The converted cases repeat logic as whole tables (merged instead), not as subqueries; factoring is covered by `tests/test_project_reduction.py` and `tests/test_table_minimizer.py`.
 - **Real projects:** most of the gain is dropping. snowplow-web is mostly operations scripts, which stay as written; one of its queries is simplified in all five of its cases. In wintermi-imdb, two staging tables are folded into the kept report, which inherits their assertion gates.
-- **Runtime:** median 3.8 s per case, max 73 s, 1,987 s in total on 4 workers (60 s search limit for converted cases, 120 s for real projects and Jaffle Shop), re-proof included; checking took 411 s.
+- **Runtime:** median 5.69 s per case, max 88.45 s, 2,746 s in total on 4 workers (60 s search limit for converted cases, 120 s for real projects and Jaffle Shop), re-proof included; checking took 519 s.
 
-The first full run found one wrong reduction, `gen-0173`. A model compared a column with `"${dataform.projectConfig.vars.v1}"`, and the prover read that as one more string, different from `'paid'`, so a filter looked contradictory. Such models are now kept exactly as written, and the same problem in other KumoSQL features was reported to their owners. The run also showed that the check after writing the patch back skipped tables that an action kept as written reads (`verify_tables` now proves them too), and that a declaration named `events_*` was deleted while it was still read (that patch was not verified, so it was never returned).
+The earlier full run found one wrong reduction, `gen-0173`. A model compared a column with `"${dataform.projectConfig.vars.v1}"`, and the prover read that as a fixed string different from `'paid'`, so a filter looked contradictory. Exact string literals that consist of one project-variable token are now represented by unknown values: the proof assumes neither equality nor inequality with a literal, and the original SQLX text is restored in the patch. Embedded, raw, bytes, triple-quoted and adjacent strings remain as written. The run also showed that the check after writing the patch back skipped tables that an action kept as written reads (`verify_tables` now proves them too), and that a declaration named `events_*` was deleted while it was still read (that patch was not verified, so it was never returned).
 
 ## Limits
 

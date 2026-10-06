@@ -204,7 +204,7 @@ def test_project_variables_as_names_and_as_values_are_moved(tmp_path):
     files = {
         "workflow_settings.yaml": SETTINGS + "  raw_schema: raw\n",
         "definitions/sources/orders.sqlx": _declare("orders"),
-        # a variable as a value: an unknown constant, the same wherever it is written, never the string 'paid'
+        # a variable as a value: an unknown constant, not assumed equal or unequal to the string 'paid'
         "definitions/stg_var.sqlx": _sqlx(
             '  type: "view"', 'SELECT order_id, amount, status\nFROM ${ref("orders")}\nWHERE status = "${dataform.projectConfig.vars.paid}"'),
         "definitions/rpt_var.sqlx": _sqlx(

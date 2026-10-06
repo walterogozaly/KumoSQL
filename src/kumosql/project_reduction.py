@@ -64,7 +64,8 @@ _VALUE_LITERAL = re.compile(r"""(["'])(__kumo_x_[0-9a-f]{12}__)\1""")
 _ATOM = re.compile(r"__kumo_v_[0-9a-f]{12}_[sd]\(\s*\)", re.IGNORECASE)
 _VALUE_ASSUMPTION = (
     "a project variable or constant used as a value is one unknown plain string (no quote, backslash or SQL in it), "
-    "the same wherever it is written and not equal to any literal"
+    "the same wherever the same expression and quote style is written; the prover assumes neither equality nor "
+    "inequality with any literal"
 )
 _CONTEXT = {"ctx", "self", "ref", "resolve", "name", "schema", "database", "when", "incremental", "dataform"}
 _VARS = re.compile(r"^\$\{\s*dataform\.projectConfig\.vars\.[A-Za-z_$][\w$]*\s*\}$")
@@ -275,10 +276,10 @@ def _value_atoms(sql: str, tokens: Mapping[str, str]) -> tuple[str, dict[str, st
     """``sql`` with every string literal that is exactly one ``__kumo_x_`` token replaced by an unknown constant.
 
     A variable used as a value (``status = "${vars.paid}"``) is a constant of the run that nobody knows: the
-    same wherever the same expression is written, and not equal to any literal. A string literal holding the
+    same wherever the same expression and quote style is written. A string literal holding the
     token reads as one more fixed string, so the prover could call ``status = <variable> AND status = 'paid'``
     empty. The literal becomes the call ``__kumo_v_<hash>_<quote>()`` instead, which the prover treats as an
-    uninterpreted value that no rule can fold, compare or contradict as a literal. The quote style is part of the
+    uninterpreted value that no rule can fold or treat as either equal or unequal to a literal. The quote style is part of the
     name, so ``'${v}'`` and ``"${v}"`` are two unknowns and each is written back as it was written. Returns the SQL
     and ``atom -> original literal text``. Any other string holding a token (inside a longer string, raw, bytes,
     triple-quoted) is left as it is for :func:`_value_tokens` to refuse.
