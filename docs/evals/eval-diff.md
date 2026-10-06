@@ -1,6 +1,6 @@
 # Eval diff
 
-`python tools/eval_diff.py` discovers commands from `benchmarks/results/*.json`, removes `--write-results`, and compares each successful run on the selected base revision and the current checkout. Timing fields are masked before output comparison. Each row reports separate base and checkout wall times.
+`python tools/eval_diff.py` discovers commands from `benchmarks/results/*.json`, removes `--write-results`, and compares each successful run on the selected base revision and the current checkout. Timing fields are masked before output comparison, including `*_seconds`, `median_ms`, and `p95_ms`; result counts and verdicts remain part of the comparison. Each row reports separate base and checkout wall times.
 
 ## Slow evals
 

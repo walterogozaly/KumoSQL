@@ -4,6 +4,8 @@
 
 `python tools/eval_diff.py` reruns benchmark commands on a base version and your checkout, then reports changed results. It discovers commands from the benchmark results files.
 
+Elapsed-time fields such as `*_seconds`, `median_ms`, and `p95_ms` are ignored during comparison. Counts and verdicts are still compared.
+
 For slow suites, select the eval names with `--only` and use `--sample 25`. Both versions get the same deterministic sample: either a fixed-seed selection or the first cases in the harness's stable order. The sample is useful for spotting regressions, but it is not a benchmark score. The report shows how long each side took and says which evals could not be compared.
 
 ```powershell

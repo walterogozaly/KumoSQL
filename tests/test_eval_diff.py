@@ -41,6 +41,14 @@ def test_seconds_suffix_fields_are_masked_but_result_counts_are_not():
     assert a != c
 
 
+def test_engine_latency_fields_are_masked_but_result_counts_are_not():
+    a = eval_diff.normalize('{"cases": 5, "transformed": 4, "median_ms": 748.6, "p95_ms": 2165.3}')
+    b = eval_diff.normalize('{"cases": 5, "transformed": 4, "median_ms": 583.5, "p95_ms": 2077.4}')
+    c = eval_diff.normalize('{"cases": 5, "transformed": 5, "median_ms": 583.5, "p95_ms": 2077.4}')
+    assert a == b
+    assert a != c
+
+
 def test_sampled_commands_require_a_supported_harness():
     cases = {
         "python tools/targeted_data_bench.py --split all": "python tools/targeted_data_bench.py --split all --limit 25",
