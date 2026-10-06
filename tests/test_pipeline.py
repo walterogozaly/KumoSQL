@@ -474,6 +474,7 @@ def test_lineage_report_rows_and_pipeline_report_section():
         "transform": "renamed",
         "status": "traced",
         "complete": True,
+        "filters": [],
     }
     assert rows[("p.m.s", "*")]["status"] == "unknown" and rows[("p.m.s", "*")]["reason"] == "unexpanded_star"
     assert pipeline.report()["column_lineage"] == pipeline.lineage_report()
