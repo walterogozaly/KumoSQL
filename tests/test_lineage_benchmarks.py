@@ -18,6 +18,21 @@ def quiet_timing(monkeypatch):
     monkeypatch.setenv("KUMOSQL_TIMING", "0")  # per-stage timing lines slow thousands of small analyses
 
 
+@pytest.fixture
+def quiet_stage_log(monkeypatch):
+    """Keep benchmark stage summaries out of the user's persistent UI log."""
+
+    from kumosql import console
+
+    write_log = console.log
+
+    def log_non_info(message, level="INFO", *, summarized=False):
+        if level != "INFO":
+            write_log(message, level, summarized=summarized)
+
+    monkeypatch.setattr(console, "log", log_non_info)
+
+
 def _load(name: str):
     spec = importlib.util.spec_from_file_location(name, TOOLS / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
@@ -31,7 +46,7 @@ lineage_bench = _load("lineage_bench")
 dataform_bench = _load("dataform_bench")
 
 
-def test_sqllineage_cases_are_exact_or_honestly_unknown():
+def test_sqllineage_cases_are_exact_or_honestly_unknown(quiet_stage_log):
     result = sqllineage_bench.run()
     scoped = result["in_scope"]
     assert scoped["total"] == 278
