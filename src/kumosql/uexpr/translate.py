@@ -83,6 +83,8 @@ class Unsupported(Exception):
 # ---------------------------------------------------------------------------
 
 _INT_TYPES = {"INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "MEDIUMINT", "INT64", "INT32", "INT16", "INT8", "SIGNED", "UNSIGNED", "BYTEINT", "UBIGINT", "UINT"}
+_WIDE_SIGNED_INT_TYPES = {"BIGINT", "INT64", "SIGNED"}
+_UNSIGNED_INT_TYPES = {"UNSIGNED", "UBIGINT", "UINT"}
 _NUM_TYPES = {"DECIMAL", "NUMERIC", "FLOAT", "DOUBLE", "REAL", "FLOAT64", "FLOAT32", "BIGNUMERIC", "BIGDECIMAL", "DEC", "NUMBER", "MONEY"}
 _STR_TYPES = {"VARCHAR", "CHAR", "TEXT", "STRING", "NVARCHAR", "NCHAR", "CHARACTER", "MEDIUMTEXT", "LONGTEXT", "TINYTEXT"}
 _BOOL_TYPES = {"BOOL", "BOOLEAN"}
@@ -1113,6 +1115,8 @@ class Translator:
         src = value_kind(v)
         has_params = to is not None and bool(to.expressions)
         if kind is not None and src == kind and not (kind == "str" and has_params) and not (kind == "num" and has_params):
+            if kind == "int" and not self._integer_cast_is_identity(v, target):
+                raise Unsupported("integer cast may change signedness or range")
             return v
         if kind == "num" and src == "int" and not has_params and self.exact:
             return v
@@ -1123,6 +1127,32 @@ class Translator:
         if kind == "str" and isinstance(v, Lit) and v.kind == "str" and not has_params:
             return v
         return self._fn(f"CAST_{target}", [v], True, kind)
+
+    def _integer_cast_is_identity(self, v, target: str) -> bool:
+        """Return whether an integer cast is a known no-op in the modeled integer domain.
+
+        Integer types all share one IR kind, but their SQL ranges and signedness differ. Only
+        identity casts to a signed 64-bit type are accepted here, and the source must be a
+        signed integer known to fit that range. In particular, don't erase unsigned or narrow
+        casts merely because both sides have the IR kind ``int``.
+        """
+
+        target_types = set(re.findall(r"[A-Z][A-Z0-9_]*", target.upper()))
+        if not target_types.intersection(_WIDE_SIGNED_INT_TYPES):
+            return False
+        if target_types.intersection(_UNSIGNED_INT_TYPES):
+            return False
+
+        if isinstance(v, Lit) and v.kind == "int":
+            return -(1 << 63) <= int(v.value) <= (1 << 63) - 1
+
+        declared = self._declared_type(v)
+        if not declared:
+            return False
+        source_types = set(re.findall(r"[A-Z][A-Z0-9_]*", str(declared).upper()))
+        if source_types.intersection(_UNSIGNED_INT_TYPES):
+            return False
+        return bool(source_types.intersection(_INT_TYPES - _UNSIGNED_INT_TYPES))
 
     def _declared_type(self, v):
         """The declared type of the base-table column that `v` copies, if `v` is one (possibly through derived tables)."""
