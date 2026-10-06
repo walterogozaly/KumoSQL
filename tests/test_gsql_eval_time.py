@@ -673,7 +673,9 @@ def test_parse_date():
     error("PARSE_DATE('%Y-%m-%d', 'xxx')", EvalError)
     same("SAFE.PARSE_DATE('%Y-%m-%d', 'xxx')", None)
     error("PARSE_DATE('%b', 'December')", Unsupported)
-    error("PARSE_DATE('%W%y', '092')", Unsupported)  # week-of-year elements are not implemented
+    same("PARSE_DATE('%W%y', '092')", date(2002, 3, 4))
+    same("PARSE_DATE('%W%y', '0902')", date(2002, 3, 4))
+    error("PARSE_DATE('%W%y', '902')", EvalError)
     error("PARSE_DATE('%U%g', '82')", Unsupported)
     error("PARSE_DATE('%H', '10')", Unsupported)
     error("PARSE_DATE('%Y%j%m', '200836012')", Unsupported)

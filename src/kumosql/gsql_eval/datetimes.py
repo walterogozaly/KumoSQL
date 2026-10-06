@@ -877,11 +877,12 @@ def _element(code: str, kind: str, day: date | None, tod: time | None, stamp: tu
 
 class _Fields:
     __slots__ = (
-        "year", "month", "day", "yday", "weekday", "hour", "hour12", "pm", "minute", "second", "micro", "offset", "kinds",
+        "year", "month", "day", "yday", "weekday", "week", "hour", "hour12", "pm", "minute", "second", "micro", "offset", "kinds",
     )
 
     def __init__(self):
         self.year = self.month = self.day = self.yday = self.weekday = None
+        self.week = None
         self.hour = self.hour12 = self.pm = self.minute = self.second = self.micro = self.offset = None
         self.kinds = set()  # "date", "time", "offset"
 
@@ -1011,6 +1012,11 @@ def parse_fields(fmt: str, text: str) -> _Fields:
         elif code in ("a", "A"):
             fields.weekday, pos = _weekday_name(text, pos, code == "A", text)
             fields.kinds.add("date")
+        elif code == "W":
+            if fields.week is not None:
+                raise Unsupported("multiple %W elements")
+            fields.week, pos = _digits(text, pos, 0, 53, 2, text)
+            fields.kinds.add("date")
         elif code == "H":
             fields.hour, pos = _digits(text, pos, 0, 23, 2, text)
             fields.kinds.add("time")
@@ -1069,6 +1075,23 @@ def _civil_date(fields: _Fields, text: str) -> date:
 
 def _civil_date_of(fields: _Fields, text: str) -> date:
     year = 1970 if fields.year is None else fields.year
+    if fields.week is not None:
+        if fields.year is None:
+            raise Unsupported("%W without an explicit year")
+        if fields.month is not None or fields.day is not None or fields.yday is not None or fields.weekday is not None:
+            raise Unsupported("%W together with another date field")
+        if fields.week == 0:
+            raise Unsupported("%W week zero")
+        jan1 = date(year, 1, 1)
+        first_monday = jan1 + timedelta(days=(-jan1.weekday()) % 7)
+        try:
+            result = first_monday + timedelta(weeks=fields.week - 1)
+        except OverflowError:
+            raise _failed(text) from None
+        week = ((result - jan1).days + jan1.weekday()) // 7
+        if result.year != year or week != fields.week:
+            raise _failed(text)
+        return result
     if fields.yday is not None:
         if fields.month is not None or fields.day is not None:
             raise Unsupported("%j together with a month or day")

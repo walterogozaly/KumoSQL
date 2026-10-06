@@ -15,7 +15,7 @@ About 4,700 of the 12,000 cases were claimed up front: queries using features Bi
 ## Limits of the evidence
 
 - Matching Google's reference answers is not the same as matching live BigQuery.
-- On the files it was built against, the interpreter gets 85.6% exact and none wrong. On the held-out files, the first run got 61.9% exact with 30 wrong answers; those were fixed, so the held-out score now is "tuned on test". Use 62% as the honest estimate for new queries.
+- On the files it was built against, the interpreter gets 85.7% exact and none wrong. On the held-out files, the first run got 61.9% exact with 30 wrong answers; those were fixed, so the held-out score now is "tuned on test". Use 62% as the honest estimate for new queries.
 - Some of the exact answers are errors that the interpreter also raises.
 - About 250 of the cases it declines read columns of integer and float sizes that BigQuery does not have.
 
