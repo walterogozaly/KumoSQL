@@ -238,6 +238,7 @@ def evaluate_preservation(case: Case, rules: list[str]) -> dict:
     out = defaultdict(int)
     damage: list[str] = []
     before = {span: case.text.count(span) for span in case.protected}
+    fixed_any = False
     for name in rules:
         try:
             result = apply_rule(name, case.text)
@@ -253,9 +254,10 @@ def evaluate_preservation(case: Case, rules: list[str]) -> dict:
         out["span_checks"] += len(before)
         if case.fixable and text != case.text:
             out["fixed"] += 1
+            fixed_any = True
     if case.fixable:
         out["fixable_cases"] += 1
-        if any(apply_rule(name, case.text).sql != case.text for name in rules):
+        if fixed_any:
             out["fixable_fixed_cases"] += 1
     return {**out, "details": damage}
 
