@@ -18,6 +18,8 @@ python tools/refutation_strength_bench.py --show unknown
 
 The pairs come from three places: an outside research assistant's sweep of differing pairs, the [optimizer bug](optimizer-bugs.md) pairs, and four VeriEQL pairs, two of which need more than 1,000 rows. The same run also checks 108 harder mutants of the targeted-data eval and 340 unsafe rewrites. The VeriEQL pairs need a download; without it that source is skipped.
 
+The full run on 2026-10-06 completed with 0 wrong. The full reference has the per-source counts. The `--only targeted-escapes,unsafe-controls` selector selected both supplementary sources; their refutable-only counts were 106/106 and 340/340.
+
 ## Limits of the evidence
 
 * Most pairs were seen while building the refuter, so the score shows what it does on pairs it was built around. Only five optimizer-bug pairs were held out.

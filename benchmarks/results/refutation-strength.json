@@ -3,7 +3,7 @@
   "order": 39,
   "size": 70,
   "score": "66/68 refuted, 0 proved, 0 wrong",
-  "metric": "Query pairs known to return different rows (the R024 sweep of an outside research assistant, the optimizer wrong-result bugs and VeriEQL's large-cardinality pairs): refuted means prove_equivalent_algebraic(..., search_counterexample=True) returned a database that, replayed on DuckDB with the optimizer off, separates the pair. R024 41/41, optimizer bugs 21/23, VeriEQL 4/4; median 0.52 s per pair.",
+  "metric": "Query pairs known to return different rows (the R024 sweep of an outside research assistant, the optimizer wrong-result bugs and VeriEQL's large-cardinality pairs): refuted means prove_equivalent_algebraic(..., search_counterexample=True) returned a database that, replayed on DuckDB with the optimizer off, separates the pair. R024 41/41, optimizer bugs 21/23, VeriEQL 4/4; median 0.39 s per pair.",
   "evidence": "executed",
   "correctness": "A proof or a refutation whose database does not replay to a difference counts as wrong. Beside the score: 106/106 targeted-data escapes and 340/340 unsafe-rewrite controls refuted.",
   "coverage": {
@@ -13,6 +13,6 @@
   "held_out": "4/5 refuted (optimizer-bugs' held-out pairs)",
   "docs": "docs/evals/refutation-strength.md",
   "command": "python tools/refutation_strength_bench.py --jobs 4 --write-results",
-  "date": "2026-10-05",
+  "date": "2026-10-06",
   "caveats": "2 pairs are not counted as refutable: their difference rests on an arbitrary DISTINCT ON pick (bug-025) or on APPROX_COUNT_DISTINCT's approximation (R012b-18). bug-005 runs only on SQLite. The R024 pairs came from an outside research assistant and were re-checked on DuckDB here; they and the VeriEQL pairs were all seen while building the refuter, so only optimizer-bugs' held-out pairs are held out, and bug-001 among them prompted the replay of solver counterexamples (tuned on test)."
 }

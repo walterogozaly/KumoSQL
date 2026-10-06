@@ -29,7 +29,7 @@ A pair is **refuted** when the prover returns `not_equivalent` with a database, 
 
 ## Scores
 
-2026-10-05: **66/68 refuted, 0 proved, 0 wrong**, median 0.3 to 0.5 s per pair (0.29 s on an idle machine, 0.52 s with the machine shared). Every witness confirmed.
+2026-10-06: **66/68 refuted, 0 proved, 0 wrong**, median 0.39 s per pair across the 70 main pairs. Earlier runs measured 0.29 s on an idle machine and 0.52 s with the machine shared. Every witness confirmed.
 
 | Source | Refuted |
 | --- | --- |
@@ -38,6 +38,8 @@ A pair is **refuted** when the prover returns `not_equivalent` with a database, 
 | `verieql` | 4/4 |
 | `targeted-escapes` (beside the score) | 106/106 |
 | `unsafe-controls` (beside the score) | 340/340 |
+
+A full run on 2026-10-06 processed all 518 inputs. Its summary reported 514 returned refutations, 0 proofs, 4 unknowns and 0 wrong; the table above counts only cases marked refutable. `--only targeted-escapes,unsafe-controls` selected both supplementary sources, with refutable-only counts of 106/106 and 340/340 and 0 wrong. The four unknowns were R012b-18, bug-001, bug-005 and bug-025. `--write-results` records the main 70-pair score; the supplementary sources remain beside it.
 
 Unknown: bug-001 (held out: the solver's counterexample does not separate the pair when run, so it is dropped and nothing else finds one in time) and bug-005 (runs only on SQLite; the search runs on DuckDB). Not counted as refutable: bug-025 and R012b-18, as above. Master's search alone (`--baseline`, which switches the synthesizer off with `KUMOSQL_SYNTHESIS=0`) refutes 9 of the 70 main pairs.
 
