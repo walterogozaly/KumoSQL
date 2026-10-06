@@ -38,6 +38,7 @@ from sqlglot.optimizer.scope import Scope, build_scope, traverse_scope
 from sqlglot.schema import MappingSchema
 
 from . import lineage_limits
+from .lineage_filters import collect_lineage_filters
 from .lineage_soundness import (
     UNTRACED,
     condition_columns,
@@ -72,6 +73,7 @@ from .pipeline_types import (  # noqa: F401
     ColumnLineage,
     ColumnRef,
     ColumnTrace,
+    LineageFilter,
     DuplicateGroup,
     DuplicateOccurrence,
     Model,
@@ -326,6 +328,7 @@ class Pipeline:
         seen: set[ColumnRef] = set()
         sources: set[ColumnRef] = set()
         unknown: dict[ColumnRef, str] = {}
+        filters: set[LineageFilter] = set()
         pending = deque([column])
         while pending:
             item = pending.popleft()
@@ -342,6 +345,7 @@ class Pipeline:
                 continue
             if record.status == "unknown":
                 unknown[item] = record.reason or "unknown"
+            filters.update(record.filters)
             pending.extend(sorted(hop))
         seen.discard(column)
         return ColumnTrace(
@@ -349,6 +353,7 @@ class Pipeline:
             upstream=frozenset(seen),
             sources=frozenset(sources - {column}),
             unknown=tuple(sorted(unknown.items())),
+            filters=tuple(sorted(filters, key=_lineage_filter_sort_key)),
         )
 
     def lineage_report(self) -> list[dict]:
@@ -360,6 +365,7 @@ class Pipeline:
                 "node": ref.table,
                 "column": ref.column,
                 "sources": [_source_row(s) for s in sorted(record.sources)],
+                "filters": [_lineage_filter_row(item) for item in record.filters],
                 "transform": record.transform,
                 "status": record.status,
                 "complete": self.trace_column(ref).complete,
@@ -1558,6 +1564,12 @@ class _Analysis:
                     for problem in by_name_problems:
                         diagnostics.append(PipelineDiagnostic(writer, "by_name_set_operation", problem))
 
+                filters = collect_lineage_filters(
+                    qualified,
+                    lambda table: pipeline.resolve(table) or _table_name_for_schema(table),
+                    field_path,
+                )
+
                 # ``INSERT INTO t SELECT ...`` maps the SELECT's columns to t's columns by position.
                 unnamed_insert = (writer, key) in positional and not _name_by_position(
                     qualified, list(schema.get(key) or ())
@@ -1686,7 +1698,9 @@ class _Analysis:
                         )
                     )
                     star = ColumnRef(key, "*")
-                    records[star] = ColumnLineage(star, frozenset(used), "unknown", "unknown", "insert_target_columns")
+                    records[star] = ColumnLineage(
+                        star, frozenset(used), "unknown", "unknown", "insert_target_columns", filters
+                    )
                     direct[star] = frozenset(used)
                     if writer == key:
                         outputs[key] = ("*",)
@@ -1725,18 +1739,22 @@ class _Analysis:
                     ):
                         # Table-level fallback: the column is taken to depend on everything the model reads,
                         # so impact and dead-column answers stay safe even though they are coarser.
-                        records[ref] = ColumnLineage(ref, frozenset(used), "unknown", "unknown", "lineage_skipped")
+                        records[ref] = ColumnLineage(
+                            ref, frozenset(used), "unknown", "unknown", "lineage_skipped", filters
+                        )
                         direct[ref] = frozenset(used)
                         skipped_columns += 1
                         continue
                     if name == "*":
-                        records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "unexpanded_star")
+                        records[ref] = ColumnLineage(
+                            ref, frozenset(), "unknown", "unknown", "unexpanded_star", filters
+                        )
                         continue
                     if by_name_problems or (union_star and star_view is None):
                         # Positional tracing would attribute columns to the wrong branch column (a ``*`` over
                         # an unknown table counts as one column, so every position after it is off).
                         reason = "by_name_set_operation" if by_name_problems else "unexpanded_star"
-                        records[ref] = ColumnLineage(ref, frozenset(used), "unknown", "unknown", reason)
+                        records[ref] = ColumnLineage(ref, frozenset(used), "unknown", "unknown", reason, filters)
                         direct[ref] = frozenset(used)
                         continue
                     try:
@@ -1763,19 +1781,21 @@ class _Analysis:
                         diagnostics.append(
                             PipelineDiagnostic(writer, "lineage_error", f"{name}: {str(exc).splitlines()[0]}")
                         )
-                        records[ref] = ColumnLineage(ref, frozenset(), "unknown", "unknown", "lineage_error")
+                        records[ref] = ColumnLineage(
+                            ref, frozenset(), "unknown", "unknown", "lineage_error", filters
+                        )
                         continue
                     if star_view is not None and name in star_view.tainted:
                         # A star branch may supply this column from a table whose columns are unknown.
                         records[ref] = ColumnLineage(
-                            ref, frozenset(leaves), "unknown", "unknown", reason or "unexpanded_star"
+                            ref, frozenset(leaves), "unknown", "unknown", reason or "unexpanded_star", filters
                         )
                     elif reason:
-                        records[ref] = ColumnLineage(ref, frozenset(leaves), "unknown", "unknown", reason)
+                        records[ref] = ColumnLineage(ref, frozenset(leaves), "unknown", "unknown", reason, filters)
                     elif not leaves:
-                        records[ref] = ColumnLineage(ref, frozenset(), "constant", "constant")
+                        records[ref] = ColumnLineage(ref, frozenset(), "constant", "constant", filters=filters)
                     else:
-                        records[ref] = ColumnLineage(ref, frozenset(leaves), "traced", transform)
+                        records[ref] = ColumnLineage(ref, frozenset(leaves), "traced", transform, filters=filters)
                     direct[ref] = frozenset(leaves)
                 for ref, before in prior.items():
                     records[ref] = _merge_records(before, records[ref])
@@ -1791,7 +1811,9 @@ class _Analysis:
                         if record is None or not any(_last_part(src.table) in hidden for src in record.sources):
                             continue
                         kept = frozenset(src for src in record.sources if _last_part(src.table) not in hidden)
-                        records[ref] = ColumnLineage(ref, kept, "unknown", "unknown", "temporary_table")
+                        records[ref] = ColumnLineage(
+                            ref, kept, "unknown", "unknown", "temporary_table", record.filters
+                        )
                         direct[ref] = kept
                     opaque_readers_of.update(upstream.get(key, ()))
                 if skipped_columns:
@@ -1956,11 +1978,12 @@ def _merge_records(before: ColumnLineage, after: ColumnLineage) -> ColumnLineage
     """Two writers feed one column: its sources are both sets, and it is only as known as the less known of them."""
 
     sources = before.sources | after.sources
+    filters = tuple(sorted(set(before.filters) | set(after.filters), key=_lineage_filter_sort_key))
     if "unknown" in (before.status, after.status):
-        return ColumnLineage(after.column, sources, "unknown", "unknown", after.reason or before.reason)
+        return ColumnLineage(after.column, sources, "unknown", "unknown", after.reason or before.reason, filters)
     status = "traced" if "traced" in (before.status, after.status) else "constant"
     transform = before.transform if before.transform == after.transform else "union"
-    return ColumnLineage(after.column, sources, status, transform)
+    return ColumnLineage(after.column, sources, status, transform, filters=filters)
 
 
 _TRANSFORM_RANK = {"passthrough": 0, "renamed": 1, "expression": 2, "aggregate": 3, "window": 4}
@@ -2143,6 +2166,19 @@ def _source_row(ref: ColumnRef) -> dict:
     if ref.path:
         row["field"] = ".".join(ref.path)
     return row
+
+
+def _lineage_filter_sort_key(item: LineageFilter) -> tuple:
+    return item.scope, item.clause, item.effect, item.sources
+
+
+def _lineage_filter_row(item: LineageFilter) -> dict:
+    return {
+        "scope": item.scope,
+        "clause": item.clause,
+        "sources": [_source_row(source) for source in item.sources],
+        "effect": item.effect,
+    }
 
 
 def _narrows(record: ColumnLineage | None) -> bool:

@@ -119,6 +119,10 @@
 .lineage-tree li { margin: 6px 0 0; }
 .lineage-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .lineage-transform { padding: 1px 6px; border-radius: var(--radius-xs); background: var(--surface-2); color: var(--text-muted); font: 11px var(--font-mono); }
+.lineage-filters { display: grid; gap: 5px; margin: 6px 0 8px; padding: 0; list-style: none; }
+.lineage-filter { display: grid; gap: 3px; padding: 6px 8px; border-left: 2px solid var(--border-strong); background: var(--surface-2); }
+.lineage-filter-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.lineage-filter-sources { color: var(--text-muted); font: 10.5px var(--font-mono); overflow-wrap: anywhere; }
 
 /* ---------- Cost ---------- */
 .tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }

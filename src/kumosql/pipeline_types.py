@@ -72,6 +72,16 @@ def path_overlap(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
 
 
 @dataclass(frozen=True)
+class LineageFilter:
+    """A predicate that restricts rows or values feeding one lineage entry."""
+
+    scope: str
+    clause: str
+    sources: tuple["ColumnRef", ...]
+    effect: str
+
+
+@dataclass(frozen=True)
 class ColumnLineage:
     """How one model output column is built, one hop back.
 
@@ -88,6 +98,7 @@ class ColumnLineage:
     status: str
     transform: str
     reason: str | None = None
+    filters: tuple[LineageFilter, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -100,6 +111,8 @@ class ColumnTrace:
     sources: frozenset["ColumnRef"]
     # Columns on the way whose own inputs could not be traced, with the reason.
     unknown: tuple[tuple["ColumnRef", str], ...]
+    # Row and value filters encountered at each model hop.
+    filters: tuple[LineageFilter, ...] = ()
 
     @property
     def complete(self) -> bool:

@@ -417,15 +417,16 @@ function lineageOf(graph, id, column, seen = new Set()) {
   const key = `${id}.${column}`;
   const item = graph.lineage.get(key);
   const node = graph.nodes.get(id);
-  if (seen.has(key)) return { node: id, column, transform: "cycle", sources: [] };
+  if (seen.has(key)) return { node: id, column, transform: "cycle", sources: [], filters: [] };
   seen.add(key);
   if (!item) {
     const known = node && node.kind === "source";
-    return { node: id, column, transform: known ? "source column" : "unknown", unknown: !known, sources: [] };
+    return { node: id, column, transform: known ? "source column" : "unknown", unknown: !known, sources: [], filters: [] };
   }
   return {
     node: id, column, transform: item.transform,
     unknown: item.status === "unknown",
+    filters: item.filters || [],
     sources: item.sources.map((source) => lineageOf(graph, source.node, source.column, seen)),
   };
 }
@@ -804,11 +805,22 @@ function renderGraph(data, root) {
         h("p", { class: "muted small", text: "Match kind comes from what each table computes, never from names. This is advisory; it never blocks a change." }));
     } else {
       const tree = state.column ? lineageOf(graph, node.id, state.column) : null;
+      const filterRow = (filter) => {
+        const tone = filter.effect === "limits_rows" || filter.effect === "excludes_rows" ? "warn" : "info";
+        const columns = (filter.sources || []).map((source) =>
+          `${source.node}.${source.column}${source.field ? `.${source.field}` : ""}`);
+        return h("li", { class: "lineage-filter" },
+          h("div", { class: "lineage-filter-head" },
+            tag(filter.clause, "info"), tag((filter.effect || "").replaceAll("_", " "), tone),
+            h("span", { class: "muted small", text: filter.scope })),
+          h("div", { class: "lineage-filter-sources", text: columns.length ? columns.join(", ") : "No source columns" }));
+      };
       const renderTree = (item) => h("li", {},
         h("div", { class: `lineage-row${item.unknown ? " is-unknown" : ""}` },
           nodeLink(item.node, item.column),
           h("span", { class: "lineage-transform", text: item.transform }),
           item.unknown ? E.pill("unknown") : null),
+        item.filters.length ? h("ul", { class: "lineage-filters" }, item.filters.map(filterRow)) : null,
         item.sources.length ? h("ul", { class: "lineage-tree" }, item.sources.map(renderTree)) : null);
       body = h("div", {}, columnPicker(node),
         tree ? h("ul", { class: "lineage-tree is-root" }, renderTree(tree)) : null,
