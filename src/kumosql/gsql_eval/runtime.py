@@ -30,18 +30,27 @@ class Ctx:
 
 
 class Env:
-    """The row an expression is evaluated on, the enclosing query's env (for correlated names) and the CTE results."""
+    """The row an expression is evaluated on, enclosing scopes, CTE results and lexical bindings."""
 
-    __slots__ = ("row", "outer", "ctx", "ctes")
+    __slots__ = ("row", "outer", "ctx", "ctes", "bindings")
 
-    def __init__(self, row, outer, ctx, ctes):
+    def __init__(self, row, outer, ctx, ctes, bindings=None):
         self.row = row
         self.outer = outer
         self.ctx = ctx
         self.ctes = ctes
+        self.bindings = bindings if bindings is not None else {}
 
     def child(self, row) -> "Env":
         return Env(row, self, self.ctx, self.ctes)
+
+    def binding(self, key):
+        current = self
+        while current is not None:
+            if key in current.bindings:
+                return current.bindings[key]
+            current = current.outer
+        raise RuntimeError("unbound GoogleSQL WITH expression variable")
 
 
 class E:

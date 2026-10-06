@@ -184,9 +184,13 @@ class Cx:
     group: Any = None  # GroupInfo while compiling after GROUP BY
     no_agg: str | None = "this clause"  # why aggregates are not allowed here (None: allowed via replace)
     in_agg: bool = False
+    variables: dict = field(default_factory=dict)  # lexical GoogleSQL WITH expression variables, lowercased name -> E
 
     def with_scope(self, scope: Scope) -> "Cx":
-        return Cx(scope, self.replace, self.group, self.no_agg, self.in_agg)
+        return Cx(scope, self.replace, self.group, self.no_agg, self.in_agg, self.variables)
+
+    def with_variables(self, variables: dict) -> "Cx":
+        return Cx(self.scope, self.replace, self.group, self.no_agg, self.in_agg, variables)
 
 
 @dataclass

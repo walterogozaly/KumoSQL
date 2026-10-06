@@ -139,6 +139,78 @@ def alias(c, node, cx):
     raise AnalysisError("An alias is not allowed here")
 
 
+@handles(exp.Var)
+def with_variable(c, node, cx):
+    _only(node, "this")
+    name = str(node.this).lower()
+    value = cx.variables.get(name)
+    if value is None:
+        raise Unsupported("WITH expression variable outside its scope")
+    return value
+
+
+def _with_expression(c: Compiler, node: exp.Anonymous, cx: Cx) -> E:
+    from ..bigquery_syntax import WITH_EXPRESSION, WITH_VARIABLE
+
+    _only(node, "this", "expressions")
+    if node.name != WITH_EXPRESSION or len(node.expressions) < 2:
+        raise Unsupported("malformed WITH expression")
+    *definitions, result_node = node.expressions
+    variables = dict(cx.variables)
+    bindings = []
+    defined = set()
+    for definition in definitions:
+        if not isinstance(definition, exp.Anonymous) or definition.name != WITH_VARIABLE or len(definition.expressions) != 2:
+            raise Unsupported("malformed WITH expression variable")
+        _only(definition, "this", "expressions")
+        name_node, value_node = definition.expressions
+        if not isinstance(name_node, exp.Literal) or not name_node.is_string:
+            raise Unsupported("WITH expression variable name")
+        name = str(name_node.this).strip("`").lower()
+        if not name or name in defined:
+            raise AnalysisError("WITH expression variable names must be unique")
+        defined.add(name)
+        value = c.expr(value_node, cx.with_variables(variables))
+        key = object()
+        bindings.append((key, value))
+        variables[name] = E(value.type, lambda env, key=key: env.binding(key), sub=value.sub)
+
+    # GoogleSQL does not allow a WITH variable to be used as an aggregate or analytic argument.
+    from . import aggregates
+
+    if cx.in_agg and any(isinstance(item, exp.Var) for item in node.walk()):
+        raise AnalysisError("WITH variables cannot be used in aggregate or analytic function arguments")
+    for item in node.find_all(exp.Expression):
+        if aggregates.is_aggregate(item) or isinstance(item, exp.Window):
+            if any(isinstance(child, exp.Var) for child in item.walk()):
+                raise AnalysisError("WITH variables cannot be used in aggregate or analytic function arguments")
+
+    result = c.expr(result_node, cx.with_variables(variables))
+    rf = result.fn
+
+    def run(env):
+        local = Env(env.row, env, env.ctx, env.ctes, {})
+        for key, value in bindings:
+            local.bindings[key] = value.fn(local)
+        return rf(local)
+
+    wrapped = E(result.type, run, result.lit, result.value, result.sub)
+    wrapped.exact = result.exact
+    return wrapped
+
+
+@handles(exp.Anonymous)
+def anonymous(c: Compiler, node: exp.Anonymous, cx: Cx) -> E:
+    from ..bigquery_syntax import WITH_EXPRESSION, WITH_VARIABLE
+    from . import functions
+
+    if node.name == WITH_EXPRESSION:
+        return _with_expression(c, node, cx)
+    if node.name == WITH_VARIABLE:
+        raise Unsupported("WITH expression variable outside its scope")
+    return functions.compile_call(c, node, cx)
+
+
 # --- arithmetic ------------------------------------------------------------------------------------
 
 
