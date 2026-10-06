@@ -41,6 +41,7 @@ Start with [Getting started](getting-started.md): install, a first verified rewr
 | [Eval integrity audit, 2026-10-02](eval-integrity-audit-2026-10-02.md) | The external audit as received: SMT snapshots, typed result comparison, the workbook fixture gate, fuzz floors |
 | [Proof re-check](proof-recheck.md) | The heavy executed search that hunts for wrong proofs among the pairs the evals count as proven: the engine, its adapters, how to triage a difference and what the first runs found |
 | [Rule-level fuzzing](rule-fuzzing.md) | Checking each rewrite `normalize` applies on its own, on the exact query it saw, with DuckDB as the oracle: how a difference is confirmed, the corpora and the limits |
+| [LIMIT and ORDER rule target](rule-fuzz-limits.md) | Targeted rule-fuzzer cases for ORDER BY and LIMIT rewrites, including top-k guards |
 | [Numeric assumption report](numeric-assumption-report.md) | Counting, per assumption label, how many proofs of the prover evals carried it before and after the numeric semantics of issue #484, and how many numeric proofs were re-proved with fewer |
 | [Test history](test-history.md) | Recording every test run and its times, ranking the tests that break changes that otherwise work, tracing test times over time, and running likely failures first |
 | [Picking up a workstream](handoff.md) | How an outside contributor or agent continues a `workstream` issue: a fresh clone of master, targeted tests only, the rules that never relax, and handing the work back as a pull request |

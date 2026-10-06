@@ -44,6 +44,7 @@ This folder is the plain-language companion to [the full documentation](../docs/
 | Reuse an existing summary table | [Model reuse](model-reuse.md) |
 | Search harder for wrong proofs | [Proof re-check](proof-recheck.md) |
 | Test each rewrite on its own | [Rule-level fuzzing](rule-fuzzing.md) |
+| Check ORDER BY and LIMIT rewrite coverage | [LIMIT and ORDER rule target](rule-fuzz-limits.md) |
 | See how many proofs now need fewer number assumptions | [Numeric assumption report](numeric-assumption-report.md) |
 | Run tests and understand their history | [Test history](test-history.md) |
 | Continue a workstream someone else started | [Picking up a workstream](handoff.md) |
