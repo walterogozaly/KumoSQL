@@ -8,19 +8,18 @@ and two storage orders that give different results.
 * A **finding** is a model with an ``unknown`` tie site and a witness that replays (the database keeps
   the declared facts, both orders return the recorded rows with the optimizer on and off, and the
   results differ). Nothing else is called a finding.
-* An ``unknown`` site with no witness (no database found in the time allowed, or DuckDB cannot run
-  the query) is listed apart as *unwitnessed*: the analysis found no reason the result is stable and
-  the search found no example. It is not reported as a problem.
+* An ``unknown`` site without an attributable witness (no database found in the time allowed, an
+  unsupported input path, or an upstream model has its own unknown tie site) is listed as
+  *unwitnessed*. It is not reported as a problem.
 
 What the lint assumes, and where it can be wrong:
 
-* Each model is run on its direct inputs, not on the raw sources: an input is a table whose rows the
-  witness chooses. A table that is itself a model keeps what its query guarantees (keys from
-  ``GROUP BY``/``DISTINCT``/one-row-per-key dedups and NOT NULL columns, found by
-  :mod:`kumosql.output_properties`), plus the project's declared assertions, so a witness never gives
-  an input duplicate keys its own query rules out. Incremental models and models whose query has
-  Dataform expressions the loader could not resolve are skipped (listed with the reason): their
-  stored rows are not their query's output.
+* A witness is searched on the raw sources after safely inlining upstream query models. This prevents
+  a finding that depends on input rows an upstream filter or projection could never produce. Upstream
+  models with incremental state, operations, unresolved expressions, cycles, or other shapes the
+  inliner cannot safely read leave the site unwitnessed instead of producing a finding. Project keys
+  and NOT NULL facts are carried to raw inputs; output properties still inform tie analysis of the
+  model itself.
 * Column types are the declared ones when the project knows them, otherwise guessed from the column
   name (``*_at`` is a timestamp, ``*_date`` a date, most else an integer). A model that needs another
   type (an array column it unnests) is unwitnessed, never a finding.
@@ -69,7 +68,7 @@ class TieFinding:
 
 @dataclass(frozen=True)
 class Unwitnessed:
-    """A model with ``unknown`` tie sites for which no witness was found."""
+    """A model with ``unknown`` tie sites for which no sufficiently attributable witness was found."""
 
     model: str
     path: str
@@ -136,8 +135,12 @@ def _clean(model: Any) -> str | None:
 
     if model.kind == "incremental":
         return "incremental model: its stored rows are not its query's output"
+    if model.kind == "unknown":
+        return "model type is unresolved: its stored rows may not be its query's output"
     if model.kind not in _CLEAN_KINDS or not model.sql.strip():
         return f"not a query ({model.kind})"
+    if model.operations_sql:
+        return "pre or post operations may change the stored rows"
     if "${" in model.sql or model.masked_expressions:
         return "query has Dataform expressions that were not resolved"
     return None
@@ -266,6 +269,29 @@ def _witness_inputs(schema: dict[str, dict[str, str]], facts: _Facts) -> tuple[d
     return schema, rules, foreign_keys
 
 
+def _upstream_models(pipeline: Any, key: str, facts: _Facts) -> set[str]:
+    """Every project model read directly or indirectly by ``key``."""
+
+    seen = {key}
+    todo = [key]
+    while todo:
+        current = todo.pop()
+        model = pipeline.models.get(current)
+        if model is None or _clean(model) is not None:
+            continue
+        try:
+            tree = sqlglot.parse_one(model.sql, read="bigquery")
+        except sqlglot.errors.SqlglotError:
+            continue
+        for table in _read_tables(tree):
+            parent = facts.model_of(_table_spelling(table))
+            if parent is not None and parent.key not in seen:
+                seen.add(parent.key)
+                todo.append(parent.key)
+    seen.discard(key)
+    return seen
+
+
 def _canonical(sql: str, schema: dict, rules: dict, foreign_keys: list) -> tuple[tuple, str, dict[str, str]]:
     """A key shared by models that read different tables the same way, its SQL, and the renaming ``table -> t0, t1, ...``.
 
@@ -323,12 +349,15 @@ def lint_pipeline(
     """
 
     from .prover_schema import from_pipeline
+    from .pipeline_equivalence import _inlined
     from .tie_witness import find_tie_witness, replay
 
     started = time.monotonic()
     facts = _Facts(pipeline, schema if schema is not None else from_pipeline(pipeline))
     result = TieLint()
     cache: dict[str, Any] = {}
+    expanded_models: dict[str, exp.Expression | None] = {}
+    unknown_models: set[str] = set()
     for count, (key, model) in enumerate(pipeline.models.items()):
         if limit is not None and result.models >= limit:
             break
@@ -358,19 +387,29 @@ def lint_pipeline(
         unknown = report.undetermined
         if not unknown:
             continue
+        unknown_models.add(key)
         path = model.path or ""
         if isinstance(typed, str):
             result.unwitnessed.append(Unwitnessed(key, path, unknown, typed))
             continue
-        schema_, rules, foreign_keys = _witness_inputs(typed, facts)
-        shape, canonical_sql, names = _canonical(model.sql, schema_, rules, foreign_keys)
+        flat = _inlined(pipeline, key, [], facts.columns, expansion_cache=expanded_models)
+        if flat is None:
+            result.unwitnessed.append(Unwitnessed(key, path, unknown, "upstream inputs cannot be safely inlined"))
+            continue
+        witness_sql = flat[0]
+        witness_typed = _typed_columns(witness_sql, facts)
+        if isinstance(witness_typed, str):
+            result.unwitnessed.append(Unwitnessed(key, path, unknown, witness_typed))
+            continue
+        schema_, rules, foreign_keys = _witness_inputs(witness_typed, facts)
+        shape, canonical_sql, names = _canonical(witness_sql, schema_, rules, foreign_keys)
         witness = None
         if cache.get(shape):
-            witness = _rename(cache[shape], model.sql, {v: k for k, v in names.items()})
+            witness = _rename(cache[shape], witness_sql, {v: k for k, v in names.items()})
             if not replay(witness):
                 witness = None
         if witness is None and cache.get(shape, False) is not None:
-            found = find_tie_witness(model.sql, schema_, rules, foreign_keys=foreign_keys, budget=budget)
+            found = find_tie_witness(witness_sql, schema_, rules, foreign_keys=foreign_keys, budget=budget)
             if found is not None and replay(found):
                 witness = found
                 cache[shape] = _rename(found, canonical_sql, names)
@@ -382,6 +421,18 @@ def lint_pipeline(
             result.unwitnessed.append(Unwitnessed(key, path, unknown, "no database found that shows the difference"))
         if progress is not None and (count + 1) % 200 == 0:
             progress(f"{count + 1} of {len(pipeline.models)} models read")
+    attributable: list[TieFinding] = []
+    for finding in result.findings:
+        ambiguous_ancestors = _upstream_models(pipeline, finding.model, facts) & unknown_models
+        if ambiguous_ancestors:
+            ancestor = sorted(ambiguous_ancestors)[0]
+            result.unwitnessed.append(Unwitnessed(
+                finding.model, finding.path, finding.sites,
+                f"source witness may be caused by an upstream unknown tie site in {ancestor}",
+            ))
+        else:
+            attributable.append(finding)
+    result.findings = attributable
     result.seconds = time.monotonic() - started
     return result
 
@@ -476,7 +527,8 @@ def main(argv: list[str] | None = None) -> int:
     s = result.summary()
     print(
         f"{s['models']} query models, {s['sites']} tie sites ({s['deterministic_sites']} deterministic); "
-        f"{s['findings']} models with a replaying witness, {s['unwitnessed']} with an unknown site and no witness, "
+        f"{s['findings']} models with an attributable replaying witness, "
+        f"{s['unwitnessed']} with an unknown site and no attributable witness, "
         f"{s['skipped']} skipped ({s['seconds']} s)"
     )
     for finding in result.findings:
@@ -486,7 +538,10 @@ def main(argv: list[str] | None = None) -> int:
         if site.fix:
             print(f"    fix: {site.fix}")
     if result.unwitnessed:
-        print(f"{len(result.unwitnessed)} models have an unknown site but no witness (not findings); --json lists them")
+        print(
+            f"{len(result.unwitnessed)} models have an unknown site without an attributable witness "
+            "(not findings); --json lists reasons"
+        )
     return 0
 
 

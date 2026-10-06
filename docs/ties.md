@@ -82,18 +82,27 @@ python -m kumosql ties path/to/project [--budget 10] [--limit N] [--json]
 ```
 
 - A **finding** is a model with an `unknown` site and a witness that replays (`tie_witness.replay`). The output names the model, the first site, the suggested fix and the size of the witness; `--json` includes every site and the witness itself.
-- An `unknown` site with no witness (no database found within `--budget` seconds per model, or DuckDB cannot run the query) is counted and listed apart as *unwitnessed*. It is never reported as a finding.
+- An `unknown` site without an attributable witness (no database found within `--budget`, unsupported inputs, or an upstream model also has an unknown tie site) is listed as *unwitnessed*. It is not reported as a finding.
 - Incremental models and models whose query still holds Dataform expressions the loader could not resolve are skipped, with the reason (`--json` lists them): an incremental table's rows are not its query's output.
 
-The witness runs the model on its direct inputs, so the lint can be fast, and it keeps what each input promises: the project's declared `uniqueKey` and `nonNull` assertions, and the keys and NOT NULL columns an input model's own query guarantees (`GROUP BY` keys, `DISTINCT`, a one-row-per-key dedup; found with `output_properties`). `QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY ts DESC) = 1` over a model that groups by `id` is therefore not reported. Column types are the declared ones when the project knows them and otherwise guessed from the column name (`*_at` a timestamp, `*_date` a date, most else an integer); a model that needs another type (an array it unnests) ends up unwitnessed. When a model has several `unknown` sites the finding lists them all and does not say which one the database exercises.
+The lint safely inlines upstream table and view queries before searching, so the witness is built from
+raw source rows that can flow through upstream filters and projections. If an upstream model has incremental
+state, operations, unresolved expressions, a cycle, or another unsupported shape, its dependent site stays
+unwitnessed. A witness that could be caused by an upstream unknown tie is also left unwitnessed. Declared
+keys and NOT NULL facts on raw inputs are kept. Types come from project schemas when available and are
+otherwise guessed from column names. A finding with several unknown sites lists them all; the witness does
+not identify which one it exercises.
 
-`tools/tie_lint_check.py` measures how far the shortcut can be trusted: for each finding it inlines the model's upstream table and view models down to the declared sources and looks for a result that changes with the order of the *source* rows. A finding it cannot confirm that way is a false alarm candidate.
+`tools/tie_lint_check.py` independently checks each finding against inlined upstream table and view models.
+It reports an unconfirmed result as a bounded-search false alarm candidate, not as proof that the finding is
+false; it labels findings ambiguous when an upstream model also has an unknown tie site.
 
-On the synthetic fixture (`python tools/make_dataform_fixture.py OUT --models 3000 --seed 11`, 3,378 models, about 48 s for the static pass) the counts are in [Measured on the fixture](#measured-on-the-fixture).
+## Measured on the fixture
+
+On the generated fixture (`python tools/make_dataform_fixture.py OUT --models 3000 --seed 11`, 3,378 models), `python tools/tie_lint_check.py OUT --budget 0.2 --check-budget 5` completed in 132 seconds: 1,260 sites, 175 replayable findings, 600 unwitnessed sites, all 175 findings confirmed from source rows, 0 ambiguous findings, 0 false alarm candidates and 0 inconclusive checks. Sites whose witness might come from an upstream unknown tie are included among the unwitnessed sites.
 
 The loaded project in the app has the same lint as a background job: `POST /api/ties/run` (optional `budget`, `limit`) starts it, `GET /api/ties` returns its state (`idle`, `running`, `done` with the result, `cancelled`, `error`) and `POST /api/ties/cancel` stops it. There is no page for it yet.
 
-@@MEASURED@@
 ## Checks
 
 `tests/test_tie_determinism.py` lists the verdicts for 50 queries without and with a declared key, and runs every query judged deterministic on DuckDB with its table's rows stored in every order (DuckDB on one thread breaks ties by storage order): each returns the same rows every time.

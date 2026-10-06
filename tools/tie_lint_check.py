@@ -3,9 +3,9 @@
     python tools/make_dataform_fixture.py OUT --models 3000 --seed 11
     python tools/tie_lint_check.py OUT [--budget 10] [--check-budget 30] [--limit N]
 
-The lint (``python -m kumosql ties``) runs each model on its direct inputs, with the keys and NOT NULL
-columns its upstream models guarantee. That is a shortcut: a witness could in principle give an input
-rows its upstream query would never produce. This check removes the shortcut. For every finding it
+The lint (``python -m kumosql ties``) safely inlines upstream table and view queries before searching,
+so its witnesses use source rows that can flow through the project. This check independently repeats that
+end-to-end search for every finding. For every finding it
 inlines the upstream table and view models into the query, down to declared sources and incremental
 tables (whose rows are not their query's output), and searches for a storage order that changes the
 result of the inlined query, with data only in those roots. A finding the end-to-end search confirms is

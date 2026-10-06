@@ -106,11 +106,77 @@ def test_a_declared_key_removes_a_finding(tmp_path):
     assert result.findings == [] and result.unwitnessed == []
 
 
+def test_pipeline_witnesses_inline_upstream_queries(tmp_path):
+    write(tmp_path, "workflow_settings.yaml", "defaultProject: proj\ndefaultDataset: an\n")
+    write(tmp_path, "definitions/events.sqlx", 'config { type: "declaration", schema: "raw", name: "events" }\n')
+    write(
+        tmp_path, "definitions/filtered.sqlx",
+        TABLE + 'SELECT user_id, ts, value FROM ${ref("raw", "events")} WHERE value >= 0\n',
+    )
+    write(
+        tmp_path, "definitions/latest.sqlx",
+        TABLE + 'SELECT user_id, ts, value FROM ${ref("filtered")}\n'
+        "QUALIFY ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts DESC) = 1\n",
+    )
+    write(
+        tmp_path, "definitions/fixed.sqlx",
+        TABLE + 'SELECT user_id, value FROM ${ref("raw", "events")} WHERE value = 5\n',
+    )
+    write(
+        tmp_path, "definitions/fixed_pick.sqlx",
+        TABLE + 'SELECT ANY_VALUE(value) AS value FROM ${ref("fixed")}\n',
+    )
+
+    result = lint_project(tmp_path, budget=10)
+
+    latest = next(finding for finding in result.findings if finding.model.endswith(".latest"))
+    assert replay(latest.witness)
+    assert list(latest.witness["tables"]) == ["proj.raw.events"]
+    assert "value >= 0" in latest.witness["sql"]
+    # The direct-input witness could choose values the upstream WHERE excludes.
+    assert "fixed_pick" not in names(result.findings)
+
+
+def test_upstream_unknown_tie_makes_downstream_attribution_unwitnessed(tmp_path):
+    write(tmp_path, "workflow_settings.yaml", "defaultProject: proj\ndefaultDataset: an\n")
+    write(tmp_path, "definitions/events.sqlx", 'config { type: "declaration", schema: "raw", name: "events" }\n')
+    write(
+        tmp_path, "definitions/latest.sqlx",
+        TABLE + 'SELECT user_id, ts, value FROM ${ref("raw", "events")}\n'
+        "QUALIFY ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts DESC) = 1\n",
+    )
+    write(
+        tmp_path, "definitions/pick.sqlx",
+        TABLE + 'SELECT ANY_VALUE(value) AS value FROM ${ref("latest")}\n',
+    )
+
+    result = lint_project(tmp_path, budget=2)
+
+    assert "latest" in names(result.findings)
+    assert "pick" not in names(result.findings)
+    pick = next(item for item in result.unwitnessed if item.model.endswith(".pick"))
+    assert "upstream unknown tie site" in pick.reason
+
+
+def test_inlining_cache_does_not_reuse_run_dependent_models_as_inputs(tmp_path):
+    write(tmp_path, "workflow_settings.yaml", "defaultProject: proj\ndefaultDataset: an\n")
+    write(tmp_path, "definitions/events.sqlx", 'config { type: "declaration", schema: "raw", name: "events" }\n')
+    write(tmp_path, "definitions/volatile.sqlx", TABLE + 'SELECT user_id, RAND() AS value FROM ${ref("raw", "events")}\n')
+    write(tmp_path, "definitions/downstream.sqlx", TABLE + 'SELECT user_id, value FROM ${ref("volatile")}\n')
+    pipeline = load_sqlx_project(tmp_path)
+    from kumosql.pipeline_equivalence import _inlined
+
+    keys = {key.rsplit(".", 1)[-1]: key for key in pipeline.models}
+    expanded = {}
+    assert _inlined(pipeline, keys["volatile"], [], {}, expansion_cache=expanded) is not None
+    assert _inlined(pipeline, keys["downstream"], [], {}, expansion_cache=expanded) is None
+
+
 def test_command_prints_counts_and_json(tmp_path, capsys):
     build(tmp_path)
     assert main([str(tmp_path)]) == 0
     out = capsys.readouterr().out
-    assert "3 models with a replaying witness" in out and "latest" in out and "fix:" in out
+    assert "3 models with an attributable replaying witness" in out and "latest" in out and "fix:" in out
     assert main([str(tmp_path), "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["summary"]["findings"] == 3 and all(replay(f["witness"]) for f in data["findings"])

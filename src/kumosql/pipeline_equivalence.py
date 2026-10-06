@@ -306,15 +306,27 @@ def prove_models(
     return outcome
 
 
-def _inlined(pipeline, key: str, declared, columns, limit: int = MAX_INLINE_CHARS):
+def _inlined(
+    pipeline, key: str, declared, columns, limit: int = MAX_INLINE_CHARS, *,
+    expansion_cache: dict[str, exp.Expression | None] | None = None,
+):
     """``(sql, declarations used)`` with every upstream model inlined as a derived table, or None."""
 
     used: list[saved.Equivalence] = []
+    expanded: dict[str, exp.Expression | None] = expansion_cache if expansion_cache is not None else {}
 
     def expand(model_key: str, trail: tuple[str, ...]) -> exp.Expression | None:
         model = pipeline.models[model_key]
-        if _opaque(model) or model_key in trail:
+        if model_key in trail:
             return None
+        if _opaque(model):
+            expanded[model_key] = None
+            return None
+        if model_key in expanded:
+            tree = expanded[model_key]
+            if tree is None or (trail and (stored_rows_differ(model) or run_dependent(tree))):
+                return None
+            return tree.copy()
         tree = sqlglot.parse_one(model.sql, read="bigquery")
         if trail and (stored_rows_differ(model) or run_dependent(tree)):
             return None  # its stored rows are not what a fresh run of its query returns
@@ -328,13 +340,16 @@ def _inlined(pipeline, key: str, declared, columns, limit: int = MAX_INLINE_CHAR
                 continue
             body = expand(target, trail + (model_key,))
             if body is None or captured_names(body, table):
+                expanded[model_key] = None
                 return None
             alias = table.alias or table.name
             table.replace(exp.Subquery(this=body, alias=exp.TableAlias(this=exp.to_identifier(alias))))
             if len(tree.sql()) > limit:
+                expanded[model_key] = None
                 return None
         tree, hits = saved.rewrite_tree(tree, declared, columns)
         used.extend(h for h in hits if h not in used)
+        expanded[model_key] = tree.copy()
         return tree
 
     try:

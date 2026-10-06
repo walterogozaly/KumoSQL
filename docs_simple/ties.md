@@ -48,7 +48,7 @@ This reads every model of a Dataform project and lists the ones whose result can
 
 The lint knows what your project declares (unique keys, columns that are never empty) and what an input model's own query guarantees, for example that a model that groups by `id` has one row per `id`. So a "latest row per id" over such a model is not flagged.
 
-Limits: the database is built for the model's direct inputs, with column types guessed from names when the project does not say; a model with several risky spots lists them all without saying which one the database used. The same check is available for the project loaded in the app as a background job (no page yet). The measured counts on the synthetic test project are in [Ties and nondeterministic results](../docs/ties.md#measured-on-the-fixture).
+Limits: the lint safely inlines upstream table and view queries and searches from raw sources; models with incremental state, operations, unresolved expressions or other unsupported upstream shapes stay unwitnessed. A site with an unknown upstream tie is also left unwitnessed. Column types are guessed from names when the project does not say, and a model with several risky spots lists them all without saying which one the database used. The same check is available for the project loaded in the app as a background job (no page yet). On the 3,000-model generated project, the [full guide](../docs/ties.md#measured-on-the-fixture) records 175 source-confirmed findings, 0 ambiguous findings, and 0 false alarm candidates.
 
 ## What the check does and does not show
 
