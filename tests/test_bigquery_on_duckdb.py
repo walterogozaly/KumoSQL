@@ -154,6 +154,29 @@ def test_sum_past_int64_fails(db):
     assert one(db, "SELECT SUM(x) FILTER (WHERE x > 1) FROM UNNEST([1, 2, 3]) x") == 5
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT CAST(3037000500 AS INT64) * CAST(3037000500 AS INT64)",
+        "SELECT CAST('-9223372036854775808' AS INT64) * -1",
+    ],
+)
+def test_int64_multiplication_overflow_uses_bigquery_failure_marker(db, sql):
+    translated = faithful(sqlglot.parse_one(sql, read="bigquery")).sql(dialect="duckdb")
+    with pytest.raises(duckdb.Error) as caught:
+        db.execute(translated).fetchall()
+    assert MARKER in str(caught.value)
+    assert is_bigquery_failure(caught.value)
+
+
+def test_int64_multiplication_near_boundary_null_and_float_are_preserved(db):
+    square = 3037000499 * 3037000499
+    assert one(db, "SELECT CAST(3037000499 AS INT64) * CAST(3037000499 AS INT64)") == square
+    assert one(db, "SELECT CAST(-3037000499 AS INT64) * CAST(3037000499 AS INT64)") == -square
+    assert one(db, "SELECT CAST(NULL AS INT64) * 2") is None
+    assert one(db, "SELECT CAST(3037000500 AS FLOAT64) * CAST(3037000500 AS FLOAT64)") == pytest.approx(3037000500.0 ** 2)
+
+
 # --- strings ---------------------------------------------------------------------------------
 
 
