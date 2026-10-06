@@ -383,57 +383,16 @@ def _collapse_aggregate(select: exp.Select) -> exp.Expression | None:
 
 
 def _mean_times_count(select: exp.Select) -> exp.Expression | None:
-    """Over ``(SELECT .., AVG(x) AS a, COUNT(x) AS n .. GROUP BY ..) AS m``, ``m.a * m.n`` is ``SUM(x)``.
+    """Do not fold a grouped ``AVG(x) * COUNT(x)`` into ``SUM(x)``.
 
-    A group's mean times its count of non-NULL values is its sum (both read NULL when no value is
-    present). The sum is added to the derived table and the product replaced by it, so a weighted
-    average of per-group averages meets the plain ``SUM``/``COUNT`` form.
+    BigQuery returns FLOAT64 for ``AVG(INT64)`` and a fixed-scale decimal for
+    ``AVG(NUMERIC)`` and ``AVG(BIGNUMERIC)``. The average can therefore be rounded
+    before the multiplication. For example, a NUMERIC group containing 1, 1, 2
+    has average 1.333333333; multiplying by 3 gives 3.999999999, not its sum 4.
+    Without proving that each group's average is exact, keep the expression intact.
     """
 
-    from_ = select.args.get("from_") or select.args.get("from")
-    source = from_.this if from_ else None
-    if not isinstance(source, exp.Subquery) or not isinstance(source.this, exp.Select) or not source.alias:
-        return None
-    inner = source.this
-    if not inner.args.get("group") or not _no_extras(inner, allow_group=True):
-        return None
-    means: dict[str, exp.Expression] = {}
-    counts: dict[str, exp.Expression] = {}
-    for item in inner.expressions:
-        expr = item.this if isinstance(item, exp.Alias) else item
-        name = (item.alias_or_name or "").lower()
-        if not name or isinstance(expr.this if hasattr(expr, "this") else None, exp.Distinct) or expr.args.get("distinct"):
-            continue
-        if isinstance(expr, exp.Avg):
-            means[name] = expr.this
-        elif isinstance(expr, exp.Count) and not isinstance(expr.this, exp.Star):
-            counts[name] = expr.this
-    alias = source.alias.lower()
-
-    def column_name(node: exp.Expression) -> str | None:
-        if isinstance(node, exp.Column) and (not node.table or node.table.lower() == alias):
-            return node.name.lower()
-        return None
-
-    new_items: list[exp.Expression] = []
-    changed = False
-    result = select.copy()
-    inner_copy = result.args["from_" if result.args.get("from_") else "from"].this.this
-    for product in list(result.find_all(exp.Mul)):
-        if product.find_ancestor(exp.Select) is not result:
-            continue
-        left, right = column_name(product.this), column_name(product.expression)
-        for mean, count in ((left, right), (right, left)):
-            if mean in means and count in counts and means[mean].sql() == counts[count].sql() and isinstance(means[mean], exp.Column):
-                total = f"kq_sum_{len(new_items)}"
-                new_items.append(exp.alias_(exp.Sum(this=means[mean].copy()), total))
-                product.replace(exp.column(total, table=source.alias))
-                changed = True
-                break
-    if not changed:
-        return None
-    inner_copy.set("expressions", list(inner_copy.expressions) + new_items)
-    return result
+    return None
 
 
 def _roll_up_aggregate(select: exp.Select) -> exp.Expression | None:

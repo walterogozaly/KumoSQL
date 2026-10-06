@@ -71,13 +71,13 @@ Cases: `tests/fixtures/decomposition/cases.json` (`tools/make_decomposition_case
 | Held out | 24/24 | 14/14 | 2/2 | 8/8 | 0 |
 | All | 58/59 | 34/35 | 9/9 | 15/15 | 0 |
 
-Weighted averages (a per-group `AVG` and its `COUNT`) are rebuilt as `SUM(a * n) / NULLIF(SUM(n), 0)`. Open: standard deviation from a summary (`STDDEV_POP` from sums of squares needs a square-root identity the prover does not do). AVG assumes `/` is fractional division (BigQuery, DuckDB), as the prover already does.
+Weighted averages from per-group `AVG` and `COUNT` summaries may be reconstructed as `SUM(a * n) / NULLIF(SUM(n), 0)` only when the equivalence prover can establish that the stored averages preserve the needed precision. Rounded `AVG(NUMERIC)` or approximate `AVG(FLOAT64)` values can make that formula differ from `AVG` over the base rows. Open: standard deviation from a summary (`STDDEV_POP` from sums of squares needs a square-root identity the prover does not do). AVG assumes `/` is fractional division (BigQuery, DuckDB), as the prover already does.
 
 ## Prover changes made for these evals
 
 * `eager_aggregation.unnest_grouped_source` handles `SUM` of a per-group `COUNT(x)` and `HAVING`, and replaces calls by identity (equal calls are distinct nodes).
 * `algebraic_equivalence._roll_up_aggregate` rolls `COALESCE(SUM(count), 0)` up to the `COUNT`.
-* `algebraic_equivalence._mean_times_count` reads `AVG(x) * COUNT(x)` over a grouped derived table as `SUM(x)`.
+* The prover keeps `AVG(x) * COUNT(x)` over a grouped derived table intact. BigQuery rounds `AVG(NUMERIC)` and `AVG(BIGNUMERIC)` to their fixed scales, and returns `FLOAT64` for `AVG(INT64)`, so the rounded average times its count need not equal `SUM(x)`; for example, the NUMERIC values 1, 1, 2 produce 3.999999999 versus 4. See [numeric traps](evals/numeric-traps.md).
 * `smt_equivalence` treats `COUNT` of any two columns that are never NULL as the same count, and reads `x / NULLIF(y, 0)` as the quotient `x / y`, the same value `AVG` has.
 * Negated predicates are read as negations in every dialect (a false proof found by the first containment baseline; PR #241).
 
