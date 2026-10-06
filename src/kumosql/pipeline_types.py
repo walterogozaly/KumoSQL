@@ -88,6 +88,47 @@ class ColumnLineage:
     status: str
     transform: str
     reason: str | None = None
+    # The conditions that limit which rows reach this column (``None``: could not be worked out).
+    filters: tuple["ColumnFilter", ...] | None = None
+
+
+@dataclass(frozen=True)
+class ColumnFilter:
+    """One condition that limits which rows reach an output column (see ``kumosql.lineage_filters``).
+
+    ``kind`` is ``where``, ``join`` (an ``ON`` or ``USING``), ``having`` or ``qualify``. ``scope`` names the
+    query it was written in: ``main``, a CTE, ``subquery <alias>``, with ``branch N`` for a set operation's
+    branches. ``columns`` are the source columns it reads. ``effect`` says how it acts on the output rows:
+    ``limits_rows``, ``matches_only`` (decides which rows pair up in an outer join, rows without a match
+    stay), ``excludes_rows`` (inside the right side of ``EXCEPT``) or ``feeds_value`` (inside a scalar
+    subquery that one column is computed with).
+    """
+
+    kind: str
+    condition: str
+    scope: str
+    columns: tuple["ColumnRef", ...]
+    effect: str = "limits_rows"
+    columns_complete: bool = True
+
+    def to_json(self) -> dict:
+        row: dict = {
+            "kind": self.kind,
+            "condition": self.condition,
+            "scope": self.scope,
+            "effect": self.effect,
+            "columns": [_column_row(ref) for ref in self.columns],
+        }
+        if not self.columns_complete:
+            row["columns_complete"] = False
+        return row
+
+
+def _column_row(ref: "ColumnRef") -> dict:
+    row = {"node": ref.table, "column": ref.column}
+    if ref.path:
+        row["field"] = ".".join(ref.path)
+    return row
 
 
 @dataclass(frozen=True)
@@ -100,6 +141,10 @@ class ColumnTrace:
     sources: frozenset["ColumnRef"]
     # Columns on the way whose own inputs could not be traced, with the reason.
     unknown: tuple[tuple["ColumnRef", str], ...]
+    # The conditions that limit the rows reaching ``column``, from its own model and every model upstream of it,
+    # each with the model it was written in. ``filters_unknown`` lists models whose conditions could not be worked out.
+    filters: tuple[tuple[str, "ColumnFilter"], ...] = ()
+    filters_unknown: tuple[str, ...] = ()
 
     @property
     def complete(self) -> bool:

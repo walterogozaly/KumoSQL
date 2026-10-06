@@ -61,6 +61,33 @@ _SNAPSHOT_KEEP = 3
 _ANALYSIS: dict = {}  # id(pipeline) -> {"state", "stage", "started", "finished"}
 
 
+def _share_row_filters(rows: list[dict]) -> tuple[list[dict], dict[str, list[dict]]]:
+    """Lineage rows with the filters every column of a model shares moved to one list per model.
+
+    The conditions of a model's query limit the rows of all its columns, so repeating them on each row would
+    multiply the payload by the column count. A column keeps only its own (``feeds_value``) filters; its full
+    list is the model's shared ones followed by those.
+    """
+
+    by_node: dict[str, list[dict]] = {}
+    for row in rows:
+        by_node.setdefault(row["node"], []).append(row)
+    shared: dict[str, list[dict]] = {}
+    compact = []
+    for node, group in by_node.items():
+        known = [row["filters"] for row in group if "filters" in row]
+        common = [f for f in known[0] if all(f in other for other in known[1:])] if known else []
+        if common:
+            shared[node] = common
+        for row in group:
+            if "filters" in row:
+                row = {**row, "filters": [f for f in row["filters"] if f not in common]}
+                if not row["filters"]:
+                    del row["filters"]
+            compact.append(row)
+    return compact, shared
+
+
 @contextmanager
 def activity(label: str):
     """Mark ``label`` as running while the block runs; the sidebar shows it."""
@@ -722,6 +749,7 @@ def graph_payload(
     if plan and plan.models is not None:
         keep = pipeline.scope_keys(plan.models)
         lineage = [row for row in lineage if row["node"] in keep]
+    lineage, model_filters = _share_row_filters(lineage)
 
     columns: dict[str, list[str]] = {}
 
@@ -789,6 +817,7 @@ def graph_payload(
         "nodes": nodes,
         "edges": edges,
         "column_lineage": lineage,
+        "model_filters": model_filters,
         "gaps": [
             {"asset": gap["asset"], "kind": gap["kind"], "message": gap["message"],
              "blocking": gap["blocking"]}
