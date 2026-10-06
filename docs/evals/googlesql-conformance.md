@@ -47,11 +47,11 @@ python -m pytest tests/test_googlesql_conformance.py        # the floor, on both
 
 | Split | Claimed | Exact | Unsupported | Mismatch |
 | --- | ---: | ---: | ---: | ---: |
-| Development files | 3,149 | 2,711 (86.1%) | 438 | 0 |
+| Development files | 3,149 | 2,725 (86.5%) | 424 | 0 |
 | Held-out files, first run (before any fix) | 1,599 | 989 (61.9%) | 577 | 30 (and 3 unscored) |
 | Held-out files, now (tuned on test) | 1,599 | 1,024 (64.0%) | 575 | 0 |
 
-Of the claimed cases 154 (development) and 52 (held-out) expect an error, so up to that many exact answers are an error that the evaluator also raises. The development run takes about 4.4 s on four workers.
+Of the claimed cases 154 (development) and 52 (held-out) expect an error, so up to that many exact answers are an error that the evaluator also raises. The development run took 4.6 s on this Windows host with IANA zone data supplied through a temporary `tzdata` path.
 
 The target of at least 80% exact is met on the development files and not on the held-out files' first run.
 
@@ -68,7 +68,7 @@ The 30 mismatches were then fixed with the failing cases in view, so the "now" r
 
 ## What is declined
 
-Of the 438 unsupported development cases about 250 read columns of GoogleSQL-only types (INT32, UINT32, UINT64, FLOAT32, PROTO, ENUM, or a STRUCT holding one), which the value model deliberately lacks. `MIN`/`MAX(DISTINCT ...)` and `ANY_VALUE(DISTINCT ...)` now work for groupable arguments; remaining aggregate corners include `ARRAY_AGG ... LIMIT` over ties and a float `SUM` that overflows to infinity. Other gaps include functions not implemented (`PERCENTILE_CONT` as an aggregate, `SPLIT_SUBSTR`, JSON extraction, `WITH` expressions) and approximate aggregates. `--reasons N` lists them with the files they come from.
+Of the 424 unsupported development cases about 250 read columns of GoogleSQL-only types (INT32, UINT32, UINT64, FLOAT32, PROTO, ENUM, or a STRUCT holding one), which the value model deliberately lacks. `PERCENTILE_CONT` now works as an aggregate and analytic function. `MIN`/`MAX(DISTINCT ...)` and `ANY_VALUE(DISTINCT ...)` work for groupable arguments; remaining aggregate corners include `ARRAY_AGG ... LIMIT` over ties and a float `SUM` that overflows to infinity. Other gaps include functions not implemented (`SPLIT_SUBSTR`, JSON extraction, `WITH` expressions) and approximate aggregates. `--reasons N` lists them with the files they come from.
 
 ## Limits
 

@@ -18,6 +18,6 @@ Its job is to be an independent check. When the DuckDB path and this evaluator g
 
 - It is checked against Google's published compliance tests, not against live BigQuery. Where those tests do not settle a behaviour, the evaluator declines.
 - It does not cover everything: columns of types BigQuery lacks, JSON functions, ranges and a number of aggregate corner cases are declined.
-- On the files it was built against it matches 86.1% of the claimed cases and gets none wrong. On a set of files kept aside, its first run matched 61.9% with 30 wrong answers, which were then fixed. Treat 62% as the realistic figure for queries it has not been tuned on.
+- On the files it was built against it matches 86.5% of the claimed cases and gets none wrong. On a set of files kept aside, its first run matched 61.9% with 30 wrong answers, which were then fixed. Treat 62% as the realistic figure for queries it has not been tuned on.
 
 The full reference lists what it covers and how it is organised, and the [conformance eval](evals/googlesql-conformance.md) has the recorded scores. See the [full reference](../docs/gsql-eval.md) for the API.

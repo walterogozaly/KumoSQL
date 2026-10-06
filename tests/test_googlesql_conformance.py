@@ -19,7 +19,7 @@ sys.modules[SPEC.name] = conformance  # dataclasses (postponed annotations) look
 SPEC.loader.exec_module(conformance)
 
 # Floors: exact answers must not drop. Raise them with a results-file update when the evaluator gains cases.
-FLOORS = {"dev": 2694, "heldout": 1024}
+FLOORS = {"dev": 2725, "heldout": 1024}
 
 
 def run(split):
