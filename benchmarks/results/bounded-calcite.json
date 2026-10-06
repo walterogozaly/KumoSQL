@@ -2,16 +2,16 @@
   "suite": "VeriEQL Calcite-397 (bounded)",
   "order": 47,
   "size": 397,
-  "score": "276/397 bounded at 3 rows, 2 refuted, 0 wrong (278/285 of the supported subset decided)",
-  "metric": "pairs from VeriEQL's Calcite benchmark: no difference on any database with at most 3 rows per table (z3, symbolic values and NULLs), or a counterexample replayed on DuckDB. Not a proof. 4 timed out at 3 rows (some after clearing a smaller bound).",
+  "score": "277/397 bounded at 3 rows, 2 refuted, 0 wrong (279/285 of the supported subset decided)",
+  "metric": "pairs from VeriEQL's Calcite benchmark: no difference on any database with at most 3 rows per table (z3, symbolic values and NULLs), or a counterexample replayed on DuckDB. Not a proof. 3 timed out at 3 rows (some after clearing a smaller bound).",
   "evidence": "bounded",
   "correctness": "0 wrong: no counterexample against a proof or a label, none that VeriEQL's published or a random search's counterexample contradicts; every counterexample replayed on DuckDB (stable under shuffles); encoder checked against DuckDB with 0 mismatches",
   "coverage": {
-    "proven": 276,
+    "proven": 277,
     "refuted": 2,
     "unknown": 3,
     "unsupported": 112,
-    "timeout": 4
+    "timeout": 3
   },
   "held_out": "none",
   "docs": "docs/evals/bounded-verification.md#results",

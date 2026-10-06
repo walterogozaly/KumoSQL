@@ -65,26 +65,26 @@ Each run first takes the eval's own baseline verdict (unbounded prover and execu
 
 ## Results
 
-Measured at 3 rows per table. Most rows were last measured 2026-10-02. VeriEQL Calcite-397 and Cosette were re-measured on 2026-10-05 at `f4206ff354ed8a2388da42a9c76e35a581822917`; both reproduced their recorded scores with 0 wrong. The VeriEQL Literature re-measurement did not finish: its baseline counterexample search hit the process timeout, so that row retains its 2026-10-02 result. Other rows were not re-measured.
+Measured at 3 rows per table. Nine of 12 suites were rerun on 2026-10-05 at current master 3b3c57645b957db99d99b2dd4ce9694e1cff24eb; all nine returned 0 wrong. QED changed from 363 to 364 bounded cases, SPES from 26 to 24, and VeriEQL Calcite-397 from 276 to 277; the other six completed reruns matched their recorded counts. The Singh full run and 1,000-case LeetCode sample each ran for 20 minutes without completing and produced no dump. Literature stopped after 249 seconds when its baseline counterexample search hit the process timeout and DuckDB interrupted the query. Those three rows retain their 2026-10-02 results.
 
-| Suite | Pairs | Bounded, 3 rows | Different (replayed) | Timeout | Unsupported | Unknown |
-| --- | --- | --- | --- | --- | --- | --- |
-| SQLSolver Calcite | 232 | 212 | 0 | 1 | 18 | 1 |
-| SQLSolver Spark SQL | 127 | 106 | 0 | 0 | 20 | 1 |
-| SQLSolver TPC-H | 22 | 7 | 0 | 4 | 11 | 0 |
-| SQLSolver TPC-C | 19 | 19 | 0 | 0 | 0 | 0 |
-| QED Calcite | 375 | 363 | 0 | 3 | 9 | 0 |
-| R-Bot Calcite | 45 | 23 | 0 | 0 | 22 | 0 |
-| Cosette examples | 60 | 52 | 6 | 0 | 2 | 0 |
-| SPES Calcite | 34 | 26 | 3 | 0 | 5 | 0 |
-| Singh & Bedathur LeetCode pairs | 1006 | 824 | 71 | 97 | 13 | 1 |
-| VeriEQL Literature | 64 | 28 | 24 | 4 | 4 | 4 |
-| VeriEQL Calcite-397 | 397 | 276 | 2 | 4 | 112 | 3 |
-| VeriEQL LeetCode (1,000-case sample) | 1000 | 452 | 231 | 123 | 179 | 15 |
+| Suite | Pairs | Bounded, 3 rows | Different (replayed) | Timeout | Unsupported | Unknown | Error |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| SQLSolver Calcite | 232 | 212 | 0 | 1 | 18 | 1 | 0 |
+| SQLSolver Spark SQL | 127 | 106 | 0 | 0 | 20 | 1 | 0 |
+| SQLSolver TPC-H | 22 | 7 | 0 | 4 | 11 | 0 | 0 |
+| SQLSolver TPC-C | 19 | 19 | 0 | 0 | 0 | 0 | 0 |
+| QED Calcite | 375 | 364 | 0 | 2 | 9 | 0 | 0 |
+| R-Bot Calcite | 45 | 23 | 0 | 0 | 22 | 0 | 0 |
+| Cosette examples | 60 | 52 | 6 | 0 | 2 | 0 | 0 |
+| SPES Calcite | 34 | 24 | 3 | 0 | 7 | 0 | 0 |
+| Singh & Bedathur LeetCode pairs | 1006 | 824 | 71 | 97 | 13 | 1 | 0 |
+| VeriEQL Literature | 64 | 28 | 24 | 4 | 4 | 1 | 3 |
+| VeriEQL Calcite-397 | 397 | 277 | 2 | 3 | 112 | 3 | 0 |
+| VeriEQL LeetCode (1,000-case sample) | 1000 | 452 | 231 | 123 | 179 | 5 | 10 |
 
-Every row has 0 wrong. A *timeout* is a pair whose 3-row check timed out, some after finishing a smaller bound (reported as e.g. "bounded, 2 rows"); *unknown* is a model the replay did not confirm or a parse failure. For pairs the unbounded prover already proves, the bounded verdict is a cross-check of the encoder. On pairs the proofs leave unknown, the bounded check refutes pairs the 150-database random search missed (LeetCode sample: 90 refutations on pairs the executed search called "agrees"; Literature: 6 of 25), each replayed on DuckDB. Singh & Bedathur's 1,794 pairs the prover already refutes are not rerun.
+All nine current-master reruns returned 0 wrong. The three rows retained from 2026-10-02 also reported 0 wrong on their recorded runs. A *timeout* is a pair whose 3-row check timed out, some after finishing a smaller bound (reported as e.g. "bounded, 2 rows"); *unknown* is a model the replay did not confirm or a parse failure; *error* is a worker exception. For pairs the unbounded prover already proves, the bounded verdict is a cross-check of the encoder. On pairs the proofs leave unknown, the bounded check refutes pairs the 150-database random search missed (LeetCode sample: 90 refutations on pairs the executed search called "agrees"; Literature: 6 of 25), each replayed on DuckDB. Singh & Bedathur's 1,794 pairs the prover already refutes are not rerun.
 
-Disputed labels: Cosette's `testDecorrelateTwoIn` and SPES's three semi-join cases (`testSemiJoinRule`, `testSemiJoinRuleExists`, `testSemiJoinTrim`) are labelled equivalent, but a replayed bounded counterexample exists; they are counted as label disputes, not as wrong.
+Disputed labels: Cosette's testDecorrelateTwoIn remains a label dispute. The current SPES rerun has three replayed counterexamples and no label disputes; neither is counted as wrong.
 
 Checks behind "0 wrong": the encoding agrees with DuckDB on 92 Literature, 511 Calcite and 1,504 LeetCode-sample queries (`differential`, 0 mismatches; queries with an ungrouped column are excluded because their answer is arbitrary). The first LeetCode run found the encoder assumed ORDER BY ties away, which hid real differences in 18 pairs; ties are now broken by row position and the same run is 0 wrong. A doubled primary key in one family of pairs is read as the shared harness reads it (the later one wins).
 

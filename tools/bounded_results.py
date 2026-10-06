@@ -37,7 +37,7 @@ SUITES = {
     "cosette": ("Cosette examples (bounded)", 28, "docs/evals/bounded-verification.md#results", "Cosette's Calcite examples",
                 "testDecorrelateTwoIn is labelled equivalent but a replayed bounded counterexample shows otherwise (a label dispute, not counted wrong)."),
     "spes": ("SPES Calcite (bounded)", 29, "docs/evals/bounded-verification.md#results", "SPES's Calcite pairs",
-             "Three semi-join cases are labelled equivalent but a replayed bounded counterexample shows otherwise (label disputes, not counted wrong)."),
+             "Three SPES pairs have replayed bounded counterexamples; source labels are reflected in the case output."),
     "singh": ("Singh & Bedathur LeetCode pairs (bounded)", 31, "docs/evals/bounded-verification.md#results", "Singh & Bedathur's LeetCode pairs",
               "Labels come from the benchmark; a bounded counterexample against a label is counted wrong unless audited."),
 }
@@ -93,7 +93,7 @@ def build(name: str, rows: list[dict], date: str, bound: int = 3) -> dict:
         "coverage": coverage,
         "held_out": "none",
         "docs": docs,
-        "command": f"python tools/bounded_bench.py run {name} --rows {bound}",
+        "command": f"python tools/bounded_bench.py run {name} --rows {bound}" + (" --every 24" if name == "leetcode" else ""),
         "date": date,
         "caveats": f"{caveat} {OVERLAP} Assumes exact arithmetic and no runtime errors. Encoder developed with these suites in view (tuned on test).",
     }

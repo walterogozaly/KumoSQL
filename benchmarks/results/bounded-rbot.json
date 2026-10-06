@@ -13,6 +13,6 @@
   "held_out": "none",
   "docs": "docs/evals/bounded-verification.md#results",
   "command": "python tools/bounded_bench.py run rbot --rows 3",
-  "date": "2026-10-02",
+  "date": "2026-10-05",
   "caveats": "Alias columns such as deptno0 (Calcite's disambiguation of a repeated name) are not resolved by the encoder and give unknown. Bounded evidence is a separate level from the unbounded proofs and executed checks on the same pairs; where the prover already proves a pair, the bounded verdict is a cross-check of the encoder. Assumes exact arithmetic and no runtime errors. Encoder developed with these suites in view (tuned on test)."
 }
