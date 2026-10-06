@@ -189,6 +189,7 @@ def find_assets(
 
 
 _WINDOWS_DEVICE = re.compile(r"(?i)(?:con|prn|aux|nul|conin\$|conout\$|(?:com|lpt)[0-9\u00b9\u00b2\u00b3])")
+_WINDOWS_SHORT_NAME = re.compile(r"~[0-9]+")
 
 
 def is_windows_device_name(part: str) -> bool:
@@ -197,12 +198,22 @@ def is_windows_device_name(part: str) -> bool:
     return bool(_WINDOWS_DEVICE.fullmatch(part.split(".", 1)[0].rstrip(" ")))
 
 
+def is_windows_short_name_alias(part: str) -> bool:
+    """True when a path component contains the numeric suffix of an 8.3 short-name alias."""
+
+    return bool(_WINDOWS_SHORT_NAME.search(part))
+
+
 def unsafe_checkout_path(path: str) -> bool:
     """True for a repository path that cannot be written safely into a checkout on any supported system."""
 
     return (
         not path or ":" in path or "\\" in path or "\0" in path or path.startswith("/")
-        or any(p in ("", ".", "..") or p.endswith((".", " ")) or is_windows_device_name(p) for p in path.split("/"))
+        or any(
+            p in ("", ".", "..") or p.endswith((".", " "))
+            or is_windows_device_name(p) or is_windows_short_name_alias(p)
+            for p in path.split("/")
+        )
     )
 
 

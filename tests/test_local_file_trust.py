@@ -15,7 +15,12 @@ import pytest
 from kumosql import live_graph, resilience, storage
 from kumosql.joinorder.stats import Statistics, collect_statistics
 from kumosql.pipeline import load_sqlx_project
-from kumosql.resilience import find_assets, is_windows_device_name
+from kumosql.resilience import (
+    find_assets,
+    is_windows_device_name,
+    is_windows_short_name_alias,
+    unsafe_checkout_path,
+)
 
 
 @pytest.mark.parametrize("name", [
@@ -41,8 +46,11 @@ def test_accepted_paths_are_relative_in_both_interpretations(tmp_path):
     assert (tmp_path / name).read_text() == "select 1"
 
 
-@pytest.mark.parametrize("name", ["NUL.sql", "CON.sql", "COM1.sql", "definitions/LPT1/model.sql", ".. /outside.sql", "defs./model.sql"])
-def test_windows_device_names_and_normalized_directory_aliases_are_refused(tmp_path, name):
+@pytest.mark.parametrize("name", [
+    "NUL.sql", "CON.sql", "COM1.sql", "definitions/LPT1/model.sql", ".. /outside.sql", "defs./model.sql",
+    "definitions/PROGRA~1/model.sqlx",
+])
+def test_unsafe_windows_path_components_are_refused(tmp_path, name):
     with pytest.raises(live_graph.ProjectError):
         live_graph._write_files({name: "select 1"}, str(tmp_path))
     assert list(tmp_path.iterdir()) == []
@@ -166,6 +174,7 @@ def test_snapshot_round_trip_preserves_reports_and_source_without_sqlx_parsing(m
     lambda d: d.update(version=999), lambda d: d.update(version=True),
     lambda d: d.update(content_key="other"), lambda d: d.update(unexpected={}),
     lambda d: d.update(source_files={"Z:outside.sql": "SELECT 1"}),
+    lambda d: d.update(source_files={"definitions/PROGRA~1/model.sqlx": "SELECT 1"}),
     lambda d: d["models"]["a"].update(path="Z:outside.sql"),
     lambda d: d.update(models={"a": {"target": "invalid"}}),
 ])
@@ -250,6 +259,46 @@ def test_ordinary_names_are_not_devices(name):
     assert not is_windows_device_name(name)
 
 
+@pytest.mark.parametrize("name", ["PROGRA~1", "model~2.sqlx", "long_component~12.sql"])
+def test_windows_short_name_aliases_are_detected_on_every_platform(name):
+    assert is_windows_short_name_alias(name)
+
+
+@pytest.mark.parametrize("name", ["model", "foo~bar", "version~.sql", "console"])
+def test_ordinary_components_are_not_short_name_aliases(name):
+    assert not is_windows_short_name_alias(name)
+
+
+def test_checkout_path_guard_refuses_short_name_aliases_in_any_component():
+    assert unsafe_checkout_path("definitions/PROGRA~1/model.sqlx")
+    assert not unsafe_checkout_path("definitions/project/model.sqlx")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows short-name aliases only exist on Windows")
+def test_real_windows_short_name_alias_cannot_bypass_upload_path_guard(tmp_path):
+    import ctypes
+    from ctypes import wintypes
+
+    root = tmp_path / "root"
+    root.mkdir()
+    refused = root / "blocked directory."
+    os.mkdir(str(resilience.extended_path(refused)))
+    get_short_path = ctypes.WinDLL("kernel32", use_last_error=True).GetShortPathNameW
+    get_short_path.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+    get_short_path.restype = wintypes.DWORD
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = get_short_path(str(resilience.extended_path(refused)), buffer, len(buffer))
+    if not length or length >= len(buffer):
+        pytest.skip("filesystem did not provide an 8.3 path")
+    alias = Path(buffer.value).name
+    if not is_windows_short_name_alias(alias):
+        pytest.skip("8.3 short names are disabled on this volume")
+
+    with pytest.raises(live_graph.ProjectError):
+        live_graph._write_files({f"{alias}/outside.sql": "select 1"}, str(root))
+    assert list(refused.iterdir()) == []
+
+
 def test_git_listing_skips_paths_that_cannot_be_written_safely(tmp_path):
     from kumosql import git_repo
 
@@ -262,6 +311,7 @@ def test_git_listing_skips_paths_that_cannot_be_written_safely(tmp_path):
     (repo / "definitions").mkdir()
     (repo / "definitions" / "good.sqlx").write_text("select 1")
     (repo / "definitions" / "aux.sqlx").write_text("select 2")
+    (repo / "definitions" / "PROGRA~1.sqlx").write_text("select 3")
     (repo / "definitions" / "notes:v2.sql").write_text("select 3")
     run("add", "-A")
     run("commit", "-q", "-m", "x")
