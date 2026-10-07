@@ -37,7 +37,11 @@ It prints a Markdown summary (`--format json` for the JSON) and saves the profil
 | numeric (INT64, FLOAT64, NUMERIC, DECIMAL...) | distinct, min, max, mean, standard deviation, 25th/50th/75th percentile, most common values |
 | string | distinct, min and max (lexicographic), shortest, longest and average length, most common values |
 | boolean, date and time types | distinct, most common values; dates and times also min and max (as text) |
-| arrays, structs, JSON, bytes, geography | null counts only |
+| STRUCT (record) | its own null count, then one entry per field named `address.city`, nested to 6 levels; a field's counts include the rows where the whole STRUCT is NULL |
+| array (repeated field) | rows that have at least one element (an empty array counts as missing) and the smallest, largest and average number of elements, then its elements as `tags[]`, or `items[].sku` for the fields of an array of STRUCTs |
+| JSON, bytes, geography, maps, arrays of arrays, fixed-size arrays | null counts only |
+
+Entries inside an array count *elements*, not rows: `items[].sku` has one count per order line, not per row, and the Markdown summary marks them `(elements)` (`unit` is `elements` in the JSON). The row count is always the table's. `--columns` and `--exclude` name top-level columns; a STRUCT or array brings all its fields. A BigQuery array inside an array of STRUCTs is unnested again, and the limit of 500 entries (`max_columns`) counts every field and element entry.
 
 Notes on the numbers: on BigQuery the distinct counts and quartiles are approximate unless `--exact` is given (quartiles use `APPROX_QUANTILES`); on DuckDB they are exact. NaN and infinity are reported as `null`. A column whose values are all distinct lists no most common values. Text longer than 200 characters is cut. Top-value fractions are shares of the column's non-null values.
 
@@ -70,6 +74,6 @@ is a stdio [Model Context Protocol](https://modelcontextprotocol.io) server. Poi
 ## Limits
 
 - The BigQuery path was checked here by running the generated BigQuery SQL, translated to DuckDB, against test data, and by parsing every statement as BigQuery SQL; it was not run against a real BigQuery project from the sandbox that built it.
-- Nested fields inside a STRUCT are not profiled separately, and partitioned tables that *require* a partition filter need `--row-filter` to supply one.
+- Fields of a STRUCT and the elements of an array are profiled, but not JSON contents, maps, arrays of arrays (not valid in BigQuery anyway) or fixed-size DuckDB arrays; nesting deeper than 6 levels is listed under `skipped`. Partitioned tables that *require* a partition filter need `--row-filter` to supply one.
 - It is a table-level snapshot. Scheduling, publishing to a catalog, and writing results into BigQuery tables (which the Dataplex scan offers) are not built.
 - The UI does not show profiles yet.
