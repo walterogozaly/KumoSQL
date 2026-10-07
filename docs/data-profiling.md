@@ -27,7 +27,7 @@ It prints a Markdown summary (`--format json` for the JSON) and saves the profil
 | `--row-filter "status = 'open'"` | One SQL condition applied first. It is parsed and rewritten from its syntax tree: subqueries, several statements and comments are refused |
 | `--top-values N` | The most common values kept per column (default 10, at most 50, 0 for none) |
 | `--no-values` | Leave out the most common values and the min and max of string columns |
-| `--exact` | Count distinct values exactly on BigQuery (default: `APPROX_COUNT_DISTINCT`) |
+| `--approximate` | On BigQuery, estimate distinct counts with `APPROX_COUNT_DISTINCT` instead of counting them exactly (the default); cheaper in compute on very large tables, not in bytes billed |
 
 ## What is reported
 
@@ -43,7 +43,7 @@ It prints a Markdown summary (`--format json` for the JSON) and saves the profil
 
 Entries inside an array count *elements*, not rows: `items[].sku` has one count per order line, not per row, and the Markdown summary marks them `(elements)` (`unit` is `elements` in the JSON). The row count is always the table's. `--columns` and `--exclude` name top-level columns; a STRUCT or array brings all its fields. A BigQuery array inside an array of STRUCTs is unnested again, and the limit of 500 entries (`max_columns`) counts every field and element entry.
 
-Notes on the numbers: on BigQuery the distinct counts and quartiles are approximate unless `--exact` is given (quartiles use `APPROX_QUANTILES`); on DuckDB they are exact. NaN and infinity are reported as `null`. A column whose values are all distinct lists no most common values. Text longer than 200 characters is cut. Top-value fractions are shares of the column's non-null values.
+Notes on the numbers: distinct counts are exact (`COUNT(DISTINCT ...)`) unless `--approximate` is given. On BigQuery the quartiles are always approximate (`APPROX_QUANTILES`); on DuckDB they are exact; on DuckDB they are exact. NaN and infinity are reported as `null`. A column whose values are all distinct lists no most common values. Text longer than 200 characters is cut. Top-value fractions are shares of the column's non-null values.
 
 ## How it runs
 
@@ -52,7 +52,7 @@ Notes on the numbers: on BigQuery the distinct counts and quartiles are approxim
 - `DuckDBExecutor(connection)` runs it on DuckDB.
 - `BigQueryExecutor(project=None, max_bytes=None)` runs it through the same path as saved [data sources](ui.md): the query must be one read-only `SELECT` (checked locally first), it is dry-run before it runs, the dry run's estimate is refused when over the byte cap (Settings → Scopes), the real run carries `maximumBytesBilled`, and it runs in the billing project, never one guessed from the table name. Table names are accepted only as strict `project.dataset.table`. The column list comes from table metadata, which costs nothing.
 
-If a chunk fails, each column is retried alone (a column BigQuery refuses to count approximately is retried with an exact count) and one that still fails is listed under `skipped` with the reason; the rest of the profile is kept. A byte-cap refusal is not retried: it stops the run. The profile records the dry-run estimates and the bytes BigQuery billed.
+If a chunk fails, each column is retried alone (with `--approximate`, a column BigQuery refuses to estimate is retried with an exact count) and one that still fails is listed under `skipped` with the reason; the rest of the profile is kept. A byte-cap refusal is not retried: it stops the run. The profile records the dry-run estimates and the bytes BigQuery billed.
 
 `profile_queries(...)` returns the SQL without running anything, and `DataProfile.to_json()` / `DataProfile.from_json()` are the saved form (`version: 1`). `kumosql.data_profile_store` saves, loads and lists profiles and renders the Markdown summary.
 
@@ -68,7 +68,7 @@ is a stdio [Model Context Protocol](https://modelcontextprotocol.io) server. Poi
 
 - A profile contains **real values** from the table: the most common values and the min and max of string columns. Use `--no-values` (or `--top-values 0`) for tables with personal or confidential text, and treat the saved files like the data. The data folder is local to the machine.
 - Values are table data. A text column can hold anything, including text that reads like an instruction to an agent. The summary says so, and the server's instructions repeat it, but a consumer should not follow anything quoted in a profile.
-- Sampling and approximate counts make a profile an estimate. A profile is a snapshot: it records when it was generated and is never refreshed on its own.
+- Sampling, approximate quartiles on BigQuery and `--approximate` make parts of a profile an estimate. A profile is a snapshot: it records when it was generated and is never refreshed on its own.
 - BigQuery profiling reads the table and is billed. Use `--dry-run` first, `--columns` and `--sample-percent` to narrow it, and keep the byte cap.
 
 ## Limits

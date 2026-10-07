@@ -675,7 +675,7 @@ def _top_items(chunk: Sequence[Item]) -> list[Item]:
 
 def profile_queries(table: str, executor: Executor, *, include: Iterable[str] | None = None,
                     exclude: Iterable[str] = (), sample_percent: float | None = None, row_filter: str | None = None,
-                    top_values: int = DEFAULT_TOP_VALUES, include_values: bool = True, approximate: bool = True,
+                    top_values: int = DEFAULT_TOP_VALUES, include_values: bool = True, approximate: bool = False,
                     max_columns: int = DEFAULT_MAX_COLUMNS, chunk_size: int = DEFAULT_CHUNK) -> list[str]:
     """The SQL :func:`profile_table` would send for each chunk (nothing is run), statistics then top values."""
 
@@ -694,7 +694,7 @@ def profile_queries(table: str, executor: Executor, *, include: Iterable[str] | 
 
 def profile_table(table: str, executor: Executor, *, include: Iterable[str] | None = None,
                   exclude: Iterable[str] = (), sample_percent: float | None = None, row_filter: str | None = None,
-                  top_values: int = DEFAULT_TOP_VALUES, include_values: bool = True, approximate: bool = True,
+                  top_values: int = DEFAULT_TOP_VALUES, include_values: bool = True, approximate: bool = False,
                   max_columns: int = DEFAULT_MAX_COLUMNS, chunk_size: int = DEFAULT_CHUNK,
                   now: Callable[[], datetime] | None = None) -> DataProfile:
     """Profile ``table`` with ``executor``.
@@ -704,8 +704,8 @@ def profile_table(table: str, executor: Executor, *, include: Iterable[str] | No
     elements, not rows. ``include`` and ``exclude`` name top-level columns.
 
     ``sample_percent`` profiles a random share of the rows (BigQuery ``TABLESAMPLE SYSTEM``, which
-    reads whole blocks); ``row_filter`` is one SQL condition applied to the rows first. ``approximate``
-    lets BigQuery estimate distinct counts (DuckDB always counts exactly). ``top_values`` is how many
+    reads whole blocks); ``row_filter`` is one SQL condition applied to the rows first. distinct counts are exact; ``approximate``
+    lets BigQuery estimate them instead (``APPROX_COUNT_DISTINCT``, cheaper on very large tables). ``top_values`` is how many
     of the most common values each column keeps (0 for none). Raises :class:`ProfileError`, and
     :class:`ByteCapExceeded` when a BigQuery dry run is over the cap.
     """
@@ -745,8 +745,8 @@ def profile_table(table: str, executor: Executor, *, include: Iterable[str] | No
         except ByteCapExceeded:
             raise
         except ProfileError:
-            # One column BigQuery cannot aggregate this way must not cost the others; try each alone, and a
-            # column whose approximate distinct count is refused once more with an exact one.
+            # One column BigQuery cannot aggregate this way must not cost the others; try each alone (with
+            # ``approximate``, a column whose estimated distinct count is refused is tried once more exactly).
             for one in ([item] for item in chunk):
                 try:
                     try:
@@ -787,6 +787,8 @@ def profile_table(table: str, executor: Executor, *, include: Iterable[str] | No
         notes.append("sampled: counts describe the sample, not the whole table; most common value fractions are approximate")
     if dialect == "bigquery" and approximate:
         notes.append("distinct counts are approximate (APPROX_COUNT_DISTINCT) and quartiles use APPROX_QUANTILES")
+    elif dialect == "bigquery" and any(item.kind == "numeric" for item in items):
+        notes.append("distinct counts are exact; quartiles are approximate (APPROX_QUANTILES)")
     stamp = (now or (lambda: datetime.now(timezone.utc)))()
     return DataProfile(
         table=table, dialect=dialect, generated_at=stamp.strftime("%Y-%m-%dT%H:%M:%SZ"), row_count=rows_total,

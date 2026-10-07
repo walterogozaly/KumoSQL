@@ -273,7 +273,7 @@ def test_nested_bigquery_sql_gives_the_same_answers_when_run_on_duckdb():
             names = [item[0] for item in cursor.description]
             return [dict(zip(names, [None if v is None else str(v) for v in row])) for row in cursor.fetchall()]
 
-    bigquery = profile_table("proj.ds.people", Translated(), approximate=False, now=NOW)
+    bigquery = profile_table("proj.ds.people", Translated(), now=NOW)
     native = profile_table("people", DuckDBExecutor(connection), now=NOW)
     assert bigquery.skipped == [] and bigquery.row_count == native.row_count == 4
     wanted = ("name", "kind", "unit", "non_null", "null_count", "distinct", "min", "max", "min_length", "max_length", "mean_length")
@@ -317,7 +317,8 @@ def test_bigquery_profile_runs_valid_read_only_sql_in_the_billing_project(db, mo
     fake = FakeBigQuery(db, monkeypatch)
     profile = profile_table("proj.ds.orders", BigQueryExecutor(), now=NOW)
     assert profile.dialect == "bigquery" and profile.row_count == 100
-    assert profile.approximate_distinct and any("APPROX_COUNT_DISTINCT" in note for note in profile.notes)
+    assert not profile.approximate_distinct and any("distinct counts are exact" in note for note in profile.notes)
+    assert not any("APPROX_COUNT_DISTINCT" in sql for sql, _p, _m in fake.sent) and any("COUNT(DISTINCT" in sql for sql, _p, _m in fake.sent)
     assert {call[1] for call in fake.sent} == {"bill-proj"}
     assert {call[2] for call in fake.sent} == {scope_queries.get_settings().max_bytes_billed}
     assert all(sql.count("`proj.ds.orders`") >= 1 for sql, _p, _m in fake.sent)
@@ -347,9 +348,10 @@ def test_bigquery_sql_parses_as_bigquery_and_uses_its_functions(db):
     stats = queries[0]
     assert "APPROX_QUANTILES(k0, 4)[OFFSET(2)]" in stats and "CAST(MIN(k2) AS STRING)" in stats
     assert "TABLESAMPLE SYSTEM (10 PERCENT)" in stats and "WHERE (a > 1 AND b = 'x')" in stats
-    assert "COALESCE(ARRAY_LENGTH(k4), 0)" in stats and "APPROX_COUNT_DISTINCT(k4)" not in stats
-    exact = profile_queries("proj.ds.orders", Plain(), approximate=False)[0]
-    assert "COUNT(DISTINCT k0)" in exact and "APPROX_COUNT_DISTINCT" not in exact
+    assert "COALESCE(ARRAY_LENGTH(k4), 0)" in stats and "COUNT(DISTINCT k4)" not in stats
+    assert "COUNT(DISTINCT k0)" in stats and "APPROX_COUNT_DISTINCT" not in stats  # exact is the default
+    estimate = profile_queries("proj.ds.orders", Plain(), approximate=True)[0]
+    assert "APPROX_COUNT_DISTINCT(k0)" in estimate and "COUNT(DISTINCT" not in estimate
 
 
 def test_bigquery_falls_back_to_exact_distinct_and_then_skips(db, monkeypatch):
@@ -361,7 +363,7 @@ def test_bigquery_falls_back_to_exact_distinct_and_then_skips(db, monkeypatch):
         return None
 
     fake = FakeBigQuery(db, monkeypatch, fail)
-    profile = profile_table("proj.ds.orders", BigQueryExecutor(), now=NOW)
+    profile = profile_table("proj.ds.orders", BigQueryExecutor(), approximate=True, now=NOW)
     assert by_name(profile)["amount"].distinct == 100
     assert [item["name"] for item in profile.skipped] == ["note"] and "broken" in profile.skipped[0]["error"]
     assert any("COUNT(DISTINCT k2)" in sql for sql, _p, _m in fake.sent)
