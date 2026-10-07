@@ -40,7 +40,8 @@ def _parser() -> argparse.ArgumentParser:
                         help=f"most common values kept per column, 0 for none (default {data_profile.DEFAULT_TOP_VALUES})")
     parser.add_argument("--no-values", action="store_true",
                         help="leave out the most common values and the min and max of string columns")
-    parser.add_argument("--exact", action="store_true", help="count distinct values exactly on BigQuery (default: approximate)")
+    parser.add_argument("--approximate", action="store_true",
+                        help="estimate distinct counts on BigQuery with APPROX_COUNT_DISTINCT (default: exact)")
     parser.add_argument("--dry-run", action="store_true", help="print the queries (and BigQuery's byte estimate) and run nothing")
     parser.add_argument("--format", choices=("summary", "json"), default="summary", help="what to print (default summary, Markdown)")
     parser.add_argument("-o", "--output", type=Path, help="also write the printed text to this file")
@@ -89,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
         options = dict(
             include=split(args.columns), exclude=split(args.exclude) or (), sample_percent=args.sample_percent,
             row_filter=args.row_filter, top_values=args.top_values, include_values=not args.no_values,
-            approximate=not args.exact,
+            approximate=args.approximate,
         )
         if args.dry_run:
             return _dry_run(table, executor, options)
