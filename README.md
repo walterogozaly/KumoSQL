@@ -883,6 +883,10 @@ python tools/transformation_bench.py tpch tpcds job --json results.json
 
 `tools/llmr2_bench.py` repeats this at scale on the [LLM-R2](https://github.com/DAMO-NLP-SG/LLM-R2) query sets: 11,353 TPC-H, DSB and synthetic JOB queries, with LLM-R2's test files held out. See [docs/evals/llmr2-bench.md](docs/evals/llmr2-bench.md).
 
+## Data profiling
+
+`python -m kumosql profile-table project.dataset.table` (or `--file data.csv`, or `--duckdb FILE TABLE`) summarizes what is stored in a table, like BigQuery's data profile scan, which is a managed Dataplex service and not open source: the row count and, per column, nulls, distinct values, min, max, mean, quartiles, string lengths and the most common values. It writes read-only SQL, runs BigQuery queries under the dry run and byte cap used for every other BigQuery query (`--dry-run` shows the estimate and runs nothing), and saves the profile in the data folder. `python -m kumosql profile-mcp` serves the saved profiles to agents as read-only MCP resources. A profile quotes real values; `--no-values` leaves them out. See [docs/data-profiling.md](docs/data-profiling.md).
+
 ## BigQuery test bed
 
 `examples/bq_testbed/` builds a deliberately messy, low-cost model layer over a public dataset and runs a query workload to build up job history. See [docs/bigquery-testbed.md](docs/bigquery-testbed.md) for setup, cost guards and access roles.
@@ -906,6 +910,8 @@ Every command prints `--help`.
 | `python -m kumosql minimize-tables CASE.json` | Return the simplest set of tables (sqlfluff complexity) that keeps every protected table proved unchanged |
 | `python -m kumosql reduce-project DIR --keep NAME` | Return the smallest Dataform project that keeps the named outputs proved unchanged, as a patch (`--patch -`, `--write`) |
 | `python -m kumosql shared-model DIR [ID]` | List CTEs repeated across Dataform models, or write the patch that moves one into a shared model, checked by the prover |
+| `python -m kumosql profile-table TABLE` | Profile a table's values (BigQuery `project.dataset.table`, `--file`, or `--duckdb`): nulls, distinct, min, max, quartiles, top values; `--dry-run`, `--sample-percent`, `--no-values` |
+| `python -m kumosql profile-mcp` | Serve saved data profiles to agents as read-only MCP resources over stdio |
 | `python -m kumosql prove-tables LEFT RIGHT --project DIR` | Prove two models of a Dataform project equivalent, layer by layer, using saved equivalences |
 | `python -m kumosql equivalence list\|add\|remove` | Saved "column X of table A is column Y of table B" declarations |
 | `python -m kumosql pipeline-report` | Whole-pipeline lineage, impact, duplicates, coverage and release gate |
