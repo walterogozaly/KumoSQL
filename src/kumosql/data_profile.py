@@ -36,7 +36,7 @@ from .sql_validation import quote_table_path, validate_readonly_query
 
 __all__ = [
     "BigQueryExecutor", "ByteCapExceeded", "ColumnProfile", "DataProfile", "DuckDBExecutor", "Executor",
-    "ProfileError", "TopValue", "classify", "profile_table", "profile_queries",
+    "Node", "ProfileError", "TopValue", "classify", "profile_table", "profile_queries",
 ]
 
 VERSION = 1
@@ -45,7 +45,8 @@ MAX_TOP_VALUES = 50
 DEFAULT_MAX_COLUMNS = 500
 DEFAULT_CHUNK = 20
 MAX_TEXT = 200
-KINDS = ("numeric", "string", "boolean", "temporal", "other")
+KINDS = ("numeric", "string", "boolean", "temporal", "array", "other")
+MAX_DEPTH = 6
 
 
 class ProfileError(ValueError):
@@ -91,11 +92,12 @@ class ColumnProfile:
     mean_length: float | None = None
     top_values: list[TopValue] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)  # all_null, constant, unique
+    unit: str = "rows"  # "elements" for a field inside an array: counts are over the array elements
 
     def to_json(self) -> dict:
         data = {name: getattr(self, name) for name in (
             "name", "type", "kind", "non_null", "null_count", "null_fraction", "distinct", "unique_fraction",
-            "min", "max", "mean", "stddev", "p25", "median", "p75", "min_length", "max_length", "mean_length")}
+            "min", "max", "mean", "stddev", "p25", "median", "p75", "min_length", "max_length", "mean_length", "unit")}
         data["top_values"] = [item.to_json() for item in self.top_values]
         data["flags"] = list(self.flags)
         return data
@@ -173,6 +175,35 @@ def classify(type_name: str) -> str:
     return "other"
 
 
+@dataclass(frozen=True)
+class Node:
+    """A column or a field inside a STRUCT: its type, whether it is repeated (an array) and, for a STRUCT, its fields."""
+
+    name: str
+    type: str
+    repeated: bool = False
+    children: tuple["Node", ...] | None = None
+
+
+@dataclass(frozen=True)
+class Item:
+    """One thing to profile: a column, a STRUCT field (``address.city``) or array elements (``tags[]``).
+
+    ``expr`` is its SQL in terms of the table and of the ``e1``, ``e2`` names that ``unnests`` introduce, in order,
+    one ``UNNEST`` per array between the table and the item."""
+
+    index: int
+    name: str
+    type: str
+    kind: str
+    expr: str
+    unnests: tuple[str, ...] = ()
+
+    @property
+    def alias(self) -> str:
+        return f"k{self.index}"
+
+
 # ------------------------------------------------------------------ SQL text
 
 
@@ -215,17 +246,39 @@ def _checked_filter(row_filter: str | None, dialect: str) -> str | None:
     return nodes[0].sql(dialect=dialect, comments=False)
 
 
-def _source(table_sql: str, dialect: str, sample_percent: float | None, row_filter: str | None, columns: str) -> str:
+def _field(expr: str, name: str, dialect: str) -> str:
+    if dialect == "bigquery":
+        return f"{expr}.{_ident(name, dialect)}"
+    return f"struct_extract({expr}, {_literal(name)})"
+
+
+def _source(table_sql: str, dialect: str, sample_percent: float | None, row_filter: str | None,
+            items: Sequence[Item]) -> str:
+    """``SELECT <each item as its alias> FROM table [sample] [CROSS JOIN UNNEST ...] [WHERE filter]``."""
+
     sample = ""
     if sample_percent is not None:
         sample = (f" TABLESAMPLE SYSTEM ({sample_percent:g} PERCENT)" if dialect == "bigquery"
                   else f" TABLESAMPLE bernoulli ({sample_percent:g} PERCENT)")
+    unnests = items[0].unnests if items else ()
+    joins = "".join(
+        f" CROSS JOIN UNNEST({expr}) AS e{n}" if dialect == "bigquery" else f" CROSS JOIN UNNEST({expr}) AS u{n}(e{n})"
+        for n, expr in enumerate(unnests, 1))
     where = f" WHERE ({row_filter})" if row_filter else ""
-    return f"SELECT {columns} FROM {table_sql}{sample}{where}"
+    columns = ", ".join(f"{item.expr} AS {item.alias}" for item in items) or "1 AS x"
+    return f"SELECT {columns} FROM {table_sql}{sample}{joins}{where}"
 
 
-def _stats_select(i: int, name: str, kind: str, dialect: str, approximate: bool, values: bool) -> list[str]:
-    col, p, text = _ident(name, dialect), f"c{i}_", _text_type(dialect)
+def _length(col: str, dialect: str) -> str:
+    return f"COALESCE(ARRAY_LENGTH({col}), 0)" if dialect == "bigquery" else f"COALESCE(len({col}), 0)"
+
+
+def _stats_select(item: Item, dialect: str, approximate: bool, values: bool) -> list[str]:
+    col, p, text, kind = item.alias, f"c{item.index}_", _text_type(dialect), item.kind
+    if kind == "array":  # present when it has elements; an empty array and a NULL one both count as missing
+        size = _length(col, dialect)
+        return [f"COUNT(CASE WHEN {size} > 0 THEN 1 END) AS {p}n", f"MIN({size}) AS {p}minlen",
+                f"MAX({size}) AS {p}maxlen", f"AVG({size}) AS {p}meanlen"]
     parts = [f"COUNT({col}) AS {p}n"]
     if kind == "other":
         return parts
@@ -251,16 +304,56 @@ def _stats_select(i: int, name: str, kind: str, dialect: str, approximate: bool,
     return parts
 
 
-def _top_sql(chunk: Sequence[tuple[int, str, str]], base: str, dialect: str, limit: int) -> str:
+def _top_sql(chunk: Sequence[Item], base: str, dialect: str, limit: int) -> str:
     text = _text_type(dialect)
     branches = []
-    for i, name, _kind in chunk:
-        col = _ident(name, dialect)
+    for item in chunk:
+        col = item.alias
         branches.append(
-            f"SELECT {_literal(str(i))} AS kumo_col, kumo_v, kumo_n FROM (SELECT CAST({col} AS {text}) AS kumo_v, "
+            f"SELECT {_literal(str(item.index))} AS kumo_col, kumo_v, kumo_n FROM (SELECT CAST({col} AS {text}) AS kumo_v, "
             f"COUNT(*) AS kumo_n FROM src WHERE {col} IS NOT NULL GROUP BY 1 ORDER BY kumo_n DESC, kumo_v LIMIT {limit})"
         )
     return f"WITH src AS ({base}) " + " UNION ALL ".join(branches)
+
+
+_BQ_TYPES = {"INTEGER": "INT64", "FLOAT": "FLOAT64", "BOOLEAN": "BOOL", "RECORD": "STRUCT"}
+
+
+def _bigquery_nodes(fields: Sequence[object]) -> list[Node]:
+    nodes = []
+    for item in fields:
+        if not isinstance(item, dict) or not item.get("name"):
+            continue
+        kind = str(item.get("type") or "").upper()
+        kind = _BQ_TYPES.get(kind, kind)
+        children = tuple(_bigquery_nodes(item.get("fields") or [])) if kind == "STRUCT" else None
+        nodes.append(Node(str(item["name"]), kind, str(item.get("mode") or "").upper() == "REPEATED", children))
+    return nodes
+
+
+def _duckdb_node(name: str, type_text: str) -> Node:
+    """A column from DuckDB's type text: ``STRUCT(a INTEGER, b VARCHAR[])[]`` becomes a repeated STRUCT node.
+
+    Fixed-size arrays, arrays of arrays, maps and unions are left as one value of that type."""
+
+    try:
+        parsed = sqlglot.exp.DataType.build(type_text, dialect="duckdb")
+    except Exception:  # noqa: BLE001 - a type sqlglot cannot read is still a column
+        return Node(name, type_text)
+    return _duckdb_shape(name, parsed, type_text)
+
+
+def _duckdb_shape(name: str, parsed: exp.DataType, type_text: str) -> Node:
+    if parsed.this == exp.DataType.Type.STRUCT:
+        fields = [item for item in parsed.expressions if isinstance(item, exp.ColumnDef) and isinstance(item.args.get("kind"), exp.DataType)]
+        if len(fields) == len(parsed.expressions):
+            return Node(name, "STRUCT", False, tuple(_duckdb_shape(f.name, f.args["kind"], f.args["kind"].sql("duckdb")) for f in fields))
+    if (parsed.this == exp.DataType.Type.ARRAY and len(parsed.expressions) == 1 and isinstance(parsed.expressions[0], exp.DataType)
+            and not re.search(r"\[\d+\]$", type_text)):
+        inner = _duckdb_shape(name, parsed.expressions[0], parsed.expressions[0].sql("duckdb"))
+        if not inner.repeated:
+            return Node(name, inner.type, True, inner.children)
+    return Node(name, type_text if parsed.this != exp.DataType.Type.STRUCT else "STRUCT")
 
 
 # --------------------------------------------------------------- executors
@@ -274,8 +367,8 @@ class Executor:
     def table_sql(self, table: str) -> str:
         raise NotImplementedError
 
-    def describe(self, table: str) -> dict[str, str]:
-        """``{column: type}`` in table order."""
+    def fields(self, table: str) -> list[Node]:
+        """The table's columns in order, STRUCT fields nested."""
         raise NotImplementedError
 
     def run(self, sql: str) -> list[dict]:
@@ -302,12 +395,12 @@ class DuckDBExecutor(Executor):
             raise ProfileError("a DuckDB table is named like `orders` or `main.orders`")
         return ".".join(_ident(part, "duckdb") for part in parts)
 
-    def describe(self, table: str) -> dict[str, str]:
+    def fields(self, table: str) -> list[Node]:
         try:
             rows = self.connection.execute(f"DESCRIBE {self.table_sql(table)}").fetchall()
         except Exception as exc:  # noqa: BLE001 - surface DuckDB's reason
             raise ProfileError(f"could not read the table: {str(exc).splitlines()[0]}") from None
-        return {str(row[0]): str(row[1]) for row in rows}
+        return [_duckdb_node(str(row[0]), str(row[1])) for row in rows]
 
     def run(self, sql: str) -> list[dict]:
         try:
@@ -345,8 +438,8 @@ class BigQueryExecutor(Executor):
         except ValueError as exc:
             raise ProfileError(str(exc)) from None
 
-    def describe(self, table: str) -> dict[str, str]:
-        from . import bigquery_catalog, schema_fetch
+    def fields(self, table: str) -> list[Node]:
+        from . import bigquery_catalog
 
         self.table_sql(table)
         project, dataset, name = table.split(".")
@@ -354,10 +447,10 @@ class BigQueryExecutor(Executor):
             metadata = bigquery_catalog.get_table(project, dataset, name)
         except Exception as exc:  # noqa: BLE001 - credentials, permissions, missing table
             raise ProfileError(f"could not read the table's schema from BigQuery: {exc}") from None
-        columns = schema_fetch.columns_of(metadata)
-        if not columns:
+        nodes = _bigquery_nodes(metadata.get("schema") or [])
+        if not nodes:
             raise ProfileError("BigQuery returned no schema for this table")
-        return columns
+        return nodes
 
     def _guard(self, sql: str) -> None:
         try:
@@ -457,14 +550,13 @@ def _fraction(part: int, whole: int) -> float | None:
     return round(min(part / whole, 1.0), 6) if whole else None
 
 
-def _column_profile(name: str, type_name: str, kind: str, i: int, row: dict, rows: int, values: bool) -> ColumnProfile:
-    p = f"c{i}_"
+def _column_profile(item: Item, row: dict, rows: int, values: bool) -> ColumnProfile:
+    p, kind = f"c{item.index}_", item.kind
     non_null = _count(row.get(p + "n"))
     nulls = max(rows - non_null, 0)
-    profile = ColumnProfile(name, type_name, kind, non_null, nulls, _fraction(nulls, rows))
-    if kind == "other":
-        pass
-    else:
+    profile = ColumnProfile(item.name, item.type, kind, non_null, nulls, _fraction(nulls, rows),
+                            unit="elements" if item.unnests else "rows")
+    if kind not in ("other", "array"):
         profile.distinct = min(_count(row.get(p + "d")), non_null)
         profile.unique_fraction = _fraction(profile.distinct, non_null)
     if kind == "numeric":
@@ -475,18 +567,18 @@ def _column_profile(name: str, type_name: str, kind: str, i: int, row: dict, row
         profile.p25, profile.median, profile.p75 = (_number(row.get(p + s)) for s in ("p25", "med", "p75"))
     elif kind == "temporal":
         profile.min, profile.max = _text(row.get(p + "min")), _text(row.get(p + "max"))
-    elif kind == "string":
-        if values:
+    elif kind in ("string", "array"):
+        if kind == "string" and values:
             profile.min, profile.max = _text(row.get(p + "min")), _text(row.get(p + "max"))
         low, high, mean = _number(row.get(p + "minlen")), _number(row.get(p + "maxlen")), _number(row.get(p + "meanlen"))
-        profile.min_length = int(low) if low is not None else None
+        profile.min_length = int(low) if low is not None else None  # for an array: its number of elements
         profile.max_length = int(high) if high is not None else None
         profile.mean_length = float(mean) if mean is not None else None
     if non_null == 0:
         profile.flags.append("all_null")
-    elif kind != "other" and profile.distinct == 1:
+    elif kind not in ("other", "array") and profile.distinct == 1:
         profile.flags.append("constant")
-    elif kind != "other" and profile.distinct == non_null and non_null > 1:
+    elif kind not in ("other", "array") and profile.distinct == non_null and non_null > 1:
         profile.flags.append("unique")
     return profile
 
@@ -494,23 +586,58 @@ def _column_profile(name: str, type_name: str, kind: str, i: int, row: dict, row
 # ------------------------------------------------------------------ driver
 
 
+def _expand(nodes: Sequence[Node], dialect: str, max_items: int) -> tuple[list[Item], list[dict]]:
+    """Every column, STRUCT field and array's elements as an :class:`Item`, in table order."""
+
+    items: list[Item] = []
+    skipped: list[dict] = []
+
+    def add(name, type_name, kind, expr, unnests):
+        items.append(Item(len(items), name, type_name, kind, expr, unnests))
+
+    def walk(node: Node, expr: str, display: str, unnests: tuple[str, ...], depth: int) -> None:
+        if len(items) >= max_items:
+            skipped.append({"name": display, "reason": "over_column_limit"})
+            return
+        if node.repeated:
+            add(display, f"ARRAY<{node.type}>", "array", expr, unnests)
+            if depth >= MAX_DEPTH:
+                skipped.append({"name": display + "[]", "reason": "too_deeply_nested"})
+                return
+            element = Node(node.name, node.type, False, node.children)
+            walk(element, f"e{len(unnests) + 1}", display + "[]", (*unnests, expr), depth + 1)
+        elif node.children is not None:
+            add(display, "STRUCT", "other", expr, unnests)
+            if depth >= MAX_DEPTH and node.children:
+                skipped.append({"name": display + ".*", "reason": "too_deeply_nested"})
+                return
+            for child in node.children:
+                walk(child, _field(expr, child.name, dialect), f"{display}.{child.name}", unnests, depth + 1)
+        else:
+            add(display, node.type, classify(node.type), expr, unnests)
+
+    for node in nodes:
+        walk(node, _ident(node.name, dialect), node.name, (), 0)
+    return items, skipped
+
+
 def _plan(table: str, executor: Executor, include: Iterable[str] | None, exclude: Iterable[str],
-          max_columns: int) -> tuple[list[tuple[int, str, str, str]], list[dict]]:
-    schema = executor.describe(table)
-    by_fold = {name.casefold(): name for name in schema}
-    names = list(schema)
+          max_columns: int) -> tuple[list[Item], list[dict]]:
+    """The items to profile. ``include`` and ``exclude`` name top-level columns; a STRUCT brings its fields."""
+
+    nodes = executor.fields(table)
+    by_fold = {node.name.casefold(): node for node in nodes}
+    chosen = nodes
     if include:
         wanted = []
-        for item in include:
-            if item.casefold() not in by_fold:
-                raise ProfileError(f"the table has no column {item!r}; it has {', '.join(schema)}")
-            wanted.append(by_fold[item.casefold()])
-        names = list(dict.fromkeys(wanted))
-    dropped = {item.casefold() for item in exclude}
-    names = [name for name in names if name.casefold() not in dropped]
-    skipped = [{"name": name, "reason": "over_column_limit"} for name in names[max_columns:]]
-    columns = [(i, name, schema[name], classify(schema[name])) for i, name in enumerate(names[:max_columns])]
-    return columns, skipped
+        for name in include:
+            if name.casefold() not in by_fold:
+                raise ProfileError(f"the table has no column {name!r}; it has {', '.join(node.name for node in nodes)}")
+            wanted.append(by_fold[name.casefold()])
+        chosen = list(dict.fromkeys(wanted))
+    dropped = {name.casefold() for name in exclude}
+    chosen = [node for node in chosen if node.name.casefold() not in dropped]
+    return _expand(chosen, executor.dialect, max_columns)
 
 
 def _clean_options(sample_percent, top_values, dialect, row_filter):
@@ -524,6 +651,28 @@ def _clean_options(sample_percent, top_values, dialect, row_filter):
     return sample_percent, _checked_filter(row_filter, dialect)
 
 
+def _groups(items: Sequence[Item], size: int) -> list[list[Item]]:
+    """Chunks of at most ``size`` items that share one set of ``UNNEST``s, so each chunk is a single query."""
+
+    size = max(1, size)
+    chunks: list[list[Item]] = []
+    for key in dict.fromkeys(item.unnests for item in items):
+        same = [item for item in items if item.unnests == key]
+        chunks += [same[start:start + size] for start in range(0, len(same), size)]
+    return chunks
+
+
+def _stats_sql(chunk: Sequence[Item], table_sql: str, dialect: str, sample_percent, flt, approximate: bool, values: bool) -> str:
+    parts = ["COUNT(*) AS rows_total"]
+    for item in chunk:
+        parts += _stats_select(item, dialect, approximate, values)
+    return f"SELECT {', '.join(parts)} FROM ({_source(table_sql, dialect, sample_percent, flt, chunk)})"
+
+
+def _top_items(chunk: Sequence[Item]) -> list[Item]:
+    return [item for item in chunk if item.kind not in ("other", "array")]
+
+
 def profile_queries(table: str, executor: Executor, *, include: Iterable[str] | None = None,
                     exclude: Iterable[str] = (), sample_percent: float | None = None, row_filter: str | None = None,
                     top_values: int = DEFAULT_TOP_VALUES, include_values: bool = True, approximate: bool = True,
@@ -533,25 +682,14 @@ def profile_queries(table: str, executor: Executor, *, include: Iterable[str] | 
     dialect = executor.dialect
     sample_percent, flt = _clean_options(sample_percent, top_values, dialect, row_filter)
     table_sql = executor.table_sql(table)
-    columns, _ = _plan(table, executor, include, exclude, max_columns)
+    items, _ = _plan(table, executor, include, exclude, max_columns)
     queries = []
-    for chunk in _chunks(columns, chunk_size) or [[]]:
-        parts = ["COUNT(*) AS rows_total"]
-        for i, name, _type, kind in chunk:
-            parts += _stats_select(i, name, kind, dialect, approximate, include_values)
-        names = ", ".join(_ident(name, dialect) for _i, name, _t, _k in chunk) or "1 AS x"
-        queries.append(f"SELECT {', '.join(parts)} FROM ({_source(table_sql, dialect, sample_percent, flt, names)})")
-        if top_values and include_values and chunk:
-            wide = [(i, name, kind) for i, name, _t, kind in chunk if kind != "other"]
-            if wide:
-                base = _source(table_sql, dialect, sample_percent, flt, names)
-                queries.append(_top_sql(wide, base, dialect, top_values))
+    for chunk in _groups(items, chunk_size) or [[]]:
+        queries.append(_stats_sql(chunk, table_sql, dialect, sample_percent, flt, approximate, include_values))
+        wide = _top_items(chunk)
+        if top_values and include_values and wide:
+            queries.append(_top_sql(wide, _source(table_sql, dialect, sample_percent, flt, chunk), dialect, top_values))
     return queries
-
-
-def _chunks(columns: list, size: int) -> list[list]:
-    size = max(1, size)
-    return [columns[start:start + size] for start in range(0, len(columns), size)]
 
 
 def profile_table(table: str, executor: Executor, *, include: Iterable[str] | None = None,
@@ -560,6 +698,10 @@ def profile_table(table: str, executor: Executor, *, include: Iterable[str] | No
                   max_columns: int = DEFAULT_MAX_COLUMNS, chunk_size: int = DEFAULT_CHUNK,
                   now: Callable[[], datetime] | None = None) -> DataProfile:
     """Profile ``table`` with ``executor``.
+
+    A STRUCT column is followed by one entry per field (``address.city``). An array column is reported with
+    its number of elements, followed by its elements (``tags[]``, ``items[].sku``), whose counts are over
+    elements, not rows. ``include`` and ``exclude`` name top-level columns.
 
     ``sample_percent`` profiles a random share of the rows (BigQuery ``TABLESAMPLE SYSTEM``, which
     reads whole blocks); ``row_filter`` is one SQL condition applied to the rows first. ``approximate``
@@ -571,35 +713,31 @@ def profile_table(table: str, executor: Executor, *, include: Iterable[str] | No
     dialect = executor.dialect
     sample_percent, flt = _clean_options(sample_percent, top_values, dialect, row_filter)
     table_sql = executor.table_sql(table)
-    columns, skipped = _plan(table, executor, include, exclude, max_columns)
+    items, skipped = _plan(table, executor, include, exclude, max_columns)
     notes: list[str] = []
     profiles: dict[int, ColumnProfile] = {}
     rows_total: int | None = None
 
-    def stats(chunk: list, approx: bool = approximate) -> tuple[dict, int]:
-        parts = ["COUNT(*) AS rows_total"]
-        for i, name, _type, kind in chunk:
-            parts += _stats_select(i, name, kind, dialect, approx, include_values)
-        names = ", ".join(_ident(name, dialect) for _i, name, _t, _k in chunk) or "1 AS x"
-        result = executor.run(f"SELECT {', '.join(parts)} FROM ({_source(table_sql, dialect, sample_percent, flt, names)})")
+    def stats(chunk: list[Item], approx: bool = approximate) -> tuple[dict, int]:
+        result = executor.run(_stats_sql(chunk, table_sql, dialect, sample_percent, flt, approx, include_values))
         row = result[0] if result else {}
         return row, _count(row.get("rows_total"))
 
-    def tops(chunk: list, _count_unused: int) -> dict[int, list[TopValue]]:
-        wide = [(i, name, kind) for i, name, _t, kind in chunk if kind != "other"]
-        found: dict[int, list[TopValue]] = {i: [] for i, _n, _k in wide}
+    def tops(chunk: list[Item]) -> dict[int, list[TopValue]]:
+        wide = _top_items(chunk)
+        found: dict[int, list[TopValue]] = {item.index: [] for item in wide}
         if not wide:
             return found
-        names = ", ".join(_ident(name, dialect) for _i, name, _t, _k in chunk)
-        for item in executor.run(_top_sql(wide, _source(table_sql, dialect, sample_percent, flt, names), dialect, top_values)):
+        sql = _top_sql(wide, _source(table_sql, dialect, sample_percent, flt, chunk), dialect, top_values)
+        for item in executor.run(sql):
             i = _count(item.get("kumo_col"))
             if i in found and item.get("kumo_v") is not None:
                 found[i].append(TopValue(_text(item["kumo_v"]) or "", _count(item.get("kumo_n")), None))
         return found
 
-    if not columns:
+    if not items:
         _row, rows_total = stats([])
-    for chunk in _chunks(columns, chunk_size):
+    for chunk in _groups(items, chunk_size):
         done = []
         try:
             row, count = stats(chunk)
@@ -609,7 +747,7 @@ def profile_table(table: str, executor: Executor, *, include: Iterable[str] | No
         except ProfileError:
             # One column BigQuery cannot aggregate this way must not cost the others; try each alone, and a
             # column whose approximate distinct count is refused once more with an exact one.
-            for one in ([c] for c in chunk):
+            for one in ([item] for item in chunk):
                 try:
                     try:
                         row, count = stats(one)
@@ -621,28 +759,30 @@ def profile_table(table: str, executor: Executor, *, include: Iterable[str] | No
                 except ByteCapExceeded:
                     raise
                 except ProfileError as inner:
-                    skipped.append({"name": one[0][1], "reason": "error", "error": str(inner)[:300]})
+                    skipped.append({"name": one[0].name, "reason": "error", "error": str(inner)[:300]})
         for part, row, count in done:
-            if rows_total is None:
+            if rows_total is None and not part[0].unnests:
                 rows_total = count
-            for i, name, type_name, kind in part:
-                profiles[i] = _column_profile(name, type_name, kind, i, row, count, include_values)
+            for item in part:
+                profiles[item.index] = _column_profile(item, row, count, include_values)
             if top_values and include_values:
                 try:
-                    found = tops(part, count)
+                    found = tops(part)
                 except ByteCapExceeded:
                     raise
                 except ProfileError as exc:
                     notes.append(f"most common values were skipped for {len(part)} column(s): {str(exc)[:200]}")
                     continue
-                for i, items in found.items():
+                for i, values in found.items():
                     profile = profiles[i]
-                    for item in items:
-                        item.fraction = _fraction(item.count, profile.non_null)
+                    for value in values:
+                        value.fraction = _fraction(value.count, profile.non_null)
                     # A column whose values are all different has no "most common" one; listing ten is noise.
-                    profile.top_values = [] if "unique" in profile.flags else items
-    if rows_total is None:  # every column failed: the row count is still worth having
+                    profile.top_values = [] if "unique" in profile.flags else values
+    if rows_total is None:  # no top-level column was profiled: the row count is still worth having
         _row, rows_total = stats([])
+    if any(item.unnests for item in items):
+        notes.append("fields inside arrays are profiled over the array elements: their counts are elements, not rows")
     if sample_percent is not None:
         notes.append("sampled: counts describe the sample, not the whole table; most common value fractions are approximate")
     if dialect == "bigquery" and approximate:

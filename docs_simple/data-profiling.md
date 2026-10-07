@@ -23,6 +23,8 @@ You get a summary like this (shortened):
 | channel  | VARCHAR | 0.0%  | 1        | same | same |       | constant |
 ```
 
+Nested data is covered too. A STRUCT column gets one line per field (`address.city`), and a repeated column (an array) gets how many items each row has, then one line for its items (`tags[]`, or `orders[].sku` for a field inside a list of records). Lines marked "(elements)" count items, not rows.
+
 A `unique` flag means every value differs (likely a key). `constant` means the column holds one value. `all_null` means it is never filled in.
 
 ## On BigQuery

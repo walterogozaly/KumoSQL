@@ -9,9 +9,9 @@ import duckdb
 import pytest
 import sqlglot
 
-from kumosql import bigquery_catalog, data_profile_cli, data_profile_store as store, data_sources, profile_mcp, scope_queries, state
+from kumosql import bigquery_catalog, data_profile, data_profile_cli, data_profile_store as store, data_sources, profile_mcp, scope_queries, state
 from kumosql.data_profile import (
-    BigQueryExecutor, ByteCapExceeded, DataProfile, DuckDBExecutor, ProfileError, classify, profile_queries, profile_table,
+    BigQueryExecutor, ByteCapExceeded, DataProfile, DuckDBExecutor, Node, ProfileError, classify, profile_queries, profile_table,
 )
 from kumosql.sql_validation import validate_readonly_query
 
@@ -66,8 +66,9 @@ def test_duckdb_profile_matches_the_data(db):
     assert (columns["placed"].kind, columns["placed"].min, columns["placed"].max) == ("temporal", "2024-01-01", "2024-01-10")
     assert columns["channel"].flags == ["constant"]
     assert columns["note"].flags == ["all_null"] and columns["note"].null_fraction == 1.0
-    # Arrays are counted for nulls only.
-    assert columns["tags"].kind == "other" and columns["tags"].distinct is None and columns["tags"].null_count == 0
+    # An array is reported by its length, then its elements (see the nested-field tests).
+    assert columns["tags"].kind == "array" and columns["tags"].distinct is None and columns["tags"].min_length == 1
+    assert columns["tags[]"].unit == "elements" and columns["tags[]"].non_null == 100
 
 
 def test_options_narrow_the_profile(db):
@@ -129,7 +130,7 @@ def test_a_column_that_fails_is_skipped_not_fatal(db):
             return super().run(sql)
 
     profile = profile_table("orders", Flaky(db), now=NOW)
-    assert "amount" not in by_name(profile) and len(profile.columns) == 8
+    assert "amount" not in by_name(profile) and len(profile.columns) == 9
     assert profile.skipped == [{"name": "amount", "reason": "error", "error": "cannot aggregate amount"}]
 
 
@@ -139,6 +140,146 @@ def test_classify():
     assert [classify(t) for t in ("DATE", "TIMESTAMP", "DATETIME", "TIME", "TIMESTAMP WITH TIME ZONE")] == ["temporal"] * 5
     assert [classify(t) for t in ("BOOL", "BOOLEAN")] == ["boolean"] * 2
     assert [classify(t) for t in ("ARRAY<INT64>", "STRUCT", "JSON", "GEOGRAPHY", "BYTES", "INT[]", "UNKNOWN", "")] == ["other"] * 8
+
+
+def nested_db():
+    connection = duckdb.connect()
+    connection.execute("""
+        CREATE TABLE people AS SELECT * FROM (VALUES
+            (1, {'city': 'Oslo', 'geo': {'lat': 59.9}}, [{'sku': 'a', 'qty': 1}, {'sku': 'b', 'qty': 2}], [10, 20]),
+            (2, {'city': 'Oslo', 'geo': {'lat': 60.4}}, [{'sku': 'a', 'qty': 3}], [30]),
+            (3, {'city': 'Rome', 'geo': {'lat': NULL}}, [], NULL),
+            (4, NULL, NULL, [40, 50, 60])
+        ) v(id, address, orders, scores)""")
+    return connection
+
+
+def test_struct_fields_and_array_elements_are_profiled(tmp_path):
+    profile = profile_table("people", DuckDBExecutor(nested_db()), now=NOW)
+    columns = by_name(profile)
+    assert [column.name for column in profile.columns] == [
+        "id", "address", "address.city", "address.geo", "address.geo.lat", "orders", "orders[]", "orders[].sku",
+        "orders[].qty", "scores", "scores[]"]
+    assert profile.row_count == 4
+
+    assert (columns["address"].kind, columns["address"].non_null, columns["address"].null_count) == ("other", 3, 1)
+    city = columns["address.city"]
+    assert (city.unit, city.non_null, city.null_count, city.distinct) == ("rows", 3, 1, 2)
+    assert {item.value: item.count for item in city.top_values} == {"Oslo": 2, "Rome": 1}
+    lat = columns["address.geo.lat"]
+    assert (lat.non_null, lat.min, lat.max) == (2, 59.9, 60.4)
+
+    # An array is reported with its length (a missing or empty array counts as missing), then its elements.
+    orders = columns["orders"]
+    assert (orders.kind, orders.unit, orders.non_null, orders.null_count) == ("array", "rows", 2, 2)
+    assert (orders.min_length, orders.max_length, orders.mean_length) == (0, 2, 0.75)
+    assert columns["orders[]"].unit == "elements" and columns["orders[]"].non_null == 3
+    sku, qty = columns["orders[].sku"], columns["orders[].qty"]
+    assert (sku.unit, sku.non_null, sku.distinct) == ("elements", 3, 2)
+    assert {item.value: item.count for item in sku.top_values} == {"a": 2, "b": 1}
+    assert (qty.min, qty.max, qty.mean) == (1, 3, 2.0)
+    scores = columns["scores[]"]
+    assert (scores.non_null, scores.min, scores.max, scores.distinct) == (6, 10, 60, 6)
+    assert any("array elements" in note for note in profile.notes)
+
+    summary = store.to_markdown(profile)
+    assert "| orders[].sku (elements) |" in summary and "- Elements per row: 0 to 2, average 0.75" in summary
+    assert DataProfile.from_json(profile.to_json()).to_json() == profile.to_json()
+
+
+def test_nested_fields_honour_columns_filter_and_sampling():
+    executor = DuckDBExecutor(nested_db())
+    only = profile_table("people", executor, include=["ORDERS"], now=NOW)
+    assert [column.name for column in only.columns] == ["orders", "orders[]", "orders[].sku", "orders[].qty"]
+    assert only.row_count == 4  # the row count comes from the table, not the array elements
+    without = profile_table("people", executor, exclude=["address", "orders", "scores"], now=NOW)
+    assert [column.name for column in without.columns] == ["id"]
+    filtered = profile_table("people", executor, row_filter="id <= 2", now=NOW)
+    assert by_name(filtered)["orders[].sku"].non_null == 3 and by_name(filtered)["scores[]"].non_null == 3
+    quiet = profile_table("people", executor, include_values=False, now=NOW)
+    assert by_name(quiet)["orders[].sku"].top_values == [] and by_name(quiet)["address.city"].min is None
+    assert len(profile_table("people", executor, max_columns=4, now=NOW).columns) == 4
+
+
+def test_deep_and_odd_duckdb_types_degrade_to_one_value():
+    connection = duckdb.connect()
+    connection.execute("""CREATE TABLE odd AS SELECT [[1, 2], [3]] AS nested, MAP {'a': 1} AS m, [1, 2, 3]::INTEGER[3] AS fixed,
+        {'a': {'b': {'c': {'d': {'e': {'f': {'g': 1}}}}}}} AS deep""")
+    profile = profile_table("odd", DuckDBExecutor(connection), now=NOW)
+    columns = by_name(profile)
+    assert columns["nested"].kind == "other" and columns["m"].kind == "other" and columns["fixed"].kind == "other"
+    assert "deep.a.b.c.d.e.f" in columns and "deep.a.b.c.d.e.f.g" not in columns
+    assert [item["reason"] for item in profile.skipped] == ["too_deeply_nested"]
+
+
+def test_bigquery_schema_with_records_and_repeated_fields(monkeypatch):
+    nodes = data_profile._bigquery_nodes([
+        {"name": "id", "type": "INTEGER"},
+        {"name": "address", "type": "RECORD", "fields": [{"name": "city", "type": "STRING"}]},
+        {"name": "orders", "type": "RECORD", "mode": "REPEATED", "fields": [{"name": "sku", "type": "STRING"}]},
+        {"name": "tags", "type": "STRING", "mode": "REPEATED"},
+    ])
+    assert [(n.name, n.type, n.repeated, n.children is not None) for n in nodes] == [
+        ("id", "INT64", False, False), ("address", "STRUCT", False, True), ("orders", "STRUCT", True, True), ("tags", "STRING", True, False)]
+
+    class Plain(BigQueryExecutor):
+        def __init__(self):
+            pass
+
+        def table_sql(self, table):
+            return "`proj.ds.people`"
+
+        def fields(self, table):
+            return nodes
+
+    queries = profile_queries("proj.ds.people", Plain(), sample_percent=10, row_filter="id > 1")
+    for sql in queries:
+        validate_readonly_query(sql)
+        sqlglot.parse_one(sql, read="bigquery")
+    joined = " ".join(queries)
+    assert "`address`.`city` AS k2" in joined and "CROSS JOIN UNNEST(`orders`) AS e1" in joined
+    assert "e1.`sku`" in joined and "CROSS JOIN UNNEST(`tags`) AS e1" in joined and "ARRAY_LENGTH(k3)" in joined
+    assert "TABLESAMPLE SYSTEM (10 PERCENT) CROSS JOIN UNNEST" in joined and joined.count("WHERE (id > 1)") >= 3
+
+
+def test_nested_bigquery_sql_gives_the_same_answers_when_run_on_duckdb():
+    """The BigQuery SQL for STRUCT fields and UNNEST, translated to DuckDB, matches the DuckDB-native profile."""
+
+    connection = nested_db()
+    nodes = data_profile._bigquery_nodes([
+        {"name": "id", "type": "INTEGER"},
+        {"name": "address", "type": "RECORD", "fields": [
+            {"name": "city", "type": "STRING"}, {"name": "geo", "type": "RECORD", "fields": [{"name": "lat", "type": "FLOAT"}]}]},
+        {"name": "orders", "type": "RECORD", "mode": "REPEATED", "fields": [
+            {"name": "sku", "type": "STRING"}, {"name": "qty", "type": "INTEGER"}]},
+        {"name": "scores", "type": "INTEGER", "mode": "REPEATED"},
+    ])
+
+    class Translated(BigQueryExecutor):
+        def __init__(self):
+            self._estimated = self._billed = 0
+            self._saw_estimate = self._saw_billed = False
+
+        def table_sql(self, table):
+            return "`proj.ds.people`"
+
+        def fields(self, table):
+            return nodes
+
+        def run(self, sql):
+            validate_readonly_query(sql)
+            translated = sqlglot.transpile(sql.replace("`proj.ds.people`", "people"), read="bigquery", write="duckdb")[0]
+            cursor = connection.execute(translated)
+            names = [item[0] for item in cursor.description]
+            return [dict(zip(names, [None if v is None else str(v) for v in row])) for row in cursor.fetchall()]
+
+    bigquery = profile_table("proj.ds.people", Translated(), approximate=False, now=NOW)
+    native = profile_table("people", DuckDBExecutor(connection), now=NOW)
+    assert bigquery.skipped == [] and bigquery.row_count == native.row_count == 4
+    wanted = ("name", "kind", "unit", "non_null", "null_count", "distinct", "min", "max", "min_length", "max_length", "mean_length")
+    for left, right in zip(bigquery.columns, native.columns):
+        assert [getattr(left, n) for n in wanted] == [getattr(right, n) for n in wanted], left.name
+        assert {(v.value, v.count) for v in left.top_values} == {(v.value, v.count) for v in right.top_values}, left.name
 
 
 # ---------------------------------------------------------------- BigQuery
@@ -185,7 +326,7 @@ def test_bigquery_profile_runs_valid_read_only_sql_in_the_billing_project(db, mo
     # BigQuery sends every cell as text; numbers come back as numbers, dates stay text.
     assert (columns["id"].min, columns["id"].max, columns["id"].mean) == (0, 99, 49.5)
     assert columns["placed"].min == "2024-01-01" and columns["customer"].top_values[0].count == 20
-    assert columns["tags"].kind == "other"  # REPEATED
+    assert columns["tags"].kind == "array" and columns["tags[]"].unit == "elements"  # REPEATED
 
 
 def test_bigquery_sql_parses_as_bigquery_and_uses_its_functions(db):
@@ -196,26 +337,26 @@ def test_bigquery_sql_parses_as_bigquery_and_uses_its_functions(db):
         def table_sql(self, table):
             return "`proj.ds.orders`"
 
-        def describe(self, table):
-            return {"a": "INT64", "b": "STRING", "c": "TIMESTAMP", "d": "BOOL", "e": "ARRAY<INT64>"}
+        def fields(self, table):
+            return [Node("a", "INT64"), Node("b", "STRING"), Node("c", "TIMESTAMP"), Node("d", "BOOL"), Node("e", "INT64", True)]
 
     queries = profile_queries("proj.ds.orders", Plain(), sample_percent=10, row_filter="a > 1 AND b = 'x'")
     for sql in queries:
         validate_readonly_query(sql)
         sqlglot.parse_one(sql, read="bigquery")
     stats = queries[0]
-    assert "APPROX_QUANTILES(`a`, 4)[OFFSET(2)]" in stats and "CAST(MIN(`c`) AS STRING)" in stats
+    assert "APPROX_QUANTILES(k0, 4)[OFFSET(2)]" in stats and "CAST(MIN(k2) AS STRING)" in stats
     assert "TABLESAMPLE SYSTEM (10 PERCENT)" in stats and "WHERE (a > 1 AND b = 'x')" in stats
-    assert "COUNT(`e`)" in stats and "COUNT(DISTINCT `e`)" not in stats and "APPROX_COUNT_DISTINCT(`e`)" not in stats
+    assert "COALESCE(ARRAY_LENGTH(k4), 0)" in stats and "APPROX_COUNT_DISTINCT(k4)" not in stats
     exact = profile_queries("proj.ds.orders", Plain(), approximate=False)[0]
-    assert "COUNT(DISTINCT `a`)" in exact and "APPROX_COUNT_DISTINCT" not in exact
+    assert "COUNT(DISTINCT k0)" in exact and "APPROX_COUNT_DISTINCT" not in exact
 
 
 def test_bigquery_falls_back_to_exact_distinct_and_then_skips(db, monkeypatch):
     def fail(sql):
-        if "APPROX_COUNT_DISTINCT(`amount`)" in sql:
+        if "APPROX_COUNT_DISTINCT" in sql and "`amount` AS" in sql:
             return scope_queries.QueryError("BigQuery rejected the query: unsupported type")
-        if "`note`" in sql and "rows_total" in sql:
+        if "`note` AS" in sql and "rows_total" in sql:
             return scope_queries.QueryError("BigQuery rejected the query: broken")
         return None
 
@@ -223,7 +364,7 @@ def test_bigquery_falls_back_to_exact_distinct_and_then_skips(db, monkeypatch):
     profile = profile_table("proj.ds.orders", BigQueryExecutor(), now=NOW)
     assert by_name(profile)["amount"].distinct == 100
     assert [item["name"] for item in profile.skipped] == ["note"] and "broken" in profile.skipped[0]["error"]
-    assert any("COUNT(DISTINCT `amount`)" in sql for sql, _p, _m in fake.sent)
+    assert any("COUNT(DISTINCT k2)" in sql for sql, _p, _m in fake.sent)
 
 
 def test_a_byte_cap_refusal_stops_the_run(db, monkeypatch):
@@ -254,7 +395,7 @@ def test_profiles_round_trip_and_render(db, tmp_path):
     assert again.to_json() == profile.to_json()
     assert store.list_profiles(tmp_path) == [{
         "name": "orders", "table": "orders", "dialect": "duckdb", "generated_at": "2026-10-07T12:00:00Z",
-        "row_count": 100, "columns": 9, "sampled": False}]
+        "row_count": 100, "columns": 10, "sampled": False}]
 
     summary = store.to_markdown(profile)
     assert summary.startswith("# Data profile: orders") and "Rows: 100" in summary
@@ -321,7 +462,7 @@ def test_cli_dry_run_prints_queries_and_estimates_without_running(db, monkeypatc
     monkeypatch.setattr(scope_queries, "dry_run", lambda sql, column=None, *, project=None, max_bytes=None: {"estimated_bytes": 123})
     assert data_profile_cli.main(["proj.ds.orders", "--dry-run"]) == 0
     out = capsys.readouterr().out
-    assert "estimated bytes processed: 123" in out and "total estimated bytes processed: 246" in out
+    assert "estimated bytes processed: 123" in out and f"total estimated bytes processed: {123 * out.count('-- query')}" in out
     assert fake.sent == []  # nothing ran
 
 

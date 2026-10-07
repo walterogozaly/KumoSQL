@@ -131,7 +131,7 @@ def to_markdown(profile: DataProfile) -> str:
     lines += ["| Column | Type | Nulls | Distinct | Min | Max | Mean | Flags |", "| --- | --- | --- | --- | --- | --- | --- | --- |"]
     for column in profile.columns:
         lines.append("| " + " | ".join((
-            _cell(column.name), _cell(column.type), _percent(column.null_fraction),
+            _cell(column.name + ("" if column.unit == "rows" else " (elements)")), _cell(column.type), _percent(column.null_fraction),
             _cell(column.distinct), _cell(column.min), _cell(column.max), _cell(column.mean), _cell(", ".join(column.flags)),
         )) + " |")
     detailed = [column for column in profile.columns if _has_detail(column)]
@@ -159,7 +159,8 @@ def _details(column: ColumnProfile) -> list[str]:
     if column.median is not None:
         lines.append(f"- Quartiles: {_cell(column.p25)} / {_cell(column.median)} / {_cell(column.p75)}; standard deviation {_cell(column.stddev)}")
     if column.min_length is not None:
-        lines.append(f"- Length: {column.min_length} to {column.max_length}, average {_cell(column.mean_length)}")
+        label = "Elements per row" if column.kind == "array" else "Length"
+        lines.append(f"- {label}: {column.min_length} to {column.max_length}, average {_cell(column.mean_length)}")
     if column.top_values:
         lines.append("- Most common: " + "; ".join(
             f"\"{_cell(item.value)}\" ({item.count:,}, {_percent(item.fraction)})" for item in column.top_values))
